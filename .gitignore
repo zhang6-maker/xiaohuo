@@ -1,0 +1,18 @@
+# 依赖
+node_modules
+
+# Rust 编译产物（编译完由 build.bat 自动清理）
+src-tauri/target
+src-tauri/target_dev
+
+# Tauri 自动生成的 schema（可重新生成）
+src-tauri/gen
+
+# 密钥 / 本地配置 —— 绝不提交
+.env
+.env.local
+.env.*
+!.env.example
+
+# 注意：dist/ 故意不忽略。cargo build --release 直接读取 ../dist，
+# 仓库内保留 dist 可让他人无需 npm 即可编译。前端改完请重新 npm run build。

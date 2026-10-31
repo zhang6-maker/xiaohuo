@@ -1,0 +1,2103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>小火 · 网页演示版 v0.1.12-web</title>
+<style>
+  html, body { margin: 0; height: 100%; }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    background: #f4f6f9; font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+    overflow: hidden;
+  }
+  #stage { background: transparent; display: block; }
+
+  /* 顶部按钮栏（桌面版用，网页版隐藏） */
+  #bar {
+    position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 8px; z-index: 10;
+  }
+  #bar button {
+    border: 1px solid #d6d8dc; background: #fff; color: #2b2b2f;
+    padding: 7px 14px; border-radius: 999px; font-size: 13px; cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  }
+  #bar button:hover { background: #f0f1f3; }
+  #status {
+    position: fixed; top: 52px; left: 50%; transform: translateX(-50%);
+    color: #6b7280; font-size: 12px; z-index: 10; letter-spacing: .3px;
+  }
+  .hint {
+    position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+    color: #6b7280; font-size: 12px; z-index: 10; letter-spacing: .3px; text-align: center;
+  }
+
+  /* 网页版动作控制面板（演示用，方便查看各种动作） */
+  #ctrl {
+    position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 6px; flex-wrap: wrap; justify-content: center;
+    z-index: 20; max-width: 96vw;
+  }
+  #ctrl button {
+    border: 1px solid #d6d8dc; background: #fff; color: #2b2b2f;
+    padding: 7px 12px; border-radius: 999px; font-size: 13px; cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  }
+  #ctrl button:hover { background: #f0f1f3; }
+  #ctrl span { color: #9aa0a6; font-size: 13px; align-self: center; }
+
+  /* 全屏框选层（看屏/搜题）：截屏后铺满全屏让你框选 */
+  #pickLayer {
+    position: fixed; inset: 0; z-index: 30; cursor: crosshair; user-select: none;
+    background: #000;
+  }
+  #pickImg {
+    position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill;
+    pointer-events: none;
+  }
+  #pickRect {
+    position: absolute; border: 2px solid #ff5a5f; background: rgba(255,255,255,.12);
+    display: none; pointer-events: none;
+  }
+  #pickHint {
+    position: absolute; top: 24px; left: 50%; transform: translateX(-50%);
+    color: #fff; font-size: 14px; opacity: .95; background: rgba(0,0,0,.45);
+    padding: 6px 12px; border-radius: 8px; pointer-events: none;
+  }
+
+  /* 答案框 / 看屏结果框（共用样式） */
+  .box {
+    position: fixed; z-index: 40; max-width: 360px;
+    background: rgba(28,28,32,.94); color: #f3f3f5;
+    border: 1px solid #3a3a40; border-radius: 10px; padding: 12px 14px;
+    font-size: 13px; line-height: 1.55; box-shadow: 0 6px 24px rgba(0,0,0,.3);
+  }
+  .box .close {
+    position: absolute; top: 4px; right: 8px; cursor: pointer;
+    color: #aaa; font-size: 16px; line-height: 1; border: none; background: none;
+    z-index: 2; padding: 2px 4px;
+  }
+  /* 长回复：文字在框内滚动，关闭按钮 × 与底部按钮始终常驻，不会被推出或滚走 */
+  #answerText, #screenText, #tipsText {
+    max-height: calc(72vh - 96px); overflow-y: auto; overflow-wrap: anywhere;
+    padding-right: 16px;
+  }
+  .box .actions { margin-top: 10px; display: flex; gap: 8px; }
+  .box .actions button {
+    flex: 1; border: 1px solid #4a4a52; background: #2b2b30; color: #f3f3f5;
+    padding: 6px 0; border-radius: 6px; cursor: pointer; font-size: 12px;
+  }
+  .box .actions button:hover { background: #3a3a42; }
+
+  /* 右键菜单 */
+  #ctxMenu {
+    position: fixed; z-index: 50; background: #fff; color: #2b2b2f;
+    border: 1px solid #d6d8dc; border-radius: 8px; padding: 4px; font-size: 13px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.15); min-width: 96px;
+  }
+  #ctxMenu div { padding: 6px 12px; cursor: pointer; border-radius: 5px; }
+  #ctxMenu div:hover { background: #f0f1f3; }
+
+  .hidden { display: none !important; }
+
+  /* 网页版：隐藏红色调试字(#dbg)；状态字(#status)与底部提示(.hint)保留，方便查看当前动作与心情 */
+  #dbg { display: none !important; }
+</style>
+</head>
+<body>
+<canvas id="stage" width="480" height="540"></canvas>
+
+<!-- 网页版动作控制面板：直接切换动作 / 戳一下 / 哄好，方便查看各种动画 -->
+<div id="ctrl">
+  <span>动作：</span>
+  <button data-s="idle">待机</button>
+  <button data-s="walk">走路</button>
+  <button data-s="run">跑步</button>
+  <button data-s="wave">挥手</button>
+  <button data-s="sleep">睡觉</button>
+  <button data-s="hide">委屈躲开</button>
+  <button data-s="read">📖看书</button>
+  <span>|</span>
+  <button data-s="poke">戳一下</button>
+  <button data-s="sing">🎵唱歌</button>
+  <button data-s="paint">🎨画画</button>
+</div>
+
+<div id="bar" class="hidden">
+  <button data-act="search">📸 搜一搜</button>
+  <button data-act="screen">👀 看看屏幕</button>
+  <button data-act="speak">🎤 念念有词</button>
+</div>
+<div id="status">状态：idle · 心情：0</div>
+<div class="hint">网页演示版：上方按钮可切换动作 / 🎵唱歌。👆 <b>单击</b>小火 = 戳他（欺负，连戳会缩角落）；🤚 在头顶<b>按住鼠标左键来回搓</b> = 揉头哄他（被戳委屈后搓头也能哄好）；点「📖看书」看他坐地安静捧书阅读；点「睡觉」约 3 秒翻倒躺平深度睡眠；长按或右键小火唤出菜单。</div>
+<div id="dbg" style="position:fixed;left:8px;bottom:34px;z-index:60;color:#c33;font-size:11px;font-family:monospace;background:rgba(255,255,255,.7);padding:2px 6px;border-radius:4px;">调试：等待 Rust 数据…</div>
+
+<!-- 全屏框选层（看屏/搜题）：截屏后铺满全屏让你框选 -->
+<div id="pickLayer" class="hidden">
+  <img id="pickImg" alt="">
+  <div id="pickHint">拖拽框选你想让小火看的区域，松手即分析</div>
+  <div id="pickRect"></div>
+</div>
+
+<!-- 搜题答案框 -->
+<div id="answerBox" class="box hidden">
+  <button class="close">×</button>
+  <div id="answerText"></div>
+</div>
+
+<!-- 看屏结果框 -->
+<div id="screenBox" class="box hidden">
+  <button class="close">×</button>
+  <div id="screenText"></div>
+  <div class="actions">
+    <button data-s="check">帮我查</button>
+    <button data-s="no">不用了</button>
+  </div>
+</div>
+
+<!-- 右键菜单 -->
+<div id="ctxMenu" class="hidden">
+  <div data-m="search">📸 搜一搜</div>
+  <div data-m="screen">👀 看看屏幕</div>
+  <div data-m="speak">🎤 念念有词</div>
+  <div data-m="tips">💡 提示</div>
+  <div data-m="paint">🎨 画点什么</div>
+  <div data-m="about">ℹ️ 关于</div>
+</div>
+
+<!-- 提示框（菜单「提示」唤出） -->
+<div id="tipsBox" class="box hidden">
+  <button class="close">×</button>
+  <div id="tipsText"></div>
+</div>
+
+<!-- 画点什么：输入框（菜单「画点什么」唤出），让小火按文字指令画画 -->
+<div id="paintBox" class="box hidden">
+  <button class="close">×</button>
+  <div id="paintHint" style="margin-bottom:8px;font-size:12px;color:#9aa0a6;">让小火画点什么：画树 / 画太阳 / 画花 / 画星星 / 画云 / 随便画 / 或说任何东西（他会去想）</div>
+  <input id="paintText" type="text" placeholder="画树" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:6px;font-size:13px;" />
+  <div class="actions"><button id="paintGo">画！</button></div>
+</div>
+
+<script>
+// ---------- 网页版：内置假 invoke（模拟 Tauri 桌面能力，桌面版用真后端） ----------
+async function invoke(cmd, args) {
+  if (cmd === 'capture_screen') {
+    // 生成一张演示截图（非真实截屏），让看屏/搜题流程在浏览器里也能走通
+    const c = document.createElement('canvas');
+    c.width = 960; c.height = 600;
+    const g = c.getContext('2d');
+    g.fillStyle = '#eef1f5'; g.fillRect(0, 0, c.width, c.height);
+    g.fillStyle = '#cfd6df'; g.fillRect(60, 90, 380, 220);
+    g.fillStyle = '#b9c1cc'; g.fillRect(560, 90, 340, 140);
+    g.fillStyle = '#2b2b2f'; g.font = '28px sans-serif';
+    g.fillText('网页版演示截图（非真实截屏）', 60, 60);
+    g.fillStyle = '#5b6470'; g.font = '20px sans-serif';
+    g.fillText('拖动框选任意区域 → 交给「小火」分析', 60, 370);
+    return c.toDataURL('image/png');
+  }
+  if (cmd === 'ask_glm') {
+    return '（网页版演示）这是模拟的回答。\n桌面版会调用智谱 GLM-4V，真看懂你框选的屏幕内容并给出分析。';
+  }
+  if (cmd === 'toggle_pick') return;   // 全屏切换：网页版由前端 JS 直接控制，无需后端
+  return undefined;
+}
+
+(() => {
+  "use strict";
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const DEG = Math.PI / 180;
+  const UP = -Math.PI / 2, DOWN = Math.PI / 2;
+  const FIG_SCALE = 0.5;             // 桌面宠物整体缩放（偏小，更贴身）
+
+  // ---------- 骨骼参数 ----------
+  const S = {
+    rootX: W / 2, rootY: H / 2 + 60,
+    torsoLen: 85, neckLen: 16, headR: 24,
+    thigh: 46, shin: 36, upperArm: 42, foreArm: 28,
+    lineW: 6, color: '#2b2b2f',
+  };
+  const legSpread = 0.18, armSpread = 0.35;
+
+  const point = (o, a, l) => ({ x: o.x + Math.cos(a) * l, y: o.y + Math.sin(a) * l });
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const easeInOut = t => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+  const rand = (a, b) => a + Math.random() * (b - a);
+
+  // ---------- 姿态参数（状态只产出这组数字） ----------
+  const BASE = {
+    legSwing: 0, legFreq: 0,
+    armSwing: 0, armFreq: 0,
+    waveArm: 0, waveFreq: 8,
+    lean: 0, headDrop: 0,
+    bobAmp: 1.5, walkAmp: 0, walkFreq: 1.1,
+    crouch: 0, scale: 1, opacity: 1,
+    mouthOpen: 0, eyeOpen: 1,
+    sad: 0, hug: 0, happy: 0, hop: 0, book: 0, sit: 0, sing: 0, read: 0, paint: 0,
+    think: 0, headTilt: 0,
+  };
+  function poseForState(state, t) {
+    const p = { ...BASE };
+    switch (state) {
+      case 'walk':
+        p.legSwing = 28 * gaitJitter; p.legFreq = 6 * gaitJitter; p.armSwing = 18 * gaitJitter; p.armFreq = 6 * gaitJitter;
+        p.bobAmp = 4; p.walkAmp = 24; p.walkFreq = 1.1 * gaitJitter; p.lean = 6; break;
+      case 'run':
+        p.legSwing = 42 * gaitJitter; p.legFreq = 10 * gaitJitter; p.armSwing = 30 * gaitJitter; p.armFreq = 10 * gaitJitter;
+        p.bobAmp = 9; p.walkAmp = 40; p.walkFreq = 2.2 * gaitJitter; p.lean = 16; break;
+      case 'wave':
+        p.waveArm = 26; p.waveFreq = 8; p.armSwing = 4; p.armFreq = 5; break;
+      case 'sleep':
+        p.headDrop = 22; p.crouch = 14; p.eyeOpen = 0; p.bobAmp = 1.2; break;
+      case 'read':
+        p.crouch = 36; p.headDrop = 30; p.lean = 3; p.eyeOpen = 1;
+        p.book = 1; p.sit = 1; p.read = 1; break;   // 坐地看书：低头看怀里书、双手捧书、身体轻前倾、安静阅读（不唱歌）
+      case 'sing':
+        p.lean = 3; p.headDrop = -3; p.happy = 1; p.sing = 1;
+        p.waveArm = 16; p.waveFreq = 5; p.armSwing = 6; p.armFreq = 5; p.bobAmp = 3; p.eyeOpen = 1; break;  // 站着唱歌：闭眼陶醉、举臂打拍子、张嘴哼唱
+      case 'hide':
+        p.scale = 0.52; p.opacity = 0.9;
+        p.headDrop = 30; p.crouch = 14; p.sad = 1; p.hug = 1; break;  // 委屈：缩角落、垂头、抱臂、含泪
+      case 'paint':
+        p.lean = 8; p.headDrop = -3; p.happy = 1; p.eyeOpen = 1;
+        p.waveArm = 22; p.waveFreq = 4; p.armSwing = 2; p.armFreq = 4; break;  // 画画：举画笔手、专注前倾、开心
+      case 'think':
+        p.headDrop = 12; p.headTilt = 22; p.eyeOpen = 1; p.think = 1;
+        p.armSwing = 3; p.armFreq = 4; break;   // 思考：歪头、手托下巴，想着怎么画
+    }
+    return p;
+  }
+  function lerpPose(a, b, t) {
+    const r = {};
+    for (const k in a) r[k] = a[k] + (b[k] - a[k]) * t;
+    return r;
+  }
+
+  // ---------- 状态机 ----------
+  let currState = 'idle', prevState = 'idle', transStart = -1e9;
+  let nextSwitchAt = performance.now() + rand(2000, 8000);
+
+  // 固定睡眠时段（本地时间）：到点强制"以睡为主、不漫游"；其余时间按加权随机
+  const SLEEP_START = 23, SLEEP_END = 7;          // 23:00 ~ 07:00 固定睡眠
+  function inSleepWindow() {
+    const h = new Date().getHours();
+    return h >= SLEEP_START || h < SLEEP_END;
+  }
+
+  // 各状态基础出现权重（walk/run/wave 平时更灵动，sleep 偶尔小睡）
+  const WEIGHTS = { idle: 36, walk: 22, run: 8, wave: 12, sleep: 10, read: 8, sing: 6 };
+  // 固定睡眠时段内的权重：以睡为主、偶尔翻身(idle)
+  const WEIGHTS_SLEEP = { sleep: 78, idle: 22 };
+  function pickAutoState(sleeping, now) {
+    let w;
+    if (sleeping) {
+      w = WEIGHTS_SLEEP;                      // 夜间睡眠窗口：以睡为主，不受冷静期限制
+    } else {
+      // 白天：若处于 sleep/read 的冷静期内，临时去掉这两个状态，避免"刚睡醒又睡/刚看完又看"
+      w = {};
+      for (const k in WEIGHTS) {
+        if (k === 'sleep' && now < sleepCD) continue;
+        if (k === 'read'  && now < readCD)  continue;
+        w[k] = WEIGHTS[k];
+      }
+    }
+    let total = 0; for (const k in w) total += w[k];
+    let r = Math.random() * total;
+    for (const k in w) { r -= w[k]; if (r <= 0) return k; }
+    return 'idle';
+  }
+  // 每个动作持续多久（更随机，小睡更久）
+  function autoDuration(s) {
+    switch (s) {
+      case 'walk':  return rand(2000, 6000);
+      case 'run':   return rand(1000, 3000);
+      case 'wave':  return rand(1500, 4000);
+      case 'sleep': return rand(20 * 60000, 40 * 60000);   // 长时间睡眠：20–40 分钟，少而久
+      case 'idle':  return rand(2000, 8000);
+      case 'read':  return rand(20 * 60000, 30 * 60000);   // 长时间阅读：20–30 分钟，少而久
+      case 'sing':  return rand(3000, 7000);
+      case 'paint': return 12000;       // 画画：画 2.6s + 展示约 8.4s 后消散
+      default:      return rand(1500, 6000);
+    }
+  }
+  function setState(s, dur) {
+    if (s === currState) return;
+    const wasSleep = currState === 'sleep', wasRead = currState === 'read';
+    // 一次长休息结束（睡/读 → 其他状态）：进入白天冷静期，隔 120–240 分钟才允许再次"长休息"（sleep/read 共用，避免刚睡醒又看/刚看完又睡）
+    if ((wasSleep || wasRead) && s !== 'sleep' && s !== 'read') {
+      const cd = performance.now() + rand(120 * 60000, 240 * 60000);
+      sleepCD = cd; readCD = cd;
+    }
+    const wasPaint = currState === 'paint';
+    prevState = currState; currState = s;
+    if (wasPaint && s !== 'paint') S.color = '#2b2b2f';  // 离开画画：恢复默认身体色
+    transStart = performance.now();
+    nextSwitchAt = performance.now() + (dur != null ? dur : autoDuration(s));
+    if (s === 'walk' || s === 'run') gaitJitter = rand(0.8, 1.25);  // 每趟步态略有差异
+  }
+
+  // ---------- 鼠标 / 心情 ----------
+  const mouse = { x: 0, y: 0, inside: false };
+  let lookX = 0, lookY = 0;            // 平滑后的"看向鼠标"单位向量
+  let gSC = 1;                         // 当前缩放（供 drawEyes / drawMouth 用）
+  let mood = 0, clickCount = 0, lastPoke = 0;
+  let speakingUntil = 0;
+  let sleepCD = 0, readCD = 0;               // 长休息（睡觉/看书）结束后的白天冷静期截止时间
+  let posX = S.rootX;                 // 火柴人当前水平锚点（躲开 / 缩角落都改这个，不再原地晃）
+  let posY = S.rootY;                 // 垂直锚点；委屈缩到左下角时改这个
+  let nextPeekAt = performance.now() + rand(3000, 5000);
+  let peekStart = -1e9;
+  // 漫游：宠物会自己走向随机目标，到了再选下一个，实现"到处跑"
+  let roamTX = S.rootX, roamTY = S.rootY, roamPauseUntil = 0;
+  let gaitJitter = 1;                     // 每趟走/跑的步态略有差异，动作更随机
+  // 深度睡眠：睡着后过一会儿绕脚底翻倒躺平（倒地睡）；哄好：明显的开心反应计时
+  const DEEP_SLEEP_DELAY = 3500, TOPPLE_MAX = Math.PI / 2, PET_DUR = 3200;
+  let lieAngle = 0, petUntil = 0;
+  function pickRoam() {
+    roamTX = rand(120, W - 120);          // 水平留在窗口内（留出身体余量）
+    roamTY = rand(150, H - 90);           // 垂直留出头/脚余量，免得跑出画面
+  }
+  const HIDE_CORNER = 80;             // 委屈时退到的屏幕左下角 x（更贴边）
+  const HIDE_CORNER_Y = H - 120;      // 委屈时退到的屏幕左下角 y（贴底边蹲着），H-120 保证脚不穿底
+  const RECOVERY = 0.03;             // 心情回升 / 帧，-100→0 约 55s
+
+  // 鼠标坐标：网页版走 webview(DOM) 事件；桌面版由 Rust 推送。
+  const dpr = window.devicePixelRatio || 1;
+  const isTauri = typeof window.__TAURI_INTERNALS__ !== 'undefined';
+  let interactMode = false;            // 当前是否处于"可交互"态（悬停宠物/按钮时为真），仅用于状态栏显示
+  function setMouse(x, y) {
+    mouse.x = x; mouse.y = y;
+    mouse.inside = x >= 0 && x <= W && y >= 0 && y <= H;
+  }
+  // 戳：点在整个火柴人包围盒内都算（与 emitPetRect 一致），点头/身体/腿都生效
+  let pokeFlash = 0;                   // 最近一次被戳的时间戳（0=无），draw 里闪一下作为"戳到了"的即时反馈
+  function pokeAt(x, y) {
+    if (x < posX - 150 || x > posX + 150 || y < posY - 190 || y > posY + 230) return;
+    const now = performance.now();
+    if (now - lastPoke > 1500) clickCount = 0;
+    clickCount++; lastPoke = now; mood = clamp(mood - 25, -100, 100);
+    pokeFlash = now;                    // 标记刚被戳：draw 里闪一下 + 状态栏提示，便于确认点击真传进来了
+    // 连戳 5 下 或 心情跌到 -60（≈3 下）直接缩角落含泪；不再要求"5 下快戳"才躲
+    if (clickCount >= 5 || mood <= -60) {
+      clickCount = 0; mood = Math.min(mood, -60);
+      nextPeekAt = now + rand(3000, 5000); setState('hide');
+    }
+  }
+  function showCtxMenu(x, y) {
+    const m = document.getElementById('ctxMenu');
+    m.classList.remove('hidden');                       // 先显示才能量到真实尺寸
+    const mw = m.offsetWidth, mh = m.offsetHeight, pad = 8;
+    // 收敛到视口内：右键点在右下角时菜单会溢出，翻到鼠标左/上侧；贴左/上边防负
+    let left = x, top = y;
+    if (left + mw > window.innerWidth  - pad) left = window.innerWidth  - mw - pad;
+    if (top  + mh > window.innerHeight - pad) top  = window.innerHeight - mh - pad;
+    left = Math.max(pad, left); top = Math.max(pad, top);
+    m.style.left = left + 'px'; m.style.top = top + 'px';
+  }
+  // 原生的点击 / 右键：无论 Tauri 还是浏览器都走 DOM 事件。
+  // 长按小火 → 唤出功能菜单（与右键同一个菜单）
+  function hitPet(x, y) {   // 与 pokeAt 同一包围盒：只按在小火身上才算
+    return !(x < posX - 150 || x > posX + 150 || y < posY - 190 || y > posY + 230);
+  }
+  let pressTimer = null, pressStart = null, longPressFired = false;
+  // 揉头交互状态：用"按住+移动"区分于"单击=戳"，避免手势撞车
+  let mouseDown = false, downAt = 0, downX = 0, downY = 0, downOnHead = false, rubActive = false, downMoved = 0;
+  // 光标是否在头顶区域（揉头判定用；半径比头略大，便于"搓"到）
+  function headAt(x, y) {
+    const _bp = poseForState(currState, (performance.now() - start) / 1000);
+    const _sc = _bp.scale * FIG_SCALE;
+    const hx = posX, hy = posY + _bp.crouch * _sc - (S.torsoLen + S.neckLen + S.headR) * _sc;
+    return Math.hypot(x - hx, y - hy) < S.headR * _sc * 2.2;
+  }
+  canvas.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;                       // 只认左键（右键走 contextmenu）
+    const r = canvas.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    if (!hitPet(x, y)) return;                        // 没按在小火身上 → 长按/揉/戳都不算
+    longPressFired = false;
+    pressStart = { x: e.clientX, y: e.clientY };
+    downAt = performance.now(); downX = e.clientX; downY = e.clientY; downMoved = 0;
+    mouseDown = true; downOnHead = headAt(x, y); rubActive = false;
+    pressTimer = setTimeout(() => {                    // 长按不动 450ms → 唤出菜单
+      longPressFired = true; rubActive = false; mouseDown = false;
+      showCtxMenu(x, y);
+    }, 450);
+  });
+  window.addEventListener('mousemove', e => {
+    if (!pressStart) return;
+    const dx = e.clientX - pressStart.x, dy = e.clientY - pressStart.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > downMoved) downMoved = dist;
+    if (dist > 8) {                                    // 挪动超过 8px：不是长按，取消菜单计时
+      clearTimeout(pressTimer); pressTimer = null; pressStart = null;
+      // 在头顶区域"按住+移动"= 揉头（与"单击=戳"用完全不同的手势区分：戳是点，揉是按住搓）
+      const r = canvas.getBoundingClientRect();
+      if (downOnHead) rubActive = headAt(e.clientX - r.left, e.clientY - r.top);
+    }
+  });
+  window.addEventListener('mouseup', () => {
+    clearTimeout(pressTimer); pressTimer = null; pressStart = null;
+    const dur = performance.now() - downAt;
+    if (rubActive) { rubActive = false; mouseDown = false; return; }   // 刚才是揉头，不算戳
+    // 短按且几乎没移动 = 单击 → 戳一下（欺负）；长按已唤菜单则不算
+    if (!longPressFired && downMoved < 8 && dur < 450) {
+      const r = canvas.getBoundingClientRect();
+      pokeAt(downX - r.left, downY - r.top);
+    }
+    mouseDown = false;
+  });
+  canvas.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const r = canvas.getBoundingClientRect();
+    showCtxMenu(e.clientX - r.left, e.clientY - r.top);
+  });
+
+  // 网页版：直接走 DOM 鼠标事件（不依赖 Tauri 通道）
+  window.addEventListener('mousemove', (e) => {
+    const r = canvas.getBoundingClientRect();
+    setMouse(e.clientX - r.left, e.clientY - r.top);
+  });
+  window.addEventListener('mouseout', () => { mouse.inside = false; });
+  // 抑制 webview 原生右键菜单（我们的菜单自己画）
+  document.addEventListener('contextmenu', e => e.preventDefault());
+  // 提示框：菜单「提示」唤出，列出全部玩法
+  function showTips() {
+    const box = document.getElementById('tipsBox');
+    const txt = document.getElementById('tipsText');
+    txt.innerHTML = [
+      '🖱️ <b>长按小火</b>（约半秒）→ 唤出功能菜单',
+      '🖱️ 右键小火 → 同样唤出菜单',
+      '👆 单击小火（点一下）= 戳他，会恼会躲，连戳几下缩角落含泪 —— 这是"欺负"',
+      '🤚 揉头哄好 = 在小火头顶<b>按住鼠标左键、来回搓动</b>（不是悬停、不是单击），他就会笑眼眯眼舒服地眯眼；被戳委屈缩角落后，按住头顶搓也能把他哄出来',
+      '📖 看书 → 坐地捧着书低头安静阅读（不唱歌），偶尔翻页，很专注',
+      '🎵 唱歌 → 站着闭眼陶醉、举臂打拍子、张嘴哼唱，头顶飘出音符',
+      '😴 「睡觉」后约 3 秒会翻倒躺平进入深度睡眠，醒来会伸展一下',
+      '📸 搜一搜 / 👀 看看屏幕 → 网页版用演示图模拟，桌面版会真截屏后拖框选，交给大模型分析',
+      '🎤 念念有词 → 让它的嘴动起来',
+      '🚶 它会自动到处溜达，高兴时眼睛追着你看',
+      '✨ 鼠标移开即恢复穿透，不挡桌面点击'
+    ].join('<br>');
+    box.style.left = '50%'; box.style.top = '40%';
+    box.style.transform = 'translate(-50%,-50%)';
+    box.classList.remove('hidden');
+  }
+  document.querySelector('#tipsBox .close').addEventListener('click', () => {
+    document.getElementById('tipsBox').classList.add('hidden');
+  });
+  // 长按/右键菜单：搜一搜 / 看看屏幕 / 念念有词 / 提示 / 关于
+  document.getElementById('ctxMenu').addEventListener('click', e => {
+    const act = e.target.dataset.m;
+    if (act === 'search') startPick('search');
+    else if (act === 'screen') startPick('screen');
+    else if (act === 'speak') speakingUntil = performance.now() + 3500;
+    else if (act === 'tips') showTips();
+    else if (act === 'paint') openPaintInput();
+    else if (act === 'about') alert('小火 · 桌面火柴人（网页演示版）\n透明 Tauri 窗口：骨骼 / 状态机 / 心情 / 表情 / 嘴型。\n长按我（或右键）唤出菜单：搜一搜 / 看看屏幕 / 念念有词 / 提示。\n👆 单击 = 戳我（会恼会躲，多戳缩角落）；🤚 在头顶按住鼠标来回搓 = 揉头哄我（被戳委屈后搓头也能哄好）。\n网页版把截屏/智谱调用模拟掉了，仅用于查看各种动作；真实截屏与理解需要桌面版。');
+    document.getElementById('ctxMenu').classList.add('hidden');
+  });
+  document.addEventListener('click', e => {
+    if (!document.getElementById('ctxMenu').contains(e.target)) document.getElementById('ctxMenu').classList.add('hidden');
+  });
+
+  // 把宠物包围盒(窗口内逻辑坐标)发给 Rust（仅在位置变化时），驱动"悬停即交互"；网页版 emitter 为空，无副作用
+  let emitter = null;
+  let lastRectKey = '';
+  let boxOpen = false;            // 任一弹框可见时为 true，emitPetRect 据此把矩形扩成全窗口
+  const openBoxes = new Set();
+  function emitPetRect() {
+    if (!emitter) return;
+    if (boxOpen) {                // 弹框开着：扩成全窗口，让 Rust 关穿透，框上 ×/按钮才点得到
+      emitter('pet-rect', [0, 0, 480, 540]).catch(() => {});
+      return;
+    }
+    const key = Math.round(posX) + ',' + Math.round(posY) + ',' + currState;
+    if (key === lastRectKey) return;
+    lastRectKey = key;
+    // 包围盒略放大以包容走路摆动(±~140px)；高度覆盖头到脚
+    emitter('pet-rect', [Math.round(posX - 150), Math.round(posY - 190), 300, 230]).catch(() => {});
+  }
+  // 弹框穿透修复：侦听三个弹框的显示/隐藏，任一可见即让 Rust 关穿透（否则框上 ×/按钮点不到）
+  function syncBoxOpen() {
+    boxOpen = openBoxes.size > 0;
+    if (!emitter) return;
+    if (boxOpen) emitter('pet-rect', [0, 0, 480, 540]).catch(() => {});
+    else { lastRectKey = ''; emitPetRect(); }
+  }
+  ['answerBox', 'screenBox', 'tipsBox', 'paintBox', 'ctxMenu'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    new MutationObserver(() => {
+      if (el.classList.contains('hidden')) openBoxes.delete(id);
+      else openBoxes.add(id);
+      syncBoxOpen();
+    }).observe(el, { attributes: true, attributeFilter: ['class'] });
+  });
+
+  // ---------- 构建火柴人 ----------
+  function buildFigure(pose, t) {
+    const sc = pose.scale * FIG_SCALE;
+    const lieFrac = Math.min(1, lieAngle / TOPPLE_MAX);
+    const breath = Math.sin(t * 1.5);
+    const walkK = pose.legFreq ? 1 : 0;
+    const step = pose.legFreq ? Math.sin(t * pose.legFreq) : 0;   // 迈步相位：左右腿反相
+    // 走路起伏：迈大步(腿张开)时最低，并拢(支撑)时最高 → 两落点/步；倒地时压平呼吸起伏
+    const bob = (breath * 1.0 + (walkK ? -pose.bobAmp * Math.abs(step) : 0)) * (1 - lieFrac);
+    const xWalk = pose.walkAmp ? Math.sin(t * pose.walkFreq) * pose.walkAmp : 0;
+    const sway = walkK ? Math.sin(t * pose.legFreq) * 2 * DEG : 0;  // 重心随步左右晃
+
+    const sitDrop = pose.sit * 30 * sc;   // 坐姿单独下沉：屁股贴地，不靠压短 crouch
+    const root = { x: posX + xWalk * sc, y: posY + bob * sc + pose.crouch * sc - pose.hop * sc + sitDrop };
+    const torsoAngle = UP + pose.lean * DEG + breath * 0.025 + sway;
+    const shoulders = point(root, torsoAngle, S.torsoLen * sc);
+
+    // ---------- 头：朝鼠标转；但厌恶时拒绝看、甚至转头避开 ----------
+    let headLean = 0;
+    // 厌恶度：心情 < 0 起算（被戳一下就开始嫌弃），越负越厌恶，到 -100 满厌恶
+    const disgust = mood < 0 ? clamp(-mood / 100, 0, 1) : 0;
+    if (mouse.inside) {
+      const dx = mouse.x - shoulders.x, dy = mouse.y - shoulders.y;
+      let turn = Math.atan2(dy, dx) - UP;
+      const dSh = Math.hypot(dx, dy) || 1;
+      const prox = clamp(360 / Math.max(70, dSh), 0, 1);   // 越近跟得越多
+      turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+      // 厌恶：把"转向鼠标"平滑翻成"背向鼠标"（disgust 0→正常跟, 0.5→不转, 1→转开）
+      const turnEff = turn * (1 - 2 * disgust);
+      headLean = clamp(turnEff, -0.7, 0.7) * (0.4 + 0.6 * prox);
+    }
+    if (pose.read > 0.5) headLean = 0;            // 看书时不跟鼠标转头，专注低头看书本
+    if (pose.think > 0.5) headLean = 0;           // 思考时固定歪头，不跟鼠标转
+    const headAxis = torsoAngle + pose.headDrop * DEG + headLean + (pose.think > 0.5 ? pose.headTilt * DEG : 0);
+    const headBottom = point(shoulders, headAxis, S.neckLen * sc);
+    // 注意：point() 只返回 {x,y}，没有 r；这里必须显式补 r，否则 head 半径为 undefined 而整颗头画不出来
+    const headBase = { ...point(shoulders, headAxis, (S.neckLen + S.headR) * sc), r: S.headR * sc };
+
+    // 头中心 / 眼珠朝鼠标方向轻移；厌恶时改成"看向反方向"（躲避视线接触）
+    if (mouse.inside) {
+      const dxh = mouse.x - headBase.x, dyh = mouse.y - headBase.y, dh = Math.hypot(dxh, dyh) || 1;
+      const tox = dxh / dh, toy = dyh / dh;            // 朝鼠标
+      const lx = lerp(tox, -tox, disgust);             // 厌恶越深越看反方向
+      const ly = lerp(toy, -toy, disgust);
+      lookX = lerp(lookX, lx, 0.18); lookY = lerp(lookY, ly, 0.18);
+    } else {
+      lookX = lerp(lookX, 0, 0.08); lookY = lerp(lookY, 0, 0.08);
+    }
+    if (pose.read > 0.5) { lookX = 0; lookY = 2.3; }   // 看书：眼睛沉到头下半部、视线朝下看怀里的书，不跟鼠标
+    const head = { x: headBase.x + lookX * headBase.r * 0.24, y: headBase.y + lookY * headBase.r * 0.24, r: headBase.r };
+
+    // ---------- 腿：大腿 + 小腿（带膝盖） ----------
+    const thigh = S.thigh * sc, shin = S.shin * sc;
+    const stance = legSpread * (walkK ? 0.35 : 1);
+    const hipL = DOWN + stance + step * pose.legSwing * DEG;
+    const hipR = DOWN - stance - step * pose.legSwing * DEG;
+    // 走路：抬起的腿膝盖弯(脚往内收)，另一条蹬直；站着时小腿顺势微弯
+    const kneeL = (0.12 + 0.45 * Math.max(0, step)) * walkK;
+    const kneeR = (0.12 + 0.45 * Math.max(0, -step)) * walkK;
+    // 坐地：大腿近水平外展(160°/20°)、小腿从膝盖水平折回中心(0°/180°) → 扁平"船形"盘腿底座，不是菱形（sit 从 0→1 平滑过渡）
+    const sitAmt = clamp(pose.sit, 0, 1);
+    const thighAngL = lerp(hipL, Math.PI - 0.35, sitAmt);
+    const thighAngR = lerp(hipR, 0.35, sitAmt);
+    const shinAngL  = lerp(hipL - kneeL, 0, sitAmt);
+    const shinAngR  = lerp(hipR + kneeR, Math.PI, sitAmt);
+    const kneePtL = point(root, thighAngL, thigh);
+    const footL = point(kneePtL, shinAngL, shin);
+    const kneePtR = point(root, thighAngR, thigh);
+    const footR = point(kneePtR, shinAngR, shin);
+
+    // ---------- 手臂：上臂 + 前臂（带手肘） ----------
+    const aPhase = pose.armFreq ? Math.sin(t * pose.armFreq) : 0;
+    const upper = S.upperArm * sc, fore = S.foreArm * sc;
+    const restL = torsoAngle + Math.PI - armSpread;
+    const restR = torsoAngle + Math.PI + armSpread;
+    const wb = Math.min(1, pose.waveArm / 26);
+    const waveTargetR = UP + 0.5;
+    let elbowR = lerp(restR, waveTargetR, wb);
+    elbowR += pose.waveArm < 0.01 ? aPhase * pose.armSwing * DEG : Math.sin(t * pose.waveFreq) * pose.waveArm * DEG;
+    const elbowL = restL - aPhase * pose.armSwing * DEG;
+    // 手肘自然弯：走路弯得多、待机近乎伸直；前臂向内/上收
+    const eb = 0.2 + 0.32 * walkK;
+    let elbowPtL = point(shoulders, elbowL, upper);
+    let handL = point(elbowPtL, elbowL - eb, fore);
+    let elbowPtR = point(shoulders, elbowR, upper);
+    let handR = point(elbowPtR, elbowR + eb + (wb ? 0.3 : 0), fore);
+
+    // 委屈抱臂：双手收到胸前中央（自我拥抱），与正常手臂姿态按 hug 插值
+    if (pose.hug > 0.01) {
+      const g = pose.hug;
+      const lp = (a, b) => ({ x: lerp(a.x, b.x, g), y: lerp(a.y, b.y, g) });
+      elbowPtL = lp(elbowPtL, { x: shoulders.x - 26 * sc, y: shoulders.y + 16 * sc });
+      handL  = lp(handL,  { x: shoulders.x - 3  * sc, y: shoulders.y + 22 * sc });
+      elbowPtR = lp(elbowPtR, { x: shoulders.x + 26 * sc, y: shoulders.y + 16 * sc });
+      handR  = lp(handR,  { x: shoulders.x + 3  * sc, y: shoulders.y + 22 * sc });
+    }
+    // 看书：双肘向两侧撑出、前臂从书后绕入，双手藏在书下缘（捧读）；书盖住胸口，只露肘
+    if (pose.read > 0.5) {
+      const lp = (a, b) => ({ x: lerp(a.x, b.x, 1), y: lerp(a.y, b.y, 1) });
+      elbowPtL = lp(elbowPtL, { x: shoulders.x - 34 * sc, y: shoulders.y + 20 * sc });
+      handL  = lp(handL,  { x: shoulders.x - 26 * sc, y: shoulders.y + 38 * sc });
+      elbowPtR = lp(elbowPtR, { x: shoulders.x + 34 * sc, y: shoulders.y + 20 * sc });
+      handR  = lp(handR,  { x: shoulders.x + 26 * sc, y: shoulders.y + 38 * sc });
+    }
+    // 思考：右臂抬到下巴做"托腮"，左手自然垂（让"歪头托腮想怎么画"成立；
+    // 不再另画一只悬空的手——全身是线条小人，哪都不该凭空冒出填充圆块）
+    if (pose.think > 0.5) {
+      const chin = { x: head.x + head.r * 0.5, y: head.y + head.r * 0.7 };
+      elbowPtR = { x: shoulders.x + 28 * sc, y: shoulders.y + 6 * sc };
+      handR = { x: chin.x, y: chin.y };
+    }
+
+    return { root, shoulders, headBottom, head, kneePtL, footL, kneePtR, footR, elbowPtL, handL, elbowPtR, handR };
+  }
+
+  function line(a, b) {
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+  function drawEyes(head, eyeOpen, emo, now, happy) {
+    const r = head.r, ex = 0.34 * r, ey = -0.12 * r;
+    // 整张脸朝鼠标偏移，强化"转头看"的观感
+    const fx = lookX * r * 0.16, fy = lookY * r * 0.16;
+    const eyes = [{ x: head.x - ex + fx, y: head.y + ey + fy }, { x: head.x + ex + fx, y: head.y + ey + fy }];
+    // 开心眼：^^ 弯弯笑眼（哄好时触发，覆盖其他眼型）
+    if (happy > 0.5) {
+      ctx.lineWidth = Math.max(1.4, 1.8 * gSC); ctx.strokeStyle = S.color;
+      for (const p of eyes) {
+        ctx.beginPath(); ctx.arc(p.x, p.y - r * 0.02, r * 0.2, 1.2 * Math.PI, 1.8 * Math.PI); ctx.stroke();
+      }
+      return;
+    }
+    ctx.lineWidth = Math.max(1, 1.2 * gSC); ctx.strokeStyle = S.color; ctx.fillStyle = '#fff';
+    if (eyeOpen > 0.5) {
+      for (const p of eyes) {
+        ctx.fillStyle = '#fff';   // 每只眼重设眼白：上一只的瞳孔把 fillStyle 改成了深色，否则右眼眼白会被填黑
+        ctx.beginPath(); ctx.arc(p.x, p.y, r * 0.17, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        // 瞳孔明显朝鼠标偏移
+        const px = p.x + lookX * r * 0.09, py = p.y + clamp(lookY, -1, 1) * r * 0.09;   // 瞳孔偏移钳制在眼眶内（看书时 lookY 会大于 1）
+        ctx.beginPath(); ctx.arc(px, py, r * 0.09, 0, Math.PI * 2); ctx.fillStyle = S.color; ctx.fill();
+      }
+    } else {
+      ctx.lineWidth = Math.max(1.4, 1.6 * gSC);
+      for (const p of eyes) {
+        if (emo > 0.5) {
+          ctx.beginPath(); ctx.arc(p.x, p.y + r * 0.06, r * 0.16, 1.15 * Math.PI, 1.85 * Math.PI); ctx.stroke();
+        } else {
+          ctx.beginPath(); ctx.moveTo(p.x - r * 0.12, p.y); ctx.lineTo(p.x + r * 0.12, p.y); ctx.stroke();
+        }
+      }
+    }
+    // 委屈眉：emo 越大皱得越明显（内低外高的八字眉，emo=0 时不画），让"被戳就变脸"看得出来
+    if (emo > 0.12) {
+      const a = clamp((emo - 0.12) / 0.6, 0, 1);
+      ctx.lineWidth = Math.max(1, 1.4 * gSC);
+      for (const p of eyes) {
+        ctx.beginPath();
+        ctx.moveTo(p.x - r * 0.2, p.y - r * 0.36 - r * 0.05 * a);
+        ctx.quadraticCurveTo(p.x, p.y - r * 0.46 + r * 0.07 * a, p.x + r * 0.2, p.y - r * 0.36 - r * 0.13 * a);
+        ctx.stroke();
+      }
+    }
+    // 委屈泪：emo 越高泪越多，循环滑落（原来只在大 sad 才有，现在连续：>0.55 起泪，>0.85 双眼都哭）
+    if (emo > 0.55) {
+      const n = emo > 0.85 ? 2 : 1;
+      for (let i = 0; i < n; i++) {
+        const p = eyes[i], fall = ((now * 0.0007) + i * 0.5) % 1;
+        const ty = p.y + r * 0.18 + fall * r * 1.4;
+        ctx.beginPath(); ctx.ellipse(p.x, ty, r * 0.06, r * 0.1, 0, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(90,160,230,' + (0.85 * (1 - fall)).toFixed(2) + ')'; ctx.fill();
+      }
+    }
+  }
+  function drawMouth(head, mo, emo, happy, sing) {
+    const r = head.r, hy = head.y + r * 0.42, mw = r * 0.5;
+    // 唱歌：明显张开的嘴（随节奏），用于 sing 状态（盖过开心弧与说话嘴）
+    if (sing > 0.5) {
+      const oh = mo * r * 0.55;
+      ctx.beginPath(); ctx.ellipse(head.x, hy, mw * 0.82, Math.max(oh, r * 0.12), 0, 0, Math.PI * 2);
+      ctx.fillStyle = S.color; ctx.fill();
+      return;
+    }
+    // 开心大笑：明显上扬的大笑嘴（被揉头时触发，盖过委屈/平嘴）
+    if (happy > 0.5 && emo < 0.5) {
+      ctx.lineWidth = Math.max(1.6, 2 * gSC); ctx.strokeStyle = S.color;
+      ctx.beginPath(); ctx.arc(head.x, hy - r * 0.02, mw * 0.95, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+      return;
+    }
+    if (mo > 0.18) {
+      // 张嘴（说话 / 被戳惊呼）：开口向上的椭圆（颜色填充）
+      const oh = mo * r * 0.42;
+      ctx.beginPath(); ctx.ellipse(head.x, hy, mw * 0.72, oh, 0, 0, Math.PI * 2);
+      ctx.fillStyle = S.color; ctx.fill();
+      return;
+    }
+    // 闭嘴：连续弯曲的嘴线。emo 越大，嘴角越下垂（委屈）；emo=0 时中性平嘴（不再傻笑）
+    const drop = lerp(0, 1, clamp(emo, 0, 1));   // 0=平, 1=明显下凹(哭)
+    ctx.beginPath();
+    ctx.moveTo(head.x - mw, hy);
+    ctx.quadraticCurveTo(head.x, hy + drop * r * 0.5, head.x + mw, hy);
+    ctx.stroke();
+  }
+
+  function draw(pose, t, now) {
+    ctx.clearRect(0, 0, W, H);
+    drawArtworks(now);          // 先画已存在的画作（小火画的画），再画小火本身
+    // 被戳瞬间来一下"缩一下"的弹性反馈（约 180ms），让"戳到了"有即时视觉确认
+    let punch = 1;
+    if (now - pokeFlash < 180) punch = 1 - 0.14 * Math.sin((now - pokeFlash) / 180 * Math.PI);
+    const sc = pose.scale * FIG_SCALE * punch; gSC = sc;
+    const k = buildFigure(pose, t);
+    const lieFrac = Math.min(1, lieAngle / TOPPLE_MAX);
+
+    // 阴影（倒地时画成长条，贴着地面；直立时画在脚底）
+    ctx.save();
+    ctx.globalAlpha = 0.12 * pose.opacity;
+    ctx.fillStyle = '#000';
+    if (lieFrac > 0.05) {
+      const px = (k.footL.x + k.footR.x) / 2, py = (k.footL.y + k.footR.y) / 2;
+      const len = (S.torsoLen + S.neckLen + S.headR + S.thigh + S.shin) * sc;
+      ctx.beginPath(); ctx.ellipse(px, py + 4 * sc, len * 0.55, 9 * sc, 0, 0, Math.PI * 2); ctx.fill();
+    } else {
+      ctx.beginPath(); ctx.ellipse(k.root.x, k.footL.y + 6 * sc, 56 * sc, 10 * sc, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+
+    ctx.save();
+    ctx.globalAlpha = pose.opacity;
+    ctx.strokeStyle = S.color; ctx.lineWidth = S.lineW * sc;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    // 深度睡眠：睡着一会儿后整只人绕脚底翻倒躺平（倒地睡）
+    if (lieAngle > 0.001) {
+      const px = (k.footL.x + k.footR.x) / 2, py = (k.footL.y + k.footR.y) / 2;
+      ctx.translate(px, py); ctx.rotate(lieAngle); ctx.translate(-px, -py);
+    }
+
+    line(k.root, k.kneePtL); line(k.kneePtL, k.footL);
+    line(k.root, k.kneePtR); line(k.kneePtR, k.footR);
+    line(k.root, k.shoulders);
+    line(k.shoulders, k.headBottom);
+    line(k.shoulders, k.elbowPtL); line(k.elbowPtL, k.handL);
+    line(k.shoulders, k.elbowPtR); line(k.elbowPtR, k.handR);
+
+    ctx.beginPath(); ctx.arc(k.head.x, k.head.y, k.head.r, 0, Math.PI * 2); ctx.stroke();
+    drawEyes(k.head, pose.eyeOpen, pose.sad, now, pose.happy);
+    let mo = 0.06;
+    if (pose.sing > 0.5) mo = 0.2 + 0.55 * Math.abs(Math.sin(t * 7));     // 唱歌：嘴随节奏张合
+    else if (now < speakingUntil) mo = 0.12 + 0.8 * Math.abs(Math.sin(t * 15));
+    if (now - pokeFlash < 180) mo = Math.max(mo, 0.5);   // 被戳瞬间张嘴惊呼，强化"变脸"
+    drawMouth(k.head, mo, pose.sad, pose.happy, pose.sing);
+
+    // 睡眠时画 Zzz（eyeOpen<0.35 即在睡；状态过渡时随 lerp 自然淡入淡出）
+    if (pose.eyeOpen < 0.35) {
+      const zt = t * 1.6;
+      ctx.save();
+      ctx.fillStyle = S.color;
+      for (let i = 0; i < 3; i++) {
+        const ph = (zt + i * 0.7) % 3;
+        const a = 1 - ph / 3;
+        const sz = (9 + i * 6) * sc;
+        ctx.globalAlpha = pose.opacity * a * 0.75;
+        ctx.font = sz + 'px sans-serif';
+        ctx.fillText('z', k.head.x + 16 * sc + i * 9 * sc, k.head.y - 16 * sc - i * 11 * sc - ph * 7 * sc);
+      }
+      ctx.restore();
+    }
+    ctx.restore();
+
+    // 揉头（按住头顶搓）：在光标处画一只手来回揉动，配上笑眼/舒服表情（手随鼠标走）
+    if (now < petUntil) {
+      const wobX = Math.sin(now * 0.012) * 7 * sc;     // 左右搓的位移（明显来回，区别于"戳"）
+      const hx = mouse.x + wobX, hy = mouse.y;
+      ctx.save();
+      ctx.globalAlpha = 0.9;
+      ctx.strokeStyle = S.color; ctx.fillStyle = 'rgba(43,43,47,0.16)'; ctx.lineCap = 'round';
+      ctx.lineWidth = S.lineW * sc * 0.8;
+      ctx.beginPath(); ctx.ellipse(hx, hy, 15 * sc, 12 * sc, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      for (let i = 0; i < 4; i++) {                    // 手指
+        const fx2 = hx - 10 * sc + i * 7 * sc;
+        ctx.beginPath(); ctx.moveTo(fx2, hy - 8 * sc); ctx.lineTo(fx2, hy - 17 * sc); ctx.stroke();
+      }
+      // 搓动小弧线（明示"在揉"而非"在戳"）
+      ctx.globalAlpha = 0.5;
+      ctx.beginPath(); ctx.arc(hx, hy + 18 * sc, 9 * sc, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
+      ctx.restore();
+    }
+
+    // 看书：把书托到下巴/胸口前（双手举着），微微上翘朝向脸，安静阅读（不唱歌）
+    if (pose.book > 0.5) {
+      const bx = k.root.x + 8 * sc, by = k.shoulders.y + 34 * sc;   // 书在胸前、下巴正下方（不压脸）
+      const bw = 36 * sc, bh = 26 * sc;
+      ctx.save();
+      ctx.globalAlpha = pose.opacity;
+      ctx.translate(bx, by);
+      ctx.rotate(-0.22);                                    // 微微上翘，书页朝向脸，方便看字
+      ctx.strokeStyle = S.color; ctx.lineWidth = S.lineW * sc * 0.45;   // 书描边细一点，避免和手臂糊成黑块
+      ctx.fillStyle = 'rgba(255,255,255,.92)';
+      const topW = bw * 0.82, botW = bw;                    // 透视：远端(顶)略窄，像书页朝向眼睛
+      // 左页 / 右页（梯形：上窄下宽）
+      ctx.beginPath();
+      ctx.moveTo(0, -bh * 0.5); ctx.lineTo(-topW, -bh * 0.4);
+      ctx.lineTo(-botW, bh * 0.5); ctx.lineTo(0, bh * 0.62);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, -bh * 0.5); ctx.lineTo(topW, -bh * 0.4);
+      ctx.lineTo(botW, bh * 0.5); ctx.lineTo(0, bh * 0.62);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, -bh * 0.5); ctx.lineTo(0, bh * 0.62); ctx.stroke();   // 中缝
+      // 文字线
+      ctx.lineWidth = S.lineW * sc * 0.3;
+      for (let i = 1; i <= 3; i++) {
+        const yy = -bh * 0.28 + i * bh * 0.28;
+        ctx.beginPath(); ctx.moveTo(-botW * 0.8, yy); ctx.lineTo(-botW * 0.12, yy - 1 * sc); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(botW * 0.12, yy - 1 * sc); ctx.lineTo(botW * 0.8, yy); ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // 唱歌：头顶飘出的音符（♪♫），随节奏上飘（draw 内绘制，sing 时随头顶上飘）
+    if (pose.sing > 0.5) {
+      ctx.save();
+      ctx.fillStyle = '#ff8a3d';
+      for (let i = 0; i < 3; i++) {
+        const ph = ((now * 0.0011) + i * 0.4) % 1;
+        const nx = k.head.x + Math.sin(now * 0.004 + i * 2) * 18 * sc;
+        const ny = k.head.y - 24 * sc - ph * 66 * sc;
+        const sz = (12 + i * 2) * sc * (1 - ph * 0.3);
+        ctx.globalAlpha = pose.opacity * (1 - ph) * 0.85;
+        ctx.font = sz + 'px sans-serif';
+        ctx.fillText(i % 2 ? '♫' : '♪', nx, ny);
+      }
+      ctx.restore();
+    }
+
+    // 开心：头顶飘爱心（被宠/揉头使 mood 转正时），mirror 唱歌音符
+    if (pose.happy > 0.5) {
+      ctx.save();
+      ctx.fillStyle = '#ff5b8a';
+      for (let i = 0; i < 2; i++) {
+        const ph = ((now * 0.0012) + i * 0.5) % 1;
+        const nx = k.head.x + Math.sin(now * 0.005 + i * 2) * 14 * sc;
+        const ny = k.head.y - 22 * sc - ph * 60 * sc;
+        const sz = (10 + i * 2) * sc * (1 - ph * 0.3);
+        ctx.globalAlpha = pose.opacity * (1 - ph) * 0.9;
+        ctx.font = sz + 'px sans-serif';
+        ctx.fillText('♥', nx, ny);
+      }
+      ctx.restore();
+    }
+    // 思考：头顶飘一个正经的"思考泡泡"（白底描边 + 由小到大的尾迹）；
+    // 手托腮已由 buildFigure 把右臂抬到下巴实现，这里只画泡泡，不另画悬空的手
+    if (pose.think > 0.5) {
+      ctx.save();
+      ctx.globalAlpha = pose.opacity;
+      ctx.strokeStyle = 'rgba(110,120,130,.9)';
+      ctx.fillStyle = '#fff';
+      ctx.lineWidth = Math.max(1, 1.1 * gSC);
+      // 尾迹：头顶到主泡泡之间由小到大的几个圆（经典 thought bubble）
+      const bigX = k.head.x + k.head.r * 1.7, bigY = k.head.y - k.head.r * 1.7 - Math.sin(now * 0.003) * 3 * sc;
+      for (let i = 2; i >= 0; i--) {
+        const t = i / 2;
+        const cx = lerp(k.head.x + k.head.r * 0.25, bigX, t);
+        const cy = lerp(k.head.y - k.head.r * 0.85, bigY, t);
+        const rr = (2.2 + (2 - i) * 1.3) * sc;
+        ctx.beginPath(); ctx.arc(cx, cy, rr, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      }
+      // 主泡泡：白底描边
+      ctx.beginPath(); ctx.arc(bigX, bigY, 11 * sc, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      // 泡泡里一个"?"表示在琢磨
+      ctx.fillStyle = 'rgba(110,120,130,.95)';
+      ctx.font = (10 * sc) + 'px sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('?', bigX, bigY + 0.5 * sc);
+      ctx.restore();
+    }
+    if (pose.paint > 0.5) drawPaintHand(k, sc, pose);  // 画画：举画笔手，像拿笔画画
+  }
+
+  // ================= 绘画系统 =================
+  // 画作池：每幅画是一个对象，有绘画过程(drawing)与生命周期(life)，到期自动消散
+  let artworkPool = [];
+  let activeArt = null;            // 当前正在画的那幅（用于小火变色）
+  class Drawing {
+    constructor(type, x, y, strokes) {
+      this.type = type; this.x = x; this.y = y; this.strokes = strokes;
+      this.birth = performance.now();
+      this.drawDur = 2600;         // 逐笔画出耗时（小火一笔笔画）
+      this.life = 11000;           // 总寿命：画完展示约 8.4s 后消散
+      this.color = '#2b2b2f';
+    }
+  }
+  // 真·粒子烟花：升空 → 爆开 → 重力下落 → 渐隐（取代原来的静态放射线，看着才像烟花）
+  const FW_COLORS = ['#ff5b8a', '#ffd23d', '#6ab0ff', '#3aa655', '#b07cff', '#ff8a3d'];
+  // 小火"自己画"的线稿用色：临摹/生成路线不再用纯黑(#'2b2b2f')，改为亮色调色板，产生颜色变化
+  const ART_LINE_COLORS = ['#ff5b8a', '#ffd23d', '#6ab0ff', '#3aa655', '#b07cff', '#ff8a3d', '#2bb6c4'];
+  function fwColor() { return FW_COLORS[Math.floor(Math.random() * FW_COLORS.length)]; }
+  class FireworkFX {
+    constructor(x, y) {
+      this.x = x; this.y = y; this.born = performance.now();
+      this.life = 11000; this.isFx = true; this.dead = false;
+      this.glowColor = '#ff5b8a';   // 当前主色：身体随最近一次升空/爆炸的颜色变化（解决"画烟花不变色"）
+      this.rockets = []; this.sparks = []; this.lastLaunch = -1e9;
+    }
+    tick(now) {
+      const age = now - this.born;
+      // 周期性发射新火箭（整场表演结束前 1.5s 停发）
+      if (now - this.lastLaunch > 600 && this.rockets.length < 7 && age < this.life - 1500) {
+        this.lastLaunch = now;
+        const tx = this.x + (Math.random() - 0.5) * 150;
+        const ty = this.y - 120 - Math.random() * 60;
+        const col = fwColor(); this.glowColor = col;   // 升空中：身体先染上这发颜色
+        this.rockets.push({ x: tx + (Math.random() - 0.5) * 16, y: this.y, vx: (tx - this.x) * 0.01, vy: -3.6 - Math.random() * 1.6, target: ty, color: col });
+      }
+      // 火箭上升（重力减速），到顶点或越过目标高度即爆开
+      for (let i = this.rockets.length - 1; i >= 0; i--) {
+        const r = this.rockets[i];
+        r.x += r.vx; r.y += r.vy; r.vy += 0.05;
+        if (r.vy >= 0 || r.y <= r.target) { this.explode(r.x, r.y, r.color); this.rockets.splice(i, 1); }
+      }
+      // 火星：向外飞 + 重力下落 + 寿命衰减（重力调小、寿命调长 → 更密更久）
+      for (let i = this.sparks.length - 1; i >= 0; i--) {
+        const s = this.sparks[i];
+        s.x += s.vx; s.y += s.vy; s.vy += 0.055; s.vx *= 0.99; s.life -= 16;
+        if (s.life <= 0) this.sparks.splice(i, 1);
+      }
+      if (age > this.life && this.rockets.length === 0 && this.sparks.length === 0) this.dead = true;
+    }
+    explode(x, y, color) {
+      this.glowColor = color;   // 爆炸瞬间：身体染上这团火星的颜色
+      const n = 42 + Math.floor(Math.random() * 26);   // 42~68 颗，比之前密一倍
+      for (let i = 0; i < n; i++) {
+        const ang = Math.random() * Math.PI * 2, sp = 1.0 + Math.random() * 4.8;
+        this.sparks.push({ x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, color, life: 1100 + Math.random() * 900 });
+      }
+    }
+    render(ctx) {
+      ctx.save();
+      ctx.lineCap = 'round'; ctx.lineWidth = 2.4;
+      for (const r of this.rockets) {          // 上升中的火箭：拖一条短尾迹
+        ctx.strokeStyle = r.color; ctx.globalAlpha = 1;
+        ctx.beginPath(); ctx.moveTo(r.x, r.y); ctx.lineTo(r.x - r.vx * 2.2, r.y - r.vy * 2.2); ctx.stroke();
+      }
+      for (const s of this.sparks) {           // 爆开后的火星：按剩余寿命渐隐
+        ctx.globalAlpha = clamp(s.life / 1100, 0, 1);
+        ctx.strokeStyle = s.color;
+        ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(s.x - s.vx * 1.6, s.y - s.vy * 1.6); ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+  // 原语：用 prog(0→1) 控制"画到哪"，实现逐步作画（线条/圆/波浪/星/涂鸦）
+  function primLine(ctx, a, prog) {
+    const [x1, y1, x2, y2] = a; const t = prog;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t); ctx.stroke();
+  }
+  function primCircle(ctx, a, prog) {
+    const [cx, cy, r] = a; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2 * prog); ctx.stroke();
+  }
+  function primWave(ctx, a, prog) {
+    const [x1, y1, x2, y2, freq] = a; const n = 40; const seg = Math.floor(n * prog);
+    ctx.beginPath(); ctx.moveTo(x1, y1);
+    for (let i = 1; i <= seg; i++) { const t = i / n; const x = x1 + (x2 - x1) * t; const y = y1 + (y2 - y1) * t + Math.sin(t * Math.PI * freq) * 8; ctx.lineTo(x, y); }
+    ctx.stroke();
+  }
+  function primStar(ctx, a, prog) {
+    const [cx, cy, R, spikes] = a; const n = spikes * 2; const seg = Math.max(1, Math.floor(n * prog));
+    ctx.beginPath();
+    for (let i = 0; i <= seg; i++) { const ang = -Math.PI / 2 + i * Math.PI / spikes; const rr = i % 2 ? R * 0.45 : R; const x = cx + Math.cos(ang) * rr; const y = cy + Math.sin(ang) * rr; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+    ctx.stroke();
+  }
+  function primScribble(ctx, a, prog) {
+    const [cx, cy, seed] = a; let s = seed; const rnd = () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
+    const R = 34;   // 限制涂鸦范围，避免把整只动物糊成一团
+    const n = 16; const seg = Math.max(1, Math.floor(n * prog)); ctx.beginPath(); ctx.moveTo(cx, cy);
+    for (let i = 1; i <= seg; i++) ctx.lineTo(cx + (rnd() - 0.5) * R, cy + (rnd() - 0.5) * R);
+    ctx.stroke();
+  }
+  // 细节原语：dot=实心点(眼/斑/火星)、tri=实心三角(角/耳)、poly=开放轮廓(身体/腿)
+  function primDot(ctx, a, prog) {
+    if (prog <= 0) return;
+    const [cx, cy, r] = a; const rr = Math.max(r, 3.5);   // 半径太小就拉到最小可见，别让眼睛/斑点消失
+    ctx.beginPath(); ctx.arc(cx, cy, rr, 0, Math.PI * 2); ctx.fill();
+  }
+  function primTri(ctx, a, prog) {
+    if (prog <= 0) return;
+    const [x1, y1, x2, y2, x3, y3] = a;   // 三角是角/耳这类小细节，直接画完整，不按进度形变（避免畸形）
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.lineTo(x3, y3); ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  function primPoly(ctx, a, prog) {
+    const pts = []; for (let i = 0; i < a.length; i += 2) pts.push([a[i], a[i + 1]]);
+    const seg = Math.max(1, Math.floor(pts.length * prog));
+    ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < seg; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    if (prog >= 1) ctx.closePath();
+    ctx.stroke();
+  }
+  // 生成画作笔画（颜色随"部分"走：树干褐、叶绿、花瓣粉…小火画到哪段就变哪段的颜色）
+  function makeArtwork(type, x, y) {
+    if (type === 'tree') return [
+      { color: '#8a5a2b', prim: 'line', a: [x, y, x, y - 92] },
+      { color: '#3aa655', prim: 'circle', a: [x, y - 112, 34] },
+      { color: '#3aa655', prim: 'circle', a: [x - 22, y - 94, 22] },
+      { color: '#3aa655', prim: 'circle', a: [x + 22, y - 94, 22] },
+    ];
+    if (type === 'sun') {
+      const arr = [{ color: '#f5a623', prim: 'circle', a: [x, y - 6, 30] }];
+      for (let i = 0; i < 8; i++) { const ang = i * Math.PI / 4, r1 = 34, r2 = 50; arr.push({ color: '#f5a623', prim: 'line', a: [x + Math.cos(ang) * r1, y - 6 + Math.sin(ang) * r1, x + Math.cos(ang) * r2, y - 6 + Math.sin(ang) * r2] }); }
+      return arr;
+    }
+    if (type === 'flower') return [
+      { color: '#6b8e23', prim: 'line', a: [x, y, x, y - 58] },
+      { color: '#ff5b8a', prim: 'circle', a: [x, y - 72, 15] },
+      { color: '#ff5b8a', prim: 'circle', a: [x - 14, y - 64, 11] },
+      { color: '#ff5b8a', prim: 'circle', a: [x + 14, y - 64, 11] },
+      { color: '#ffd23d', prim: 'circle', a: [x, y - 68, 7] },
+    ];
+    if (type === 'star') return [{ color: '#ffd23d', prim: 'star', a: [x, y - 22, 26, 5] }];
+    if (type === 'cloud') return [
+      { color: '#9aa0a6', prim: 'circle', a: [x, y - 10, 20] },
+      { color: '#9aa0a6', prim: 'circle', a: [x - 22, y - 4, 16] },
+      { color: '#9aa0a6', prim: 'circle', a: [x + 22, y - 4, 16] },
+      { color: '#9aa0a6', prim: 'wave', a: [x - 34, y + 6, x + 34, y + 6, 3] },
+    ];
+    // ---- 手写模板：常见词用预调坐标的简笔画，质量 100% 可控（不靠模型/图标库的运气）----
+    // 牛：胖身体 + 头 + 鼻 + 耳 + 双角 + 四条腿 + 尾巴 + 斑点
+    if (type === 'cow') return [
+      { color: '#8a5a2b', prim: 'circle', a: [x, y - 52, 32] },
+      { color: '#8a5a2b', prim: 'circle', a: [x + 42, y - 78, 18] },
+      { color: '#e8b9a0', prim: 'circle', a: [x + 57, y - 70, 11] },
+      { color: '#8a5a2b', prim: 'circle', a: [x + 26, y - 86, 7] },
+      { color: '#f2e2c4', prim: 'line', a: [x + 34, y - 94, x + 29, y - 105] },
+      { color: '#f2e2c4', prim: 'line', a: [x + 50, y - 94, x + 55, y - 105] },
+      { color: '#2b2b2f', prim: 'dot', a: [x + 48, y - 84, 3.5] },
+      { color: '#8a5a2b', prim: 'line', a: [x - 20, y - 24, x - 22, y] },
+      { color: '#8a5a2b', prim: 'line', a: [x - 8, y - 22, x - 6, y] },
+      { color: '#8a5a2b', prim: 'line', a: [x + 10, y - 22, x + 12, y] },
+      { color: '#8a5a2b', prim: 'line', a: [x + 22, y - 24, x + 24, y] },
+      { color: '#8a5a2b', prim: 'line', a: [x - 30, y - 62, x - 38, y - 42] },
+      { color: '#2b2b2f', prim: 'dot', a: [x - 39, y - 38, 4] },
+      { color: '#2b2b2f', prim: 'circle', a: [x - 12, y - 60, 8] },
+      { color: '#2b2b2f', prim: 'circle', a: [x + 14, y - 44, 6] },
+    ];
+    // 羊：一团羊毛（4 个圆）+ 深色头 + 垂耳 + 细腿
+    if (type === 'sheep') return [
+      { color: '#dcdce2', prim: 'circle', a: [x - 18, y - 46, 22] },
+      { color: '#dcdce2', prim: 'circle', a: [x + 4, y - 54, 24] },
+      { color: '#dcdce2', prim: 'circle', a: [x + 24, y - 44, 20] },
+      { color: '#dcdce2', prim: 'circle', a: [x - 6, y - 32, 22] },
+      { color: '#2b2b2f', prim: 'circle', a: [x - 42, y - 68, 13] },
+      { color: '#2b2b2f', prim: 'circle', a: [x - 35, y - 80, 5.5] },
+      { color: '#dcdce2', prim: 'dot', a: [x - 48, y - 70, 3] },
+      { color: '#2b2b2f', prim: 'line', a: [x - 20, y - 22, x - 22, y] },
+      { color: '#2b2b2f', prim: 'line', a: [x - 6, y - 20, x - 6, y] },
+      { color: '#2b2b2f', prim: 'line', a: [x + 10, y - 20, x + 12, y] },
+      { color: '#2b2b2f', prim: 'line', a: [x + 22, y - 22, x + 24, y] },
+    ];
+    // 烟花：真·放射状爆开（多簇不同高度/颜色），绝不再被当成花
+    if (type === 'fireworks') {
+      const arr = [];
+      const bursts = [
+        { cx: x - 40, cy: y - 100, r: 36, n: 10, c: '#ff5b8a' },
+        { cx: x + 28, cy: y - 124, r: 26, n: 8, c: '#ffd23d' },
+        { cx: x + 2, cy: y - 58, r: 18, n: 7, c: '#6ab0ff' },
+      ];
+      for (const b of bursts) {
+        for (let i = 0; i < b.n; i++) {
+          const ang = i * Math.PI * 2 / b.n + 0.15;
+          arr.push({ color: b.c, prim: 'line', a: [b.cx + Math.cos(ang) * b.r * 0.3, b.cy + Math.sin(ang) * b.r * 0.3, b.cx + Math.cos(ang) * b.r, b.cy + Math.sin(ang) * b.r] });
+        }
+        arr.push({ color: b.c, prim: 'dot', a: [b.cx, b.cy, 4] });
+      }
+      return arr;
+    }
+    // 圣诞树：分层松塔（3 层三角）+ 树干 + 顶星 + 彩球（圣诞专用，区别于普通树）
+    if (type === 'christmas') {
+      const green = '#2f8f4e', dark = '#247a40';
+      return [
+        { color: '#8a5a2b', prim: 'poly', a: [x - 10, y - 8, x + 10, y - 8, x + 10, y - 42, x - 10, y - 42] }, // 树干
+        { color: green, prim: 'tri', a: [x - 46, y - 42, x + 46, y - 42, x, y - 94] },   // 下层
+        { color: dark, prim: 'tri', a: [x - 36, y - 80, x + 36, y - 80, x, y - 128] },    // 中层
+        { color: green, prim: 'tri', a: [x - 24, y - 116, x + 24, y - 116, x, y - 158] }, // 上层
+        { color: '#f5c518', prim: 'star', a: [x, y - 176, 13, 5] },                       // 顶星
+        { color: '#ff5b8a', prim: 'dot', a: [x - 24, y - 56, 4] },
+        { color: '#6ab0ff', prim: 'dot', a: [x + 20, y - 64, 4] },
+        { color: '#ffd23d', prim: 'dot', a: [x - 6, y - 78, 4] },
+        { color: '#ff5b8a', prim: 'dot', a: [x + 10, y - 100, 4] },
+        { color: '#6ab0ff', prim: 'dot', a: [x - 14, y - 108, 4] },
+        { color: '#ffd23d', prim: 'dot', a: [x, y - 142, 4] },
+      ];
+    }
+    // 猫：圆头 + 尖耳 + 圆身 + 眼/鼻 + 胡须 + 翘尾
+    if (type === 'cat') {
+      // 坐姿猫：蛋形身体 + 头 + 尖耳 + 眼鼻 + 胡须 + 两只前爪 + 卷尾
+      const body = [x, y - 88, x + 22, y - 78, x + 30, y - 55, x + 28, y - 30, x + 18, y - 14, x, y - 12, x - 18, y - 14, x - 28, y - 30, x - 30, y - 55, x - 22, y - 78];
+      const tail = [x + 26, y - 40, x + 40, y - 40, x + 48, y - 28, x + 46, y - 14, x + 36, y - 10];
+      return [
+        { color: '#4a4a52', prim: 'poly', a: body },
+        { color: '#4a4a52', prim: 'circle', a: [x, y - 104, 22] },
+        { color: '#4a4a52', prim: 'tri', a: [x - 20, y - 122, x - 22, y - 100, x - 6, y - 106] },
+        { color: '#4a4a52', prim: 'tri', a: [x + 20, y - 122, x + 22, y - 100, x + 6, y - 106] },
+        { color: '#ffd23d', prim: 'dot', a: [x - 8, y - 106, 3.5] },
+        { color: '#ffd23d', prim: 'dot', a: [x + 8, y - 106, 3.5] },
+        { color: '#ff9db0', prim: 'dot', a: [x, y - 98, 3] },
+        { color: '#4a4a52', prim: 'line', a: [x - 22, y - 100, x - 44, y - 102] },
+        { color: '#4a4a52', prim: 'line', a: [x - 22, y - 96, x - 44, y - 94] },
+        { color: '#4a4a52', prim: 'line', a: [x + 22, y - 100, x + 44, y - 102] },
+        { color: '#4a4a52', prim: 'line', a: [x + 22, y - 96, x + 44, y - 94] },
+        { color: '#4a4a52', prim: 'line', a: [x - 14, y - 26, x - 14, y - 6] },
+        { color: '#4a4a52', prim: 'line', a: [x + 14, y - 26, x + 14, y - 6] },
+        { color: '#4a4a52', prim: 'dot', a: [x - 14, y - 6, 4] },
+        { color: '#4a4a52', prim: 'dot', a: [x + 14, y - 6, 4] },
+        { color: '#4a4a52', prim: 'poly', a: tail },
+      ];
+    }
+    // 狗：圆头 + 垂耳 + 浅色口鼻 + 圆身 + 尾 + 腿
+    if (type === 'dog') return [
+      { color: '#a9723c', prim: 'circle', a: [x, y - 90, 24] },
+      { color: '#a9723c', prim: 'circle', a: [x - 25, y - 94, 10] },
+      { color: '#a9723c', prim: 'circle', a: [x + 25, y - 94, 10] },
+      { color: '#c98f52', prim: 'circle', a: [x, y - 74, 12] },
+      { color: '#2b2b2f', prim: 'dot', a: [x, y - 78, 3.5] },
+      { color: '#a9723c', prim: 'circle', a: [x, y - 44, 30] },
+      { color: '#2b2b2f', prim: 'dot', a: [x - 9, y - 94, 3] },
+      { color: '#2b2b2f', prim: 'dot', a: [x + 9, y - 94, 3] },
+      { color: '#a9723c', prim: 'line', a: [x - 26, y - 38, x - 46, y - 76] },
+      { color: '#a9723c', prim: 'line', a: [x - 16, y - 16, x - 18, y] },
+      { color: '#a9723c', prim: 'line', a: [x + 16, y - 16, x + 18, y] },
+    ];
+    // 兔：长耳朵 + 头 + 身 + 眼/鼻 + 团尾 + 腿
+    if (type === 'rabbit') return [
+      { color: '#e8e8ee', prim: 'tri', a: [x - 16, y - 94, x - 22, y - 134, x - 2, y - 98] },
+      { color: '#e8e8ee', prim: 'tri', a: [x + 16, y - 94, x + 22, y - 134, x + 2, y - 98] },
+      { color: '#e8e8ee', prim: 'circle', a: [x, y - 76, 22] },
+      { color: '#e8e8ee', prim: 'circle', a: [x, y - 40, 28] },
+      { color: '#2b2b2f', prim: 'dot', a: [x - 9, y - 80, 3.5] },
+      { color: '#2b2b2f', prim: 'dot', a: [x + 9, y - 80, 3.5] },
+      { color: '#ff9db0', prim: 'dot', a: [x, y - 70, 3] },
+      { color: '#e8e8ee', prim: 'circle', a: [x - 28, y - 34, 9] },
+      { color: '#e8e8ee', prim: 'line', a: [x - 16, y - 14, x - 18, y] },
+      { color: '#e8e8ee', prim: 'line', a: [x + 16, y - 14, x + 18, y] },
+    ];
+    // 鱼：椭圆身 + 尾巴 + 背鳍 + 眼
+    if (type === 'fish') {
+      const body = [];
+      for (let i = 0; i <= 14; i++) {
+        const ang = i * Math.PI * 2 / 14;
+        body.push(x + Math.cos(ang) * 30, y - 60 + Math.sin(ang) * 20);
+      }
+      return [
+        { color: '#4aa3d8', prim: 'poly', a: body },
+        { color: '#4aa3d8', prim: 'tri', a: [x + 24, y - 60, x + 52, y - 84, x + 52, y - 36] },
+        { color: '#2f7fae', prim: 'tri', a: [x - 4, y - 78, x + 12, y - 96, x + 18, y - 76] },
+        { color: '#2b2b2f', prim: 'dot', a: [x - 16, y - 66, 3.5] },
+      ];
+    }
+    // 房子：墙 + 屋顶 + 窗 + 门
+    if (type === 'house') return [
+      { color: '#8a5a2b', prim: 'poly', a: [x - 36, y - 10, x - 36, y - 62, x + 36, y - 62, x + 36, y - 10] },
+      { color: '#c0392b', prim: 'poly', a: [x - 44, y - 62, x, y - 104, x + 44, y - 62] },
+      { color: '#6ab0ff', prim: 'poly', a: [x - 24, y - 30, x - 24, y - 50, x - 6, y - 50, x - 6, y - 30] },
+      { color: '#8a5a2b', prim: 'poly', a: [x + 8, y - 10, x + 8, y - 38, x + 26, y - 38, x + 26, y - 10] },
+    ];
+    // 心：两个圆 + 一个三角
+    if (type === 'heart') {
+      // 标准心形：参数方程采样成一条闭合平滑曲线（告别两圆+三角的傻瓜拼法）
+      const hb = [];
+      for (let i = 0; i <= 46; i++) {
+        const t = i * Math.PI * 2 / 46;
+        const hx = 16 * Math.pow(Math.sin(t), 3);
+        const hy = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+        hb.push(x + hx * 1.9, (y - 66) - hy * 1.9);
+      }
+      return [{ color: '#ff5b8a', prim: 'poly', a: hb }];
+    }
+    // 火箭：机身 + 双翼 + 舷窗 + 尾焰
+    if (type === 'rocket') return [
+      { color: '#e0e4ea', prim: 'poly', a: [x, y - 130, x + 16, y - 96, x + 16, y - 56, x - 16, y - 56, x - 16, y - 96] },
+      { color: '#c0392b', prim: 'poly', a: [x - 16, y - 96, x - 30, y - 66, x - 16, y - 56] },
+      { color: '#c0392b', prim: 'poly', a: [x + 16, y - 96, x + 30, y - 66, x + 16, y - 56] },
+      { color: '#6ab0ff', prim: 'circle', a: [x, y - 110, 7] },
+      { color: '#f5a623', prim: 'poly', a: [x - 10, y - 56, x, y - 26, x + 10, y - 56] },
+    ];
+    // 国旗：旗杆 + 飘扬旗面 + 五角星（国庆/节日用）
+    if (type === 'flag') return [
+      { color: '#7a7f86', prim: 'line', a: [x, y, x, y - 96] },
+      { color: '#c0392b', prim: 'poly', a: [x, y - 92, x + 52, y - 96, x + 48, y - 70, x, y - 66] },
+      { color: '#f5c518', prim: 'star', a: [x + 22, y - 82, 7, 5] },
+    ];
+    // 月亮：满月 + 环形山（中秋/赏月用）
+    if (type === 'moon') return [
+      { color: '#ffd23d', prim: 'circle', a: [x, y - 56, 34] },
+      { color: '#e6b800', prim: 'dot', a: [x - 12, y - 64, 5] },
+      { color: '#e6b800', prim: 'dot', a: [x + 10, y - 50, 4] },
+      { color: '#e6b800', prim: 'dot', a: [x - 4, y - 44, 3] },
+    ];
+    // random：随机叠 2–3 个原语（圆/星/波浪/涂鸦），颜色随机
+    const palette = ['#ff5b8a', '#3aa655', '#f5a623', '#ffd23d', '#6ab0ff', '#b07cff'];
+    const prims = ['circle', 'star', 'wave', 'scribble'];
+    const cnt = 2 + Math.floor(Math.random() * 2); const arr = [];
+    for (let i = 0; i < cnt; i++) {
+      const c = palette[Math.floor(Math.random() * palette.length)];
+      const p = prims[Math.floor(Math.random() * prims.length)];
+      if (p === 'circle') arr.push({ color: c, prim: 'circle', a: [x + (Math.random() - 0.5) * 40, y - 20 + (Math.random() - 0.5) * 40, 16 + Math.random() * 14] });
+      else if (p === 'star') arr.push({ color: c, prim: 'star', a: [x + (Math.random() - 0.5) * 40, y - 20 + (Math.random() - 0.5) * 40, 18, 5] });
+      else if (p === 'wave') arr.push({ color: c, prim: 'wave', a: [x - 40, y - 10 + Math.random() * 30, x + 40, y - 10 + Math.random() * 30, 3] });
+      else arr.push({ color: c, prim: 'scribble', a: [x + (Math.random() - 0.5) * 30, y - 10 + (Math.random() - 0.5) * 30, Math.floor(Math.random() * 99999) + 1] });
+    }
+    return arr;
+  }
+  // 解析"画X"指令 → 画作类型
+  function knownPaint(v) {
+    const t = (v || '').toLowerCase();
+    if (t.includes('树')) return 'tree';
+    if (t.includes('太阳')) return 'sun';   // 仅"太阳"；去掉裸"日"，避免 日本/日记/日期 误判成太阳
+    if (t.includes('烟花') || t.includes('烟火') || t.includes('火花') || t.includes('爆竹')) return null;  // 烟花/烟火走 API，画真正的放射状烟花而非花
+    if (t.includes('花') && !t.includes('雪花')) return 'flower';   // 排除雪花（放行给 Iconify 画"雪"）
+    // "星" 仅当不是复合天体/科幻词时才画装饰星；外星人/卫星/星球/火星/流星 应走 Iconify 临摹（干净线稿），而非画成五角星
+    if (t.includes('星') && !/(外星|卫星|星球|火星|流星)/.test(t)) return 'star';
+    if (t.includes('云')) return 'cloud';
+    return null;   // 不认识 → 交给图标库/智谱
+  }
+  // 当前画作进度 → 小火应变的颜色（正在画的那一笔的颜色）
+  function paintColorAt(art, now) {
+    const p = clamp((now - art.birth) / art.drawDur, 0, 1);
+    const n = art.strokes.length; const idx = Math.min(n - 1, Math.floor(p * n));
+    return art.strokes[idx].color;
+  }
+  // 渲染画作池（先画已存在的画，再画小火本身）
+  function drawArtworks(now) {
+    for (let i = artworkPool.length - 1; i >= 0; i--) {
+      const art = artworkPool[i];
+      if (art.isFx) {                 // 粒子特效（真烟花）：自行 tick + 渲染，不参与逐笔作画
+        art.tick(now);
+        const age = now - art.born;
+        ctx.save();
+        if (age > art.life - 1200) ctx.globalAlpha = clamp((art.life - age) / 1200, 0, 1);  // 末段整体渐隐
+        art.render(ctx);
+        ctx.restore();
+        if (art.dead) artworkPool.splice(i, 1);
+        continue;
+      }
+      const age = now - art.birth;
+      const p = clamp(age / art.drawDur, 0, 1); const n = art.strokes.length;
+      const doneUpTo = p * n;     // 已画到第几笔（含局部进度）
+      ctx.save();
+      ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.globalAlpha = age > art.life - 1500 ? clamp((art.life - age) / 1500, 0, 1) : 1;  // 末段渐隐消散
+      for (let s = 0; s < n; s++) {
+        const st = art.strokes[s]; const local = clamp(doneUpTo - s, 0, 1);
+        if (local <= 0) continue;
+        ctx.strokeStyle = st.color; ctx.fillStyle = st.color;
+        if (st.prim === 'line') primLine(ctx, st.a, local);
+        else if (st.prim === 'circle') primCircle(ctx, st.a, local);
+        else if (st.prim === 'wave') primWave(ctx, st.a, local);
+        else if (st.prim === 'star') primStar(ctx, st.a, local);
+        else if (st.prim === 'scribble') primScribble(ctx, st.a, local);
+        else if (st.prim === 'dot') primDot(ctx, st.a, local);
+        else if (st.prim === 'tri') primTri(ctx, st.a, local);
+        else if (st.prim === 'poly') primPoly(ctx, st.a, local);
+      }
+      ctx.restore();
+      if (age > art.life) artworkPool.splice(i, 1);
+    }
+  }
+  // 画画时举在右手的"画笔"
+  function drawPaintHand(k, sc, pose) {
+    ctx.save();
+    ctx.globalAlpha = pose.opacity;
+    const hx = k.handR.x, hy = k.handR.y;
+    ctx.strokeStyle = S.color; ctx.lineWidth = S.lineW * sc * 0.5; ctx.lineCap = 'round';
+    const penTip = point({ x: hx, y: hy }, UP - 0.6, 26 * sc);
+    ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(penTip.x, penTip.y); ctx.stroke();
+    ctx.fillStyle = '#2b2b2f';
+    ctx.beginPath(); ctx.arc(penTip.x, penTip.y, 3 * sc, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+  // 触发画画：在小火面前生成画作，进入 paint 状态
+  function startPaint(type) {
+    const ax = posX + 96, ay = posY + 36;
+    if (type === 'fireworks') {                       // 真粒子烟花：升空 → 爆开 → 重力下落 → 渐隐
+      const fx = new FireworkFX(ax + 10, ay + 30);
+      artworkPool.push(fx); activeArt = fx;
+      setState('paint', fx.life + 4000);
+      return;
+    }
+    const art = new Drawing(type, ax, ay, makeArtwork(type, ax, ay));
+    artworkPool.push(art); activeArt = art;
+    setState('paint', 12000);
+  }
+  // 弹出"画点什么"输入框（复用弹框穿透机制，输入框上 ×/按钮才点得到）
+  function openPaintInput() {
+    const box = document.getElementById('paintBox');
+    box.style.left = '50%'; box.style.top = '40%';
+    box.style.transform = 'translate(-50%,-50%)';
+    box.classList.remove('hidden');
+    const inp = document.getElementById('paintText');
+    inp.value = ''; setTimeout(() => inp.focus(), 30);
+  }
+  // ---- 路线三：Quick Draw 手绘库检索（长尾兜底）----
+  // 已下载 16 类（猫/狗/鱼/鸟/鸭/房子/树/花/太阳/星星/山/车/杯子/椅子/书/苹果），每类 200 张真人手绘简笔画。
+  // 命中即随机抽一张临摹。注意：QD 风格天生粗糙（数据本身性质，救不回），不做视觉筛选，仅当图标库也没有时才走这里。
+  let _qdManifest = null;
+  function qdBase() {
+    const p = (typeof location !== 'undefined' && location.pathname) || '';
+    if (p.indexOf('/web/index.html') >= 0 || p.endsWith('/web/') || p === '/web') return 'qd/';
+    return 'web/qd/';
+  }
+  async function loadQdManifest() {
+    if (_qdManifest) return _qdManifest;
+    const r = await fetch(qdBase() + 'manifest.json');
+    if (!r.ok) throw new Error('qd manifest ' + r.status);
+    _qdManifest = await r.json();
+    return _qdManifest;
+  }
+  function qdKeyFor(v) {
+    if (!_qdManifest || !_qdManifest.zhToKey) return null;
+    const map = _qdManifest.zhToKey;
+    // 去掉常见前缀修饰词（画/画个/一只/小/大/棵…），避免"外星人"误中"星"、"秘书"误中"书"等子串串扰
+    const QD_MOD = /^(画|画个|画一只|画一幅|画一|画只|一只|只|个|棵|小|大|彩色|红色|白色|黑色|蓝色|绿色|黄色|可爱|卡通|简笔|的|了|哦|呀|呢|吧|吗|啊|这|那|一)\s*/;
+    let t = (v || '').trim();
+    if (map[t]) return map[t];
+    const t2 = t.replace(QD_MOD, '');
+    if (t2 && map[t2]) return map[t2];
+    const keys = Object.keys(map).sort((a, b) => b.length - a.length);  // 末尾命中且前缀仅为修饰词才认
+    for (const k of keys) {
+      if (t.endsWith(k)) {
+        const pre = t.slice(0, t.length - k.length);
+        if (pre === '' || QD_MOD.test(pre + ' ')) return map[k];
+      }
+    }
+    return null;
+  }
+  async function qdPaint(v) {
+    const box = document.getElementById('paintBox');
+    const hint = document.getElementById('paintHint');
+    const go = document.getElementById('paintGo');
+    box.classList.remove('hidden');
+    setState('think', 120000);
+    const recoverBtn = () => { if (go) { go.disabled = false; go.textContent = '画！'; } };
+    if (hint) hint.textContent = '🤔 小火翻了翻手绘库找「' + v + '」…';
+    if (go) { go.disabled = true; go.textContent = '找…'; }
+    let key = null;
+    try { await loadQdManifest(); key = qdKeyFor(v); } catch (e) { key = null; }
+    if (!key) {
+      if (hint) hint.textContent = '😵 手绘库也没有，让小火自己想～';
+      recoverBtn();
+      return llmPaint(v);
+    }
+    try {
+      const r = await fetch(qdBase() + key + '.json');
+      if (!r.ok) throw new Error('qd ' + key + ' ' + r.status);
+      const j = await r.json();
+      const samples = j && j.samples;
+      if (!samples || !samples.length) throw new Error('qd empty');
+      const samp = samples[Math.floor(Math.random() * samples.length)];
+      const ax = posX + 96, ay = posY + 36;
+      const strokes = [];
+      for (const st of samp) {
+        if (!Array.isArray(st) || st.length < 2) continue;
+        const xs = st[0], ys = st[1];
+        if (!Array.isArray(xs) || !Array.isArray(ys) || xs.length < 2) continue;
+        const a = [];
+        for (let k = 0; k < xs.length; k++) a.push(xs[k], ys[k]);
+        strokes.push({ color: ART_LINE_COLORS[strokes.length % ART_LINE_COLORS.length], prim: 'poly', a });
+      }
+      if (!strokes.length) throw new Error('qd no strokes');
+      normalizeArtworkCoords(strokes, ax, ay - 50, 150);
+      if (hint) hint.textContent = '🎨 找到手绘稿，临摹！';
+      recoverBtn();
+      setTimeout(() => box.classList.add('hidden'), 500);
+      startPaintStrokes(strokes);
+    } catch (e) {
+      console.warn('[qd] 取稿失败，转 LLM：', e);
+      if (hint) hint.textContent = '😵 手绘库读取失败，让小火自己想～';
+      recoverBtn();
+      return llmPaint(v);
+    }
+  }
+
+  // ---- 路线二：图标库临摹（Iconify）----
+  // Iconify 搜索是英文关键词制的，中文直接搜会扑空，必须先翻成英文
+  // 中文词 → 英文查询词（数组=同义词，多候选依次尝试，提升图标库命中率）
+  const ZH_EN = {
+    '牛':['cow'],'羊':['sheep'],'狗':['dog'],'猫':['cat'],'猪':['pig'],'鸡':['chicken','hen'],'鸭':['duck'],'鹅':['goose'],'鸟':['bird'],'鱼':['fish'],'马':['horse'],'驴':['donkey'],
+    '兔':['rabbit','bunny'],'鼠':['mouse'],'老虎':['tiger'],'狮子':['lion'],'熊':['bear'],'熊猫':['panda'],'猴子':['monkey'],'猩猩':['gorilla'],'长颈鹿':['giraffe'],'大象':['elephant'],
+    '鹿':['deer'],'狐狸':['fox'],'狼':['wolf'],'企鹅':['penguin'],'螃蟹':['crab'],'虾':['shrimp'],'蝴蝶':['butterfly'],'蜜蜂':['bee'],'蜘蛛':['spider'],'蜗牛':['snail'],'乌龟':['turtle'],'蛇':['snake'],'青蛙':['frog'],'龙':['dragon'],'蝙蝠':['bat'],'猫头鹰':['owl'],
+    '花':['flower'],'玫瑰':['rose'],'向日葵':['sunflower'],'树':['tree'],'草':['grass'],'叶子':['leaf'],'仙人掌':['cactus'],'蘑菇':['mushroom'],
+    '太阳':['sun'],'月亮':['moon'],'星星':['star'],'云':['cloud'],'雨':['rain'],'雪':['snow'],'雪花':['snow'],'雪人':['snowman'],'彩虹':['rainbow'],'闪电':['bolt','lightning'],'风':['wind'],'火':['fire'],'水':['water','droplet'],'冰':['ice'],'波浪':['wave'],
+    '山':['mountain'],'海':['ocean'],'河':['river'],'岛':['island'],'地球':['globe','earth'],'星球':['planet'],'火星':['mars'],'卫星':['satellite'],'流星':['meteor'],
+    '房子':['house'],'家':['home'],'城堡':['castle'],'桥':['bridge'],'帐篷':['tent'],'灯塔':['lighthouse'],'风车':['windmill'],'钟':['clock'],
+    '车':['car'],'火车':['train'],'船':['boat','ship'],'飞机':['airplane','plane'],'自行车':['bicycle'],'摩托车':['motorcycle'],'公交车':['bus'],'火箭':['rocket'],'飞船':['spaceship'],'热气球':['hot-air-balloon'],'救护车':['ambulance'],'警车':['police-car'],'消防车':['fire-truck'],
+    '表':['watch'],'手机':['phone','mobile'],'电脑':['computer','laptop'],'相机':['camera'],'电视':['tv'],'收音机':['radio'],'游戏机':['gamepad'],'键盘':['keyboard'],'打印机':['printer'],'灯泡':['bulb','lamp'],'电池':['battery'],'插头':['plug'],'卫星':['satellite'],'无人机':['drone'],'机器人':['robot','android'],'芯片':['cpu','chip'],'鼠标':['cursor'],
+    '书':['book'],'笔':['pen'],'铅笔':['pencil'],'尺子':['ruler'],'剪刀':['scissors'],'信封':['envelope'],'纸':['paper'],'文件夹':['folder'],'图钉':['pin'],'钥匙':['key'],'锁':['lock'],'放大镜':['search','magnifier'],'指南针':['compass'],'地图':['map'],'日历':['calendar'],
+    '苹果':['apple'],'香蕉':['banana'],'西瓜':['watermelon'],'葡萄':['grapes'],'草莓':['strawberry'],'樱桃':['cherry'],'柠檬':['lemon'],'橙子':['orange'],'梨':['pear'],'桃子':['peach'],'菠萝':['pineapple'],'胡萝卜':['carrot'],'玉米':['corn'],'蛋糕':['cake'],'冰淇淋':['ice-cream'],'糖果':['candy'],'饼干':['cookie'],'面包':['bread'],'咖啡':['coffee'],'茶':['tea'],'啤酒':['beer'],'酒杯':['wine'],'碗':['bowl'],'杯子':['cup'],'锅':['pot'],'刀':['knife'],'叉':['fork'],'勺子':['spoon'],'蜡烛':['candle'],
+    '心':['heart'],'笑脸':['smile'],'眼睛':['eye'],'手':['hand'],'脚':['foot'],'耳朵':['ear'],'鼻子':['nose'],'嘴':['mouth'],'脸':['face'],'头发':['hair'],'牙齿':['tooth'],'骨头':['bone'],'脑':['brain'],
+    '伞':['umbrella'],'礼物':['gift'],'气球':['balloon'],'音乐':['music'],'音符':['note'],'吉他':['guitar'],'钢琴':['piano'],'小提琴':['violin'],'鼓':['drum'],'喇叭':['trumpet'],
+    '钱':['money'],'硬币':['coin'],'皇冠':['crown'],'宝石':['gem'],'钻石':['diamond'],'戒指':['ring'],'项链':['necklace'],'铃铛':['bell'],'奖杯':['trophy'],'旗帜':['flag'],'盾':['shield'],'剑':['sword'],'枪':['gun'],'弓箭':['bow'],'锚':['anchor'],
+    '外星人':['alien'],'骷髅':['skull'],'幽灵':['ghost'],'巫师':['wizard'],'天使':['angel'],'恶魔':['devil'],'小丑':['clown'],'国王':['king'],'女王':['queen'],'骑士':['knight'],'海盗':['pirate'],'美人鱼':['mermaid'],
+    '圣诞树':['christmas-tree'],'南瓜':['pumpkin'],'灯笼':['lantern'],'烟花':['fireworks'],'派对':['party'],'生日':['birthday'],'婚礼':['wedding'],'毕业':['graduation']
+  };
+  // 优先选"线/单色"图标集；排除 emoji/位图/品牌 logo 风（那些当描边会糊成一坨）
+  const ICON_EXCLUDE = ['noto','twemoji','openmoji','fxemoji','emojione','fluent-emoji','noto-v1','circle-flags','flag','flat-color-icons','flagpack','logos','devicon','file-icons','vscode-icons','catppuccin','codicon','flat-ui','cryptocurrency','covid'];
+  // 优选"干净线稿"图标集（按质量排序）；命中的图标临摹出来最像简笔画
+  const PREF_ICON_SETS = ['lucide','tabler','mdi','ion','clarity','carbon','solar','bx','gg','ci','mi','ph','ri','teenyicons','heroicons','octicons','eva','feather','entypo','pixelarticons','gridicons','system-uicons','akar','ant-design','basil','bi','charm','cil','dashicons','eos-icons','ep','f7','fa','famicons','fluent','grommet-icons','jam','ls','la','pe','si','wi','zondicons','bytesize','vaadin','healthicons','iconoir','material-symbols','mingcute','mono-icons','nimbus','pajamas','radix-icons','subway','token','typ','uiw','uil','uit','wh','zm'];
+  // 中文词 → 多个英文候选（同义词依次尝试，提升图标库命中率）；不认识返回 [] 交给 LLM
+  function toIconQueries(v) {
+    if (!v) return [];
+    let t = (v || '').trim().replace(/^(画|画个|画一只|画一幅|画一|画只)\s*/, '').trim();
+    if (/^[\x00-\x7F]+$/.test(t)) return [t.toLowerCase()];           // 纯英文直接查
+    const keys = Object.keys(ZH_EN).sort((a, b) => b.length - a.length);  // 最长优先（"鼠标"先于"鼠"）
+    if (ZH_EN[t]) return ZH_EN[t].slice();
+    for (const k of keys) if (t.includes(k)) return ZH_EN[k].slice();
+    // 去掉常见修饰词再试一次
+    const t2 = t.replace(/(小|大|一只|只|个|彩色|红色|白色|黑色|蓝色|绿色|黄色|可爱|卡通|简笔|的|了|哦|呀|呢|吧|吗|啊|这|那|一)\s*/g, '').trim();
+    if (t2 && ZH_EN[t2]) return ZH_EN[t2].slice();
+    for (const k of keys) if (t2 && t2.includes(k)) return ZH_EN[k].slice();
+    return [];                                                         // 中文且不认识 → 交给 LLM
+  }
+  function pickIcon(icons) {
+    if (!icons || !icons.length) return null;
+    const usable = icons.filter(ic => !ICON_EXCLUDE.includes(ic.split(':')[0]));
+    if (!usable.length) return null;
+    for (const set of PREF_ICON_SETS) { const hit = usable.find(ic => ic.split(':')[0] === set); if (hit) return hit; }
+    return usable[0];
+  }
+  function extractFirstPath(svg) {
+    if (typeof svg !== 'string') return null;
+    const m = svg.match(/d="([^"]*)"/);
+    return m ? m[1] : null;
+  }
+  // 从图标 body(可能含多条 path) 提取所有 d 路径，确保多路径图标(如动物轮廓+眼睛)完整临摹，而非只画第一条
+  function iconPaths(body) {
+    if (typeof body !== 'string') return [];
+    const ds = []; const re = /d="([^"]*)"/g; let m;
+    while ((m = re.exec(body))) if (m[1] && m[1].trim()) ds.push(m[1].trim());
+    return ds;
+  }
+  // 把一个 SVG path 的 d 按 M 拆成多条子路径并采样为折线（图标原始坐标空间）
+  function sampleIcon(d, viewBox) {
+    const sub = (d.match(/[Mm][^Mm]*/g) || [d]).map(s => s.trim()).filter(Boolean);
+    const svgns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(svgns, 'svg');
+    svg.setAttribute('viewBox', viewBox || '0 0 24 24');
+    svg.style.cssText = 'position:absolute;left:-99999px;top:-99999px;width:24px;height:24px;';
+    document.body.appendChild(svg);
+    const polys = [];
+    try {
+      for (const sd of sub) {
+        const p = document.createElementNS(svgns, 'path');
+        p.setAttribute('d', sd);
+        svg.appendChild(p);
+        let pts = [];
+        const total = p.getTotalLength();
+        if (total > 0.01 && total < 1e6) {
+          const step = Math.max(1.2, total / 160);
+          for (let l = 0; l <= total; l += step) { const pt = p.getPointAtLength(l); pts.push([pt.x, pt.y]); }
+        }
+        svg.removeChild(p);
+        if (pts.length >= 2) polys.push(pts);
+      }
+    } catch (e) { /* 采样失败交给上层兜底 */ }
+    document.body.removeChild(svg);
+    return polys;
+  }
+  // 把图标折线（原始坐标空间）映射到小火画作坐标，生成 poly 笔画
+  function iconifyStrokes(polys, cx, cy, s, icx, icy) {
+    const out = [];
+    for (const poly of polys) {
+      if (poly.length < 2) continue;
+      const a = [];
+      for (const [ix, iy] of poly) a.push(cx + (ix - icx) * s, cy + (iy - icy) * s);
+      out.push({ color: ART_LINE_COLORS[out.length % ART_LINE_COLORS.length], prim: 'poly', a });
+    }
+    return out;
+  }
+  // 主流程：先翻图标库临摹（多候选依次尝试）；全失败再丢给 LLM 兜底
+  async function iconPaint(v) {
+    const box = document.getElementById('paintBox');
+    const hint = document.getElementById('paintHint');
+    const go = document.getElementById('paintGo');
+    box.classList.remove('hidden');
+    setState('think', 120000);   // 翻图标库前也先"思考"一下，回来再画
+    const recoverBtn = () => { if (go) { go.disabled = false; go.textContent = '画！'; } };
+    const queries = toIconQueries(v);
+    if (!queries.length) {
+      if (hint) hint.textContent = '（图标库没有这个词，让小火自己想）';
+      recoverBtn(); return qdPaint(v);
+    }
+    if (hint) hint.textContent = '🤔 小火翻了翻图标库找「' + v + '」…';
+    if (go) { go.disabled = true; go.textContent = '找…'; }
+    for (const q of queries) {
+      try {
+        const sr = await fetch('https://api.iconify.design/search?query=' + encodeURIComponent(q) + '&limit=48', { mode: 'cors' });
+        if (!sr.ok) continue;
+        const sj = await sr.json();
+        const icon = pickIcon(sj.icons || []);
+        if (!icon) continue;
+        // 用权威批量接口取图标数据（单图标接口 mdi:snake.json 已全局 404 失效）
+        const parts = icon.split(':'); const ip = parts[0]; const iname = parts[1] || parts[0];
+        const jr = await fetch('https://api.iconify.design/' + ip + '.json?icons=' + encodeURIComponent(iname), { mode: 'cors' });
+        if (!jr.ok) continue;
+        const jj = await jr.json();
+        const entry = jj && jj.icons && jj.icons[iname];
+        if (!entry || !entry.body) continue;
+        const vb = (entry.viewBox || jj.viewBox || ('0 0 ' + (jj.width || 24) + ' ' + (jj.height || 24))).trim().split(/\s+/).map(Number);
+        const vw = vb[2] || 24, vh = vb[3] || 24;
+        const size = Math.max(vw, vh) || 24;
+        const polys = [];
+        for (const d of iconPaths(entry.body)) { const ps = sampleIcon(d, vb.join(' ')); for (const p of ps) polys.push(p); }
+        if (!polys.length) continue;
+        const ax = posX + 96, ay = posY + 36;
+        const strokes = iconifyStrokes(polys, ax, ay - 50, 150 / size, vw / 2, vh / 2);
+        if (hint) hint.textContent = '🎨 找到啦，临摹！';
+        recoverBtn();
+        setTimeout(() => box.classList.add('hidden'), 500);
+        startPaintStrokes(strokes);
+        return;
+      } catch (e) { /* 试下一个候选 */ }
+    }
+    console.warn('[iconify] 所有候选都没找到可用图标，转 QD/LLM');
+    if (hint) hint.textContent = '😵 图标库没找到，让小火自己想～';
+    recoverBtn();
+    return qdPaint(v);
+  }
+  // 手写模板优先：常见词直接用预调坐标的简笔画（牛/羊/烟花/猫/狗…），质量 100% 可控
+  function knownTemplate(v) {
+    const t = (v || '').toLowerCase();
+    if (t.includes('烟花') || t.includes('烟火') || t.includes('火花') || t.includes('爆竹')) return 'fireworks';
+    if (t.includes('牛')) return 'cow';
+    if (t.includes('羊')) return 'sheep';
+    if (t.includes('猫')) return 'cat';
+    if (t.includes('狗')) return 'dog';
+    if (t.includes('兔')) return 'rabbit';
+    if (t.includes('鱼')) return 'fish';
+    if (t.includes('房子') || t.includes('屋子') || t.includes('家')) return 'house';
+    if (t.includes('心')) return 'heart';
+    if (t.includes('火箭') || t.includes('飞船')) return 'rocket';
+    if (t.includes('月亮') || t.includes('月') || t.includes('moon')) return 'moon';
+    if (t.includes('旗') || t.includes('国旗') || t.includes('flag')) return 'flag';
+    if (t.includes('圣诞') || t.includes('圣诞树') || t.includes('xmas') || t.includes('christmas')) return 'christmas';
+    return null;
+  }
+  function submitPaint() {
+    const v = document.getElementById('paintText').value.trim();
+    const tmpl = knownTemplate(v);
+    if (tmpl) { document.getElementById('paintBox').classList.add('hidden'); startPaint(tmpl); return; }
+    const t = knownPaint(v);
+    const tl = v.toLowerCase();
+    if (t) { document.getElementById('paintBox').classList.add('hidden'); startPaint(t); }
+    else if (/烟花|烟火|火花|爆竹/.test(tl)) { llmPaint(v); }   // 保底：模板万一没命中，仍走 LLM 而非被当成花
+    else { iconPaint(v); }   // 再查图标库临摹；失败/无图标才丢给 LLM
+  }
+  document.getElementById('paintBox').querySelector('.close').addEventListener('click', () => {
+    document.getElementById('paintBox').classList.add('hidden');
+  });
+  document.getElementById('paintGo').addEventListener('click', submitPaint);
+  document.getElementById('paintText').addEventListener('keydown', e => { if (e.key === 'Enter') submitPaint(); });
+
+  // ---- 让智谱"思考"怎么画：自由文本 → 原语 JSON → 笔画 ----
+  function extractJson(s) {
+    if (typeof s !== 'string') return null;
+    const start = s.indexOf('{');
+    if (start < 0) return null;
+    let depth = 0, inStr = false, esc = false;
+    for (let i = start; i < s.length; i++) {
+      const ch = s[i];
+      if (inStr) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false; }
+      else { if (ch === '"') inStr = true; else if (ch === '{') depth++; else if (ch === '}') { depth--; if (depth === 0) return s.slice(start, i + 1); } }
+    }
+    return null;
+  }
+  const DRAW_OX = 150, DRAW_OY = 270;   // LLM 画布底部中点（其坐标空间 300x300，y 向下）
+  function llmStrokeToArt(st, ax, ay, scale) {
+    // FULL = 数组应有总长度；COORD = 其中需按坐标系映射的前几个数（半径/尖数/频率/种子等标量保持原值）
+    const FULL = { line: 4, wave: 5, circle: 3, star: 4, scribble: 3, dot: 3, tri: 6 };
+    let coordN, fullN;
+    if (st.prim === 'poly') {
+      if (!Array.isArray(st.a) || st.a.length < 4 || st.a.length % 2 !== 0) return null;
+      coordN = fullN = st.a.length;
+    } else {
+      fullN = FULL[st.prim];
+      if (fullN === undefined || !Array.isArray(st.a) || st.a.length !== fullN) return null;
+      coordN = (st.prim === 'line' || st.prim === 'tri') ? fullN : 2;
+      if (st.prim === 'wave') coordN = 4;
+    }
+    const clampV = v => Math.max(0, Math.min(300, v));
+    const a = st.a.map((v, i) => i < coordN
+      ? (i % 2 === 0 ? ax + (clampV(v) - DRAW_OX) * scale : ay + (clampV(v) - DRAW_OY) * scale)
+      : v);
+    const color = (typeof st.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(st.color)) ? st.color : ART_LINE_COLORS[Math.floor(Math.random() * ART_LINE_COLORS.length)];
+    return { color, prim: st.prim, a };
+  }
+  // 原语坐标 schema：pos = 参与"位置/轮廓"的坐标对索引；radius = 需随整体一起缩放的半径标量索引；scalar = 保持不变（freq/spikes/seed）
+  const PRIM_SCHEMA = {
+    line:     { pos: [0, 2], radius: [] },
+    wave:     { pos: [0, 2], radius: [], scalar: [4] },
+    circle:   { pos: [0],   radius: [2] },
+    star:     { pos: [0],   radius: [2], scalar: [3] },
+    scribble: { pos: [0],   radius: [], scalar: [2] },
+    dot:      { pos: [0],   radius: [2] },
+    tri:      { pos: [0, 2, 4], radius: [] },
+    poly:     { pos: 'all', radius: [] },
+  };
+  function evenIdx(len) { const a = []; for (let i = 0; i + 1 < len; i += 2) a.push(i); return a; }
+  function primPos(prim, len) {
+    const sc = PRIM_SCHEMA[prim];
+    if (!sc) return [];
+    return sc.pos === 'all' ? evenIdx(len) : sc.pos;
+  }
+  // 事后归一化：把 LLM 画的"全局包围盒"整体缩放并居中到固定区域——这就是给 API 画补的"空间思维"：
+  // 模型画得多小/多大/多偏都不怕，统一收拢到 target 见方的框里居中，绝不再一团糟
+  function normalizeArtworkCoords(strokes, cx, cy, target) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, any = false;
+    for (const s of strokes) {
+      for (const i of primPos(s.prim, s.a.length)) {
+        const x = s.a[i], y = s.a[i + 1];
+        if (!isFinite(x) || !isFinite(y)) continue;
+        if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; any = true;
+      }
+    }
+    if (!any) return strokes;
+    const bw = (maxX - minX) || 1, bh = (maxY - minY) || 1;
+    const scale = target / Math.max(bw, bh);
+    const ox = (minX + maxX) / 2, oy = (minY + maxY) / 2;
+    for (const s of strokes) {
+      for (const i of primPos(s.prim, s.a.length)) { s.a[i] = cx + (s.a[i] - ox) * scale; s.a[i + 1] = cy + (s.a[i + 1] - oy) * scale; }
+      const rad = PRIM_SCHEMA[s.prim] ? PRIM_SCHEMA[s.prim].radius : [];
+      for (const i of rad) s.a[i] = s.a[i] * scale;   // 半径按同一比例缩放，保持和位置一致
+    }
+    return strokes;
+  }
+  function llmToStrokes(jsonText, ax, ay) {
+    let data;
+    try { data = JSON.parse(extractJson(jsonText)); } catch (e) { return null; }
+    if (!data || !Array.isArray(data.strokes)) return null;
+    const out = [];
+    for (const st of data.strokes.slice(0, 20)) {
+      const s = llmStrokeToArt(st, ax, ay, 0.6);
+      if (s) out.push(s);
+    }
+    if (out.length) normalizeArtworkCoords(out, ax, ay - 50, 150);   // 事后空间归一化：收拢到面前固定框
+    return out.length ? out : null;
+  }
+  function startPaintStrokes(strokes) {
+    const ax = posX + 96, ay = posY + 36;
+    const art = new Drawing('llm', ax, ay, strokes);
+    artworkPool.push(art); activeArt = art;
+    setState('paint', 12000);
+  }
+  // 画之前先联网查一下这东西长啥样（维基百科摘要），给"思考"提供真实形状参考，
+  // 避免 LLM 在抽象坐标里瞎编。查不到/超时也不影响，照常画。
+  async function describeConcept(term) {
+    try {
+      const q = (term || '').replace(/^(画|画个|画一只|画一幅|画一)\s*/, '').replace(/\s+/g, '').trim();
+      if (!q) return null;
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 4500);
+      const sUrl = `https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(q)}&srlimit=1&format=json`;
+      const sRes = await fetch(sUrl, { signal: ac.signal });
+      clearTimeout(timer);
+      if (!sRes.ok) return null;
+      const sJson = await sRes.json();
+      const title = sJson && sJson.query && sJson.query.search && sJson.query.search[0] && sJson.query.search[0].title;
+      if (!title) return null;
+      const sumUrl = `https://zh.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`;
+      const r = await fetch(sumUrl, { signal: ac.signal });
+      if (!r.ok) return null;
+      const j = await r.json();
+      return (j && j.extract) ? { title, text: j.extract } : null;
+    } catch (e) { return null; }
+  }
+  // 把笔画渲染成 PNG（离屏 canvas，复用 prim* 原语画法），供"视觉自纠环"给多模态模型看
+  function renderStrokesToDataURL(strokes, size) {
+    const c = document.createElement('canvas'); c.width = size; c.height = size;
+    const g = c.getContext('2d');
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, size, size);
+    g.lineWidth = Math.max(2, size / 90); g.lineJoin = 'round'; g.lineCap = 'round';
+    for (const s of strokes) {
+      g.strokeStyle = s.color; g.fillStyle = s.color;
+      const p = 1;
+      if (s.prim === 'line') primLine(g, s.a, p);
+      else if (s.prim === 'circle') primCircle(g, s.a, p);
+      else if (s.prim === 'wave') primWave(g, s.a, p);
+      else if (s.prim === 'star') primStar(g, s.a, p);
+      else if (s.prim === 'scribble') primScribble(g, s.a, p);
+      else if (s.prim === 'dot') primDot(g, s.a, p);
+      else if (s.prim === 'tri') primTri(g, s.a, p);
+      else if (s.prim === 'poly') primPoly(g, s.a, p);
+    }
+    return c.toDataURL('image/png');
+  }
+  // 真·空间思维：渲染成图 → 多模态模型(GLM-4V)看"像不像 X、哪里歪" → 返回修正笔画 → 再画，迭代 2 次；任一环失败就沿用上一版
+  async function refineWithVision(v, strokes, ax, ay) {
+    if (!isTauri) return strokes;
+    let cur = strokes;
+    for (let i = 0; i < 1; i++) {
+      try {
+        const S = 320;
+        const copy = JSON.parse(JSON.stringify(cur));
+        normalizeArtworkCoords(copy, S / 2, S / 2, S * 0.78);   // 先居中，模型才看得清主体
+        const b64 = renderStrokesToDataURL(copy, S).split(',')[1];
+        if (!b64) break;
+        const fixed = await invoke('critique_draw', { prompt: v, image_b64: b64, prev_json: JSON.stringify(cur) });
+        const parsed = llmToStrokes(fixed, ax, ay);
+        if (!parsed || !parsed.length) break;
+        cur = parsed;
+      } catch (e) { console.warn('[vision] 自纠第' + (i + 1) + '轮失败，沿用上一版：', e); break; }
+    }
+    return cur;
+  }
+  // 视觉筛选门控：把候选渲染成图 → 多模态(GLM-4V)做 YES/NO 识别度判断（"是否清晰可辨识地画出了 X"）。
+  // 用识别度而非审美打分（之前已验证：审美分不可靠，识别却能做到），通过才上屏，不通过则让 LLM 重画。
+  async function screenWithVision(v, strokes) {
+    if (!isTauri) return true;            // 网页版无后端，放行（交给随机兜底）
+    try {
+      const S = 320;
+      const copy = JSON.parse(JSON.stringify(strokes));
+      normalizeArtworkCoords(copy, S / 2, S / 2, S * 0.8);
+      const b64 = renderStrokesToDataURL(copy, S).split(',')[1];
+      if (!b64) return true;
+      const prompt = '这是一张简笔画，白底黑线。请判断：它是否清晰、可辨识地画出了「' + v + '」？只回答 YES 或 NO，不要任何解释。';
+      const resp = await invoke('ask_glm', { imageB64: b64, prompt });
+      const up = (resp || '').toUpperCase();
+      if (up.includes('YES')) return true;                         // 英文肯定
+      const zh = resp || '';
+      if (zh.includes('是') && !zh.includes('不是') && !zh.includes('否')) return true;  // 中文肯定（排除"不是/否"）
+      return false;
+    } catch (e) { console.warn('[vision] 筛选调用失败，放行上一版：', e); return true; }
+  }
+
+  // 不认识的词：先联网查长相 → 再调智谱把"画 X"翻译成原语 JSON，再画出来
+  function llmPaint(v) {
+    const box = document.getElementById('paintBox');
+    const hint = document.getElementById('paintHint');
+    const go = document.getElementById('paintGo');
+    box.classList.remove('hidden');
+    if (hint) hint.textContent = '🤔 小火正在想怎么画「' + v + '」…';
+    if (go) { go.disabled = true; go.textContent = '想…'; }
+    setState('think', 120000);   // 调模型前先进入"思考"姿势（歪头托腮），结果回来再切回画画
+    const fail = (msg, log) => {
+      if (log) console.warn(log);
+      if (hint) hint.textContent = msg;
+      if (go) { go.disabled = false; go.textContent = '画！'; }
+      setTimeout(() => { box.classList.add('hidden'); startPaint('random'); }, 1300);
+    };
+    if (!isTauri) { fail('（网页版无法联网思考，已随机画）🎲', '[paint] 网页版无 Tauri 后端，无法调用智谱，已随机兜底（请用桌面版 tauri dev）'); return; }
+    // 先联网查一下这东西长啥样（维基百科），给模型真实形状参考
+    if (hint) hint.textContent = '🔍 小火查了查「' + v + '」…';
+    describeConcept(v).then(ref => {
+      const refText = ref && ref.text ? ref.text : '';
+      const ax = posX + 96, ay = posY + 36;
+      const finish = (finalStrokes) => {
+        if (hint) hint.textContent = '🎨 想好了，画！';
+        if (go) { go.disabled = false; go.textContent = '画！'; }
+        setTimeout(() => box.classList.add('hidden'), 600);
+        startPaintStrokes(finalStrokes);
+      };
+      // 生成 → 视觉筛选 → 通过则精炼上屏；不通过重试一次；两次都不通过则展示最后一版（不空手而归）
+      const tryDraw = (attempt) => {
+        if (hint) hint.textContent = '🤔 小火想怎么画「' + v + '」…';
+        invoke('ask_draw', { prompt: v, ref_desc: refText || null })
+          .then(res => {
+            const strokes = llmToStrokes(res, ax, ay);
+            if (!strokes) {
+              if (attempt < 2) return tryDraw(attempt + 1);
+              return fail('🤔 小火没看懂模型返回，随便画了点～', '[paint] 智谱返回无法解析为画作，原始返回：' + JSON.stringify(res).slice(0, 600));
+            }
+            if (hint) hint.textContent = '🔎 小火自己看看画得像不像…';
+            screenWithVision(v, strokes).then(pass => {
+              if (pass) {
+                refineWithVision(v, strokes, ax, ay).then(finalStrokes => finish(finalStrokes));
+              } else if (attempt < 2) {
+                if (hint) hint.textContent = '🤔 这版不太像，小火重想一下…';
+                tryDraw(attempt + 1);
+              } else {
+                if (hint) hint.textContent = '🎨 小火尽力了，画！';
+                finish(strokes);
+              }
+            });
+          })
+          .catch(err => {
+            if (attempt < 2) return tryDraw(attempt + 1);
+            fail('😵 思考出错，随便画了点～', '[paint] ask_draw 调用失败：' + (err && err.message ? err.message : err));
+          });
+      };
+      tryDraw(1);
+    });
+  }
+
+  // ---------- 主循环 ----------
+  const start = performance.now(), statusEl = document.getElementById('status');
+  function loop(now) {
+    const t = (now - start) / 1000;
+
+    // 悬停即交互：把宠物包围盒发给 Rust，由它切换穿透/可交互（桌面版）；浏览器版无副作用
+    emitPetRect();
+
+    // 自动切换：固定睡眠时段强制"以睡为主、不漫游"；平时加权随机；刚被戳别立刻切走
+    if (currState !== 'hide' && now > nextSwitchAt && now - pokeFlash > 1200 && now > petUntil) {
+      setState(pickAutoState(inSleepWindow(), now));
+    }
+    // 心情向 0 平复：负数（被戳的委屈）回升，正数（被宠的开心）也会慢慢淡回中性
+    if (mood > RECOVERY) mood -= RECOVERY;
+    else if (mood < -RECOVERY) mood += RECOVERY;
+    else mood = 0;
+
+    // 揉头判定：必须"按住鼠标 + 在头顶区域移动"才算揉（与"单击=戳"用不同手势区分）
+    if (rubActive) {
+      petUntil = now + 450;                 // 持续揉：按住搓的期间续期
+      mood = Math.min(100, mood + 0.3);        // 被揉头心情回升，攒够会转正变开心（不再封顶在 0）
+      if (currState === 'hide') setState('idle');   // 委屈缩角落时，揉头把他哄出来
+    }
+
+    // 深度睡眠：处于 sleep 超过 DEEP_SLEEP_DELAY 后，平滑翻倒躺平；离开睡眠则缓缓起身
+    const targetLie = (currState === 'sleep' && now - transStart > DEEP_SLEEP_DELAY) ? TOPPLE_MAX : 0;
+    lieAngle += (targetLie - lieAngle) * 0.05;
+
+    // 位置/心情行为：委屈缩角落(hide) 或 鼠标靠近躲开(mood<-30)
+    if (currState === 'hide') {
+      if (mood >= -30) {
+        setState('idle');                       // 心情回升到 -30 以上，自己走出来
+      } else {
+        if (now > nextPeekAt) { peekStart = now; nextPeekAt = now + rand(3000, 5000); }
+        let tx = HIDE_CORNER, ty = HIDE_CORNER_Y;   // 退到左下角
+        if (now - peekStart < 700) {                 // 探头：朝屏幕中央(上右)偏一下再缩回
+          const peek = Math.sin((now - peekStart) / 700 * Math.PI);
+          tx += 46 * peek; ty -= 30 * peek;
+        }
+        posX = lerp(posX, tx, 0.06);
+        posY = lerp(posY, ty, 0.06);
+      }
+    } else {
+      const d = Math.hypot(mouse.x - posX, mouse.y - posY);
+      if (mood < 0 && mouse.inside && d < 180 && !rubActive && currState !== 'paint') {
+        // 躲避优先：朝远离鼠标的斜向逃（水平为主、垂直微调），用走路动画逃离
+        const panic = mood < -40 ? 5.4 : 3.4;
+        const dirX = posX < mouse.x ? -1 : 1;
+        const dirY = posY < mouse.y ? -1 : 1;
+        posX = clamp(posX + dirX * panic, 110, W - 110);
+        posY = clamp(posY + dirY * panic * 0.45, 150, H - 90);
+        if (currState !== 'walk') setState('walk');
+        nextSwitchAt = now + 400;                // 躲开期间锁住自动切换，别被随机切走打断
+      } else if (currState === 'walk' || currState === 'run') {
+        // 漫游：朝随机目标走/跑，到了换目标并短暂停顿 —— 真正"到处跑"而不是原地抖
+        const speed = currState === 'run' ? 3.4 : 1.7;
+        const dxr = roamTX - posX, dyr = roamTY - posY;
+        const dr = Math.hypot(dxr, dyr);
+        if (dr < 6) {
+          if (now > roamPauseUntil) { pickRoam(); roamPauseUntil = now + rand(300, 1400); }
+        } else {
+          posX += (dxr / dr) * speed;
+          posY += (dyr / dr) * speed;
+        }
+      } else {
+        // idle / sleep / wave：就地休息（不再强制回中，跑累了停在哪算哪，更自然）
+      }
+    }
+
+    const prev = poseForState(prevState, t);
+    const cur = poseForState(currState, t);
+    const alpha = easeInOut(clamp((now - transStart) / 200, 0, 1));
+    const pose = lerpPose(prev, cur, alpha);
+
+    // 心情双向解耦于状态机：mood<0 委屈垂头撇嘴；mood>0 开心笑眼（被宠/揉头转正）
+    if (mood < 0) {
+      const s = clamp(-mood / 100, 0, 1);   // mood: 0→0, -100→1
+      pose.headDrop += 14 * s;
+      pose.sad = Math.max(pose.sad, s);
+    } else if (mood > 0) {
+      pose.happy = 1; pose.eyeOpen = 1; pose.sad = 0;   // mood 转正即开心（笑眼 + 大笑嘴）
+      pose.headDrop = Math.min(pose.headDrop, 0);
+    }
+
+    // 倒地时压平"垂头/蹲"等直立姿，避免躺下后头戳地
+    const lieFrac = Math.min(1, lieAngle / TOPPLE_MAX);
+    pose.headDrop *= (1 - lieFrac);
+    pose.crouch *= (1 - lieFrac);
+
+    // 刚睡醒的伸展（约 900ms：抬头 + 举臂），让"固定睡眠→天亮醒来"有过渡
+    if (prevState === 'sleep' && currState !== 'sleep' && now - transStart < 900) {
+      pose.headDrop = lerp(pose.headDrop, 0, 0.25);
+      pose.waveArm = Math.max(pose.waveArm, 28);
+    }
+
+    // 哄好（被揉头）：开心的笑眼 + 抬头，不再蹦跳（缓缓揉头的手在 draw 里画）
+    if (now < petUntil) {
+      pose.happy = 1; pose.eyeOpen = 1; pose.sad = 0;
+      pose.headDrop = Math.min(pose.headDrop, 0);
+      pose.hop = 0;
+    }
+
+    if (currState === 'paint') {
+      if (activeArt && activeArt.isFx) S.color = activeArt.glowColor || S.color;        // 粒子烟花：身体跟随最近一次爆炸/升空的颜色
+      else if (activeArt && activeArt.strokes) S.color = paintColorAt(activeArt, now);   // 普通画作：跟随当前笔画颜色
+    }
+    draw(pose, t, now);
+    // 状态栏显示当前状态 / 心情 / 鼠标（网页版无穿透概念，省略那部分）
+    const petting = (now < petUntil);
+    const poked = (now - pokeFlash < 400) ? ' · 被戳!' : '';
+    const moodWord = mood > 5 ? '开心' : mood < -5 ? '委屈' : '平静';
+    statusEl.textContent = `状态：${currState}${petting ? ' · 被揉头~' : ''} · 心情：${Math.round(mood)}（${moodWord}） · 鼠标：${mouse.inside ? Math.round(mouse.x) + ',' + Math.round(mouse.y) : '外'}${poked}`;
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  // ---------- 节日日历：到日子就自动画一幅应景的画 ----------
+  const FESTIVALS = [
+    { m: 1, d: 1, type: 'fireworks', name: '元旦' },
+    { m: 2, d: 14, type: 'heart', name: '情人节' },
+    { m: 3, d: 8, type: 'flower', name: '妇女节' },
+    { m: 6, d: 1, type: 'star', name: '儿童节' },
+    { m: 10, d: 1, type: 'flag', name: '国庆节' },
+    { m: 12, d: 25, type: 'christmas', name: '圣诞节' },
+  ];
+  let lastFestivalKey = '';
+  function todayFestival() {
+    const n = new Date();
+    for (const f of FESTIVALS) if (f.m === n.getMonth() + 1 && f.d === n.getDate()) return f;
+    return null;
+  }
+  function maybeFestivalPaint() {
+    const f = todayFestival();
+    const today = new Date().toDateString();
+    if (!f) { lastFestivalKey = ''; return; }      // 非节日：清空标记，跨天后再遇节日可再画
+    if (lastFestivalKey === today) return;          // 今天已画过，跳过（避免每小时重复画）
+    lastFestivalKey = today;
+    setTimeout(() => { if (currState !== 'paint') startPaint(f.type); }, 2500);
+  }
+  maybeFestivalPaint();
+  setInterval(maybeFestivalPaint, 60 * 60 * 1000);  // 每小时复查，跨天若恰逢节日也会补画
+
+  // ---------- 看屏理解 / 搜题（网页版用演示图模拟；桌面版真截屏 + 智谱 GLM-4V） ----------
+  const answerBox = document.getElementById('answerBox');
+  const answerText = document.getElementById('answerText');
+  const pickLayer = document.getElementById('pickLayer');
+  const pickImg = document.getElementById('pickImg');
+  const pickRect = document.getElementById('pickRect');
+  const pickHint = document.getElementById('pickHint');
+  let picking = false, pickStart = null, lastRegionB64 = '', currentAct = 'search';
+
+  function closeAllPick() {
+    picking = false;
+    pickLayer.classList.add('hidden');
+    pickRect.style.display = 'none';
+    if (isTauri) invoke('toggle_pick', { full: false }).catch(() => {});
+  }
+
+  function startPick(act) {
+    currentAct = act;
+    pickHint.textContent = act === 'search'
+      ? '拖拽框选题目/问题区域，松手即解题'
+      : '拖拽框选你看的屏幕区域，松手即描述';
+    // 网页版：invoke('capture_screen') 返回演示图；invoke('toggle_pick') 为前端直接控制，此处走通用流程
+    Promise.resolve(invoke('capture_screen'))
+      .then(dataUrl => new Promise((res, rej) => {    // 先把图加载进 <img>（此时图层还藏着，离屏加载）
+        const ok = () => (pickImg.naturalWidth > 0 ? res() : rej(new Error('截屏图加载失败')));
+        pickImg.onload = ok; pickImg.onerror = () => rej(new Error('截屏图加载失败'));
+        pickImg.src = dataUrl;
+        if (pickImg.complete) ok();                   // 已缓存则直接完成（onload 可能不再触发）
+      }))
+      .then(() => invoke('toggle_pick', { full: true }))   // 图已就绪，再全屏
+      .then(() => {
+        picking = true;
+        pickLayer.classList.remove('hidden');
+        pickRect.style.display = 'none';
+      })
+      .catch(err => {
+        answerText.innerHTML = '截屏/全屏失败：' + (err && err.message ? err.message : err);
+        answerBox.style.left = '50%'; answerBox.style.top = '40%';
+        answerBox.style.transform = 'translate(-50%,-50%)';
+        answerBox.classList.remove('hidden');
+      });
+  }
+
+  pickLayer.addEventListener('mousedown', e => {
+    if (!picking) return;
+    pickStart = { x: e.clientX, y: e.clientY };
+    pickRect.style.display = 'block';
+    pickRect.style.left = e.clientX + 'px'; pickRect.style.top = e.clientY + 'px';
+    pickRect.style.width = '0px'; pickRect.style.height = '0px';
+  });
+  window.addEventListener('mousemove', e => {
+    if (!picking || !pickStart) return;
+    const x = Math.min(e.clientX, pickStart.x), y = Math.min(e.clientY, pickStart.y);
+    pickRect.style.left = x + 'px'; pickRect.style.top = y + 'px';
+    pickRect.style.width = Math.abs(e.clientX - pickStart.x) + 'px';
+    pickRect.style.height = Math.abs(e.clientY - pickStart.y) + 'px';
+  });
+  window.addEventListener('mouseup', e => {
+    if (!picking || !pickStart) return;
+    const sx0 = pickStart.x, sy0 = pickStart.y;
+    const w = Math.abs(e.clientX - sx0), h = Math.abs(e.clientY - sy0);
+    pickStart = null;
+    if (w < 12 || h < 12) return;                  // 太小：不当作选择，保持框选态让用户重拖（不再误关）
+    picking = false;
+    pickLayer.classList.add('hidden'); pickRect.style.display = 'none';
+    // 把框选区域从截屏裁出 → 缩到 ≤1024 → 转 JPG，发给智谱（网页版发的是演示图，返回模拟文字）
+    const natW = pickImg.naturalWidth, natH = pickImg.naturalHeight;
+    const k = natW / window.innerWidth, ky = natH / window.innerHeight;
+    const X = Math.min(sx0, e.clientX) * k, Y = Math.min(sy0, e.clientY) * ky;
+    const RW = w * k, RH = h * ky;
+    const scale = Math.min(1, 1024 / Math.max(RW, RH));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(RW * scale)); c.height = Math.max(1, Math.round(RH * scale));
+    c.getContext('2d').drawImage(pickImg, X, Y, RW, RH, 0, 0, c.width, c.height);
+    lastRegionB64 = c.toDataURL('image/jpeg', 0.85);
+    closeAllPick();                                // 退出全屏，回小窗显示结果
+    runGlm(currentAct, lastRegionB64);
+  });
+  // Esc 取消框选（不想框了就按 Esc）
+  window.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && picking) closeAllPick();
+  });
+
+  function runGlm(act, imgB64) {
+    const prompt = act === 'search'
+      ? '这是一道题目或问题（可能是文字题、公式、代码或报错截图）。请仔细看图，给出准确的解答步骤和最终答案；若是代码报错，请指出原因并给出修复方案。用中文、条理清晰地回答。'
+      : '请看这张屏幕截图，简要描述你看到的内容：用户大概在做什么、界面上有哪些关键信息（文字、报错、数据、窗口标题等）。用中文简要说明。';
+    const box = act === 'search' ? answerBox : screenBox;
+    const txt = act === 'search' ? answerText : screenText;
+    txt.innerHTML = '🤔 小火正在看…';
+    box.style.left = '50%'; box.style.top = '40%';
+    box.style.transform = 'translate(-50%,-50%)';
+    box.classList.remove('hidden');
+    // Tauri v2 默认把 Rust 的 snake_case 参数转成 camelCase 暴露给前端，
+    // 所以这里必须写 imageB64（写 image_b64 会报 missing required key imageB64）
+    invoke('ask_glm', { imageB64: imgB64, prompt })
+      .then(res => { txt.innerHTML = res.replace(/\n/g, '<br>'); })
+      .catch(err => { txt.innerHTML = '调用失败：' + (err && err.message ? err.message : err); });
+  }
+
+  document.querySelector('[data-act="search"]').addEventListener('click', () => startPick('search'));
+  answerBox.querySelector('.close').addEventListener('click', () => answerBox.classList.add('hidden'));
+
+  // ---------- 看屏结果框（看屏/搜题共用结果） ----------
+  const screenBox = document.getElementById('screenBox');
+  const screenText = document.getElementById('screenText');
+  document.querySelector('[data-act="screen"]').addEventListener('click', () => startPick('screen'));
+
+  screenBox.querySelectorAll('.actions button').forEach(b => b.addEventListener('click', () => {
+    if (b.dataset.s === 'check') {
+      screenBox.classList.add('hidden');
+      if (lastRegionB64) runGlm('search', lastRegionB64);   // 看屏后顺手查
+    } else screenBox.classList.add('hidden');
+  }));
+  screenBox.querySelector('.close').addEventListener('click', () => screenBox.classList.add('hidden'));
+
+  // ---------- 念念有词（mock 嘴型） ----------
+  document.querySelector('[data-act="speak"]').addEventListener('click', () => {
+    speakingUntil = performance.now() + 3500;
+  });
+
+  // ---------- 网页版动作控制面板（仅演示用，方便查看各种动作） ----------
+  const ctrl = document.getElementById('ctrl');
+  ctrl.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    const s = b.dataset.s;
+    if (s === 'poke') { pokeAt(posX, posY); }
+    else if (s === 'sing') { setState('sing', autoDuration('sing')); }
+    else if (s === 'paint') openPaintInput();
+    else { setState(s, autoDuration(s)); }
+  }));
+})();
+</script>
+</body>
+</html>

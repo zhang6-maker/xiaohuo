@@ -1,0 +1,30 @@
+[package]
+name = "xiaohuo"
+version = "0.0.9"
+description = "小火 桌面火柴人"
+authors = ["you"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", default-features = true, features = ["custom-protocol"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+windows = { version = "0.62", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_Graphics_Gdi"] }
+# 看屏理解/搜题：调智谱 GLM-4V（多模态）
+reqwest = { version = "0.12", features = ["json"] }
+dotenvy = "0.15"
+base64 = "0.22"
+png = "0.17"
+
+[lib]
+name = "xiaohuo_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+lto = true
+strip = true
