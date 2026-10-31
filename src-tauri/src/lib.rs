@@ -162,7 +162,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![capture_screen, ask_glm, ask_draw, critique_draw, toggle_pick])
+        .invoke_handler(tauri::generate_handler![capture_screen, ask_glm, ask_draw, critique_draw, toggle_pick, ask_reply])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -418,6 +418,57 @@ async fn critique_draw(prompt: String, image_b64: String, prev_json: Option<Stri
         .get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("message"))
         .and_then(|m| m.get("content")).and_then(|c| c.as_str())
         .unwrap_or("（模型无返回）").to_string();
+    Ok(content)
+}
+
+/// 聊天回复：把用户最近若干轮对话 + 当前输入发给智谱文本模型(GLM)，返回小火的回复文本。
+/// history：[{ "role": "user" | "assistant", "content": "..." }] 的最近若干条，用于多轮上下文。
+#[tauri::command]
+async fn ask_reply(text: String, history: Option<Vec<serde_json::Value>>) -> Result<String, String> {
+    let key = match std::env::var("ZHIPU_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return Err("未配置 ZHIPU_API_KEY：请把 key 写入 .env（ZHIPU_API_KEY=xxx，.env 放在 exe 同目录或 src-tauri/ 下）并重启程序".into()),
+    };
+    let model = std::env::var("ZHIPU_CHAT_MODEL").unwrap_or_else(|_| "glm-4-flash".to_string());
+    let system = "你是\"小火\"，一只住在用户桌面上的透明火柴人宠物。你可爱、真诚、话不多，用简体中文和用户聊天，回答简洁（1~3 句话），偶尔俏皮。你不会真的唱歌或画画，但会聊天、答疑、陪用户。不要使用 markdown，不要长篇大论。";
+    let mut messages = vec![serde_json::json!({"role": "system", "content": system})];
+    if let Some(h) = history {
+        for m in h.iter().take(6) {
+            let role = m.get("role").and_then(|v| v.as_str());
+            let content = m.get("content").and_then(|v| v.as_str());
+            if let (Some(role), Some(content)) = (role, content) {
+                messages.push(serde_json::json!({"role": role, "content": content}));
+            }
+        }
+    }
+    messages.push(serde_json::json!({"role": "user", "content": text}));
+    let payload = serde_json::json!({
+        "model": model,
+        "messages": messages,
+        "max_tokens": 256,
+        "temperature": 0.8
+    });
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .post("https://open.bigmodel.cn/api/paas/v4/chat/completions")
+        .bearer_auth(key)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("请求智谱失败（本机网络/360 防火墙拦截？）：{}", e))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("智谱返回 {}：{}", status.as_u16(), body));
+    }
+    let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let content = v
+        .get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("message"))
+        .and_then(|m| m.get("content")).and_then(|c| c.as_str())
+        .unwrap_or("（小火走神了）").to_string();
     Ok(content)
 }
 

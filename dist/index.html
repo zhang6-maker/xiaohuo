@@ -76,6 +76,19 @@
   }
   .box .actions button:hover { background: #3a3a42; }
 
+  /* 聊天框：消息气泡 */
+  #chatLog { display: flex; flex-direction: column; gap: 6px; }
+  #chatLog .row { display: flex; }
+  #chatLog .row.me { justify-content: flex-end; }
+  #chatLog .row.sys { justify-content: center; }
+  #chatLog .bubble {
+    max-width: 82%; padding: 5px 9px; border-radius: 10px;
+    font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; word-break: break-word;
+  }
+  #chatLog .row.me .bubble   { background: #3a6df0; color: #fff; border-bottom-right-radius: 3px; }
+  #chatLog .row.pet .bubble { background: #37373d; color: #f3f3f5; border-bottom-left-radius: 3px; }
+  #chatLog .row.sys .bubble { background: transparent; color: #9aa0a6; font-size: 11.5px; text-align: center; }
+
   /* 右键菜单 */
   #ctxMenu {
     position: fixed; z-index: 50; background: #fff; color: #2b2b2f;
@@ -91,7 +104,7 @@
      想恢复调试信息，把这一行注释掉即可。 */
   #status, .hint, #dbg { display: none !important; }
 </style>
-  <script type="module" crossorigin src="/assets/index-DqxYHTLS.js"></script>
+  <script type="module" crossorigin src="/assets/index-BNPkjpEI.js"></script>
 </head>
 <body>
 <canvas id="stage" width="480" height="540"></canvas>
@@ -137,6 +150,7 @@
   <div data-m="sing">🎵 唱歌</div>
   <div data-m="read">📖 看书</div>
   <div data-m="paint">🎨 画点什么</div>
+  <div data-m="chat">💬 聊天</div>
   <div data-m="about">ℹ️ 关于</div>
 </div>
 
@@ -152,6 +166,15 @@
   <div id="paintHint" style="margin-bottom:8px;font-size:12px;color:#9aa0a6;">让小火画点什么：画树 / 画太阳 / 画花 / 画星星 / 画云 / 随便画 / 或说任何东西（他会去想）</div>
   <input id="paintText" type="text" placeholder="画树" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:6px;font-size:13px;" />
   <div class="actions"><button id="paintGo">画！</button></div>
+</div>
+
+<!-- 聊天框（菜单「💬 聊天」唤出）：一个输入框统管 唱歌 / 看书 / 画画 / 回复，打字触发 -->
+<div id="chatBox" class="box hidden" style="left:50%;top:48%;transform:translate(-50%,-50%);width:88%;max-width:340px;">
+  <button class="close">×</button>
+  <div style="font-size:13px;color:#cfd2d8;margin:2px 0 8px;">💬 和小火聊天</div>
+  <div id="chatLog" style="max-height:200px;overflow-y:auto;margin-bottom:8px;"></div>
+  <input id="chatInput" type="text" placeholder="画只猫 / 唱首歌 / 看会儿书 / 或随便聊" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:6px;font-size:13px;" />
+  <div class="actions"><button id="chatSend">发送</button></div>
 </div>
 
 </body>

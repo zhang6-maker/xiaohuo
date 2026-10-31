@@ -76,6 +76,19 @@
   }
   .box .actions button:hover { background: #3a3a42; }
 
+  /* 聊天框：消息气泡 */
+  #chatLog { display: flex; flex-direction: column; gap: 6px; }
+  #chatLog .row { display: flex; }
+  #chatLog .row.me { justify-content: flex-end; }
+  #chatLog .row.sys { justify-content: center; }
+  #chatLog .bubble {
+    max-width: 82%; padding: 5px 9px; border-radius: 10px;
+    font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; word-break: break-word;
+  }
+  #chatLog .row.me .bubble   { background: #3a6df0; color: #fff; border-bottom-right-radius: 3px; }
+  #chatLog .row.pet .bubble { background: #37373d; color: #f3f3f5; border-bottom-left-radius: 3px; }
+  #chatLog .row.sys .bubble { background: transparent; color: #9aa0a6; font-size: 11.5px; text-align: center; }
+
   /* 右键菜单 */
   #ctxMenu {
     position: fixed; z-index: 50; background: #fff; color: #2b2b2f;
@@ -136,6 +149,7 @@
   <div data-m="sing">🎵 唱歌</div>
   <div data-m="read">📖 看书</div>
   <div data-m="paint">🎨 画点什么</div>
+  <div data-m="chat">💬 聊天</div>
   <div data-m="about">ℹ️ 关于</div>
 </div>
 
@@ -151,6 +165,15 @@
   <div id="paintHint" style="margin-bottom:8px;font-size:12px;color:#9aa0a6;">让小火画点什么：画树 / 画太阳 / 画花 / 画星星 / 画云 / 随便画 / 或说任何东西（他会去想）</div>
   <input id="paintText" type="text" placeholder="画树" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:6px;font-size:13px;" />
   <div class="actions"><button id="paintGo">画！</button></div>
+</div>
+
+<!-- 聊天框（菜单「💬 聊天」唤出）：一个输入框统管 唱歌 / 看书 / 画画 / 回复，打字触发 -->
+<div id="chatBox" class="box hidden" style="left:50%;top:48%;transform:translate(-50%,-50%);width:88%;max-width:340px;">
+  <button class="close">×</button>
+  <div style="font-size:13px;color:#cfd2d8;margin:2px 0 8px;">💬 和小火聊天</div>
+  <div id="chatLog" style="max-height:200px;overflow-y:auto;margin-bottom:8px;"></div>
+  <input id="chatInput" type="text" placeholder="画只猫 / 唱首歌 / 看会儿书 / 或随便聊" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:6px;font-size:13px;" />
+  <div class="actions"><button id="chatSend">发送</button></div>
 </div>
 
 <script type="module">
@@ -474,6 +497,7 @@ import { invoke } from '@tauri-apps/api/core';
     else if (act === 'sing') { setState('sing', autoDuration('sing')); }
     else if (act === 'read') { setState('read', autoDuration('read')); }
     else if (act === 'paint') openPaintInput();
+    else if (act === 'chat') openChatBox();
     else if (act === 'tips') showTips();
     else if (act === 'about') alert('小火 · 桌面火柴人\n透明 Tauri 窗口：骨骼 / 状态机 / 心情 / 表情 / 嘴型。\n长按我（或右键）唤出菜单：搜一搜 / 看看屏幕 / 念念有词 / 提示 / 唱歌 / 看书。\n👆 单击 = 戳我（会恼会躲，多戳缩角落）；🤚 在头顶按住鼠标来回搓 = 揉头哄我（被戳委屈后搓头也能哄好）。\n搜一搜、看看屏幕会真截屏后拖框选，交给大模型（智谱 GLM-4V）分析。');
     document.getElementById('ctxMenu').classList.add('hidden');
@@ -505,7 +529,7 @@ import { invoke } from '@tauri-apps/api/core';
     if (boxOpen) emitter('pet-rect', [0, 0, 480, 540]).catch(() => {});
     else { lastRectKey = ''; emitPetRect(); }
   }
-  ['answerBox', 'screenBox', 'tipsBox', 'paintBox', 'ctxMenu'].forEach(id => {
+  ['answerBox', 'screenBox', 'tipsBox', 'paintBox', 'ctxMenu', 'chatBox'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     new MutationObserver(() => {
@@ -1802,6 +1826,77 @@ import { invoke } from '@tauri-apps/api/core';
       tryDraw(1);
     });
   }
+
+  // ---------- 聊天框：打字触发 唱歌 / 看书 / 画画 / 回复 ----------
+  const chatBox = document.getElementById('chatBox');
+  const chatLog = document.getElementById('chatLog');
+  const chatInput = document.getElementById('chatInput');
+  let chatHistory = [];   // 多轮上下文：[{role, content}]
+  function addChat(role, text) {
+    const row = document.createElement('div');
+    row.className = 'row ' + (role === 'me' ? 'me' : role === 'sys' ? 'sys' : 'pet');
+    const b = document.createElement('div'); b.className = 'bubble'; b.textContent = text;
+    row.appendChild(b); chatLog.appendChild(row);
+    chatLog.scrollTop = chatLog.scrollHeight;
+    return b;
+  }
+  function openChatBox() {
+    chatBox.classList.remove('hidden');
+    setTimeout(() => chatInput.focus(), 30);
+    if (!chatLog.dataset.welcomed) {
+      chatLog.dataset.welcomed = '1';
+      addChat('pet', '我在呢～对我说「画只猫 / 唱首歌 / 看会儿书」，或者随便聊点啥 😊');
+    }
+  }
+  function submitChat() {
+    const v = chatInput.value.trim();
+    if (!v) return;
+    chatInput.value = '';
+    addChat('me', v);
+    const tl = v.toLowerCase();
+    // 意图分流：画画 / 唱歌 / 看书 / 看屏 / 其余=聊天回复
+    if (/画|draw/.test(tl)) {
+      addChat('sys', '🎨 小火开始画…');
+      const pt = document.getElementById('paintText'); if (pt) pt.value = v;
+      submitPaint();
+      return;
+    }
+    if (/唱|歌|sing/.test(tl)) {
+      addChat('sys', '🎵 小火开始唱歌～');
+      setState('sing', autoDuration('sing'));
+      return;
+    }
+    if (/看书|读书|阅读|看会书|看会儿书|book|read a book|read/.test(tl)) {
+      addChat('sys', '📖 小火坐下来看书～');
+      setState('read', autoDuration('read'));
+      return;
+    }
+    if (/看屏幕|截图|搜一搜|搜题|screen|search/.test(tl)) {
+      startPick('screen');
+      return;
+    }
+    // 其余：让小火用智谱回复，口型跟着动
+    const lastPet = addChat('pet', '…');
+    chatHistory.push({ role: 'user', content: v });
+    const hist = chatHistory.slice(-6);
+    invoke('ask_reply', { text: v, history: hist })
+      .then(res => {
+        const text = (typeof res === 'string') ? res
+          : (res && typeof res.reply === 'string') ? res.reply
+          : '（小火走神了）';
+        lastPet.textContent = text;
+        // 口型对得上：回复期间让嘴动起来
+        speakingUntil = performance.now() + Math.min(6000, Math.max(2000, text.length * 60));
+        chatHistory.push({ role: 'assistant', content: text });
+        if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
+      })
+      .catch(err => {
+        lastPet.textContent = '😵 小火没接住（检查 ZHIPU_API_KEY 或网络）：' + (err && err.message ? err.message : String(err));
+      });
+  }
+  chatBox.querySelector('.close').addEventListener('click', () => chatBox.classList.add('hidden'));
+  document.getElementById('chatSend').addEventListener('click', submitChat);
+  chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') submitChat(); });
 
   // ---------- 主循环 ----------
   const start = performance.now(), statusEl = document.getElementById('status');
