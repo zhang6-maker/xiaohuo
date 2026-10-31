@@ -140,7 +140,6 @@
 <div id="bar" class="hidden">
   <button data-act="search">📸 搜一搜</button>
   <button data-act="screen">👀 看看屏幕</button>
-  <button data-act="speak">🎤 念念有词</button>
 </div>
 <div id="status">状态：idle · 心情：0</div>
 <div class="hint">网页演示版：上方按钮可切换动作 / 🎵唱歌。👆 <b>单击</b>小火 = 戳他（欺负，连戳会缩角落）；🤚 在头顶<b>按住鼠标左键来回搓</b> = 揉头哄他（被戳委屈后搓头也能哄好）；点「📖看书」看他坐地安静捧书阅读；点「睡觉」约 3 秒翻倒躺平深度睡眠；长按或右键小火唤出菜单。</div>
@@ -173,9 +172,7 @@
 <div id="ctxMenu" class="hidden">
   <div data-m="search">📸 搜一搜</div>
   <div data-m="screen">👀 看看屏幕</div>
-  <div data-m="speak">🎤 念念有词</div>
   <div data-m="tips">💡 提示</div>
-  <div data-m="paint">🎨 画点什么</div>
   <div data-m="chat">💬 聊天</div>
   <div data-m="about">ℹ️ 关于</div>
 </div>
@@ -514,7 +511,7 @@ async function invoke(cmd, args) {
       '🎵 唱歌 → 站着闭眼陶醉、举臂打拍子、张嘴哼唱，头顶飘出音符',
       '😴 「睡觉」后约 3 秒会翻倒躺平进入深度睡眠，醒来会伸展一下',
       '📸 搜一搜 / 👀 看看屏幕 → 网页版用演示图模拟，桌面版会真截屏后拖框选，交给大模型分析',
-      '🎤 念念有词 → 让它的嘴动起来',
+      '💬 「💬聊天」框里随便打字 → 小火用演示回复，嘴会跟着动（念念有词）',
       '🚶 它会自动到处溜达，高兴时眼睛追着你看',
       '✨ 鼠标移开即恢复穿透，不挡桌面点击'
     ].join('<br>');
@@ -2192,10 +2189,7 @@ async function invoke(cmd, args) {
   }));
   screenBox.querySelector('.close').addEventListener('click', () => screenBox.classList.add('hidden'));
 
-  // ---------- 念念有词（mock 嘴型） ----------
-  document.querySelector('[data-act="speak"]').addEventListener('click', () => {
-    speakingUntil = performance.now() + 3500;
-  });
+  // 念念有词已并入聊天框：在聊天框里打字，演示版同样走回复逻辑，口型随 speakingUntil 自动跟随
 
   // ---------- 网页版动作控制面板（仅演示用，方便查看各种动作） ----------
   const ctrl = document.getElementById('ctrl');

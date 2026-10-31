@@ -111,10 +111,9 @@
 <div id="bar" class="hidden">
   <button data-act="search">📸 搜一搜</button>
   <button data-act="screen">👀 看看屏幕</button>
-  <button data-act="speak">🎤 念念有词</button>
 </div>
 <div id="status">状态：idle · 心情：0</div>
-<div class="hint">👆 <b>单击</b>小火 = 戳他（欺负，连戳缩角落）· 🤚 在头顶<b>按住鼠标左键来回搓</b> = 揉头哄他（被戳委屈后搓头也能哄好）· 长按 / 右键小火唤出菜单（含「🎵唱歌」「📖看书」）· 点「睡觉」约 3 秒翻倒躺平深度睡眠 · 移开恢复穿透不挡桌面</div>
+<div class="hint">👆 <b>单击</b>小火 = 戳他（欺负，连戳缩角落）· 🤚 在头顶<b>按住鼠标左键来回搓</b> = 揉头哄他（被戳委屈后搓头也能哄好）· 长按 / 右键小火唤出菜单，选「💬聊天」打字让小火唱歌 / 看书 / 画画 / 念念有词 · 点「睡觉」约 3 秒翻倒躺平深度睡眠 · 移开恢复穿透不挡桌面</div>
 <div id="dbg" style="position:fixed;left:8px;bottom:34px;z-index:60;color:#c33;font-size:11px;font-family:monospace;background:rgba(255,255,255,.7);padding:2px 6px;border-radius:4px;">调试：等待 Rust 数据…</div>
 
 <!-- 全屏框选层（看屏/搜题）：截屏后铺满全屏让你框选 -->
@@ -144,11 +143,7 @@
 <div id="ctxMenu" class="hidden">
   <div data-m="search">📸 搜一搜</div>
   <div data-m="screen">👀 看看屏幕</div>
-  <div data-m="speak">🎤 念念有词</div>
   <div data-m="tips">💡 提示</div>
-  <div data-m="sing">🎵 唱歌</div>
-  <div data-m="read">📖 看书</div>
-  <div data-m="paint">🎨 画点什么</div>
   <div data-m="chat">💬 聊天</div>
   <div data-m="about">ℹ️ 关于</div>
 </div>
@@ -473,11 +468,12 @@ import { invoke } from '@tauri-apps/api/core';
       '🖱️ 右键小火 → 同样唤出菜单',
       '👆 单击小火 → 戳一下，它会恼、会躲，多戳几下缩角落含泪',
       '🤚 揉头哄好 = 在小火头顶<b>按住鼠标左键、来回搓动</b>（不是悬停、不是单击），他就会笑眼眯眼舒服地眯眼；被戳委屈缩角落后，按住头顶搓也能把他哄出来',
-      '📖 看书 → 坐地捧着书低头安静阅读（不唱歌），偶尔翻页，很专注',
-      '🎵 唱歌 → 站着闭眼陶醉、举臂打拍子、张嘴哼唱，头顶飘出音符',
+      '💬 「💬聊天」框里打字「看会儿书」→ 坐地捧书低头安静阅读，很专注',
+      '💬 「💬聊天」框里打字「唱首歌」→ 站着闭眼陶醉、举臂打拍子、张嘴哼唱，头顶飘音符',
       '😴 「睡觉」后约 3 秒会翻倒躺平进入深度睡眠，醒来会伸展一下',
       '📸 搜一搜 / 👀 看看屏幕 → 真截屏后拖框选，交给大模型分析',
-      '🎤 念念有词 → 让它的嘴动起来',
+      '🎨 「💬聊天」框里打字「画只猫」→ 小火按你的文字指令画画',
+      '💬 「💬聊天」框里随便打字 → 小火用智谱回复，嘴会跟着动（念念有词）',
       '🚶 它会自动到处溜达，高兴时眼睛追着你看',
       '✨ 鼠标移开即恢复穿透，不挡桌面点击'
     ].join('<br>');
@@ -488,18 +484,14 @@ import { invoke } from '@tauri-apps/api/core';
   document.querySelector('#tipsBox .close').addEventListener('click', () => {
     document.getElementById('tipsBox').classList.add('hidden');
   });
-  // 长按/右键菜单：搜一搜 / 看看屏幕 / 念念有词 / 提示 / 关于
+  // 长按/右键菜单：搜一搜 / 看看屏幕 / 提示 / 💬聊天 / 关于（唱歌·看书·画画·念念有词 都在聊天框里打字触发）
   document.getElementById('ctxMenu').addEventListener('click', e => {
     const act = e.target.dataset.m;
     if (act === 'search') startPick('search');
     else if (act === 'screen') startPick('screen');
-    else if (act === 'speak') speakingUntil = performance.now() + 3500;
-    else if (act === 'sing') { setState('sing', autoDuration('sing')); }
-    else if (act === 'read') { setState('read', autoDuration('read')); }
-    else if (act === 'paint') openPaintInput();
     else if (act === 'chat') openChatBox();
     else if (act === 'tips') showTips();
-    else if (act === 'about') alert('小火 · 桌面火柴人\n透明 Tauri 窗口：骨骼 / 状态机 / 心情 / 表情 / 嘴型。\n长按我（或右键）唤出菜单：搜一搜 / 看看屏幕 / 念念有词 / 提示 / 唱歌 / 看书。\n👆 单击 = 戳我（会恼会躲，多戳缩角落）；🤚 在头顶按住鼠标来回搓 = 揉头哄我（被戳委屈后搓头也能哄好）。\n搜一搜、看看屏幕会真截屏后拖框选，交给大模型（智谱 GLM-4V）分析。');
+    else if (act === 'about') alert('小火 · 桌面火柴人\n透明 Tauri 窗口：骨骼 / 状态机 / 心情 / 表情 / 嘴型。\n长按我（或右键）唤出菜单：搜一搜 / 看看屏幕 / 提示 / 💬聊天 / 关于。在「💬聊天」框里打字：画只猫 / 唱首歌 / 看会儿书 / 随便聊，小火都会回应（回复时嘴会动）。\n👆 单击 = 戳我（会恼会躲，多戳缩角落）；🤚 在头顶按住鼠标来回搓 = 揉头哄我（被戳委屈后搓头也能哄好）。\n搜一搜、看看屏幕会真截屏后拖框选，交给大模型（智谱 GLM-4V）分析。');
     document.getElementById('ctxMenu').classList.add('hidden');
   });
   document.addEventListener('click', e => {
@@ -2164,10 +2156,7 @@ import { invoke } from '@tauri-apps/api/core';
   }));
   screenBox.querySelector('.close').addEventListener('click', () => screenBox.classList.add('hidden'));
 
-  // ---------- 念念有词（mock 嘴型） ----------
-  document.querySelector('[data-act="speak"]').addEventListener('click', () => {
-    speakingUntil = performance.now() + 3500;
-  });
+  // 念念有词已并入聊天框：在聊天框里打字，小火用 ask_reply 回复，口型随 speakingUntil 自动跟随
 })();
 </script>
 </body>

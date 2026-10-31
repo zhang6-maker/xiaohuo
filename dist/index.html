@@ -104,7 +104,7 @@
      想恢复调试信息，把这一行注释掉即可。 */
   #status, .hint, #dbg { display: none !important; }
 </style>
-  <script type="module" crossorigin src="/assets/index-BNPkjpEI.js"></script>
+  <script type="module" crossorigin src="/assets/index-D7iEwSF9.js"></script>
 </head>
 <body>
 <canvas id="stage" width="480" height="540"></canvas>
@@ -112,10 +112,9 @@
 <div id="bar" class="hidden">
   <button data-act="search">📸 搜一搜</button>
   <button data-act="screen">👀 看看屏幕</button>
-  <button data-act="speak">🎤 念念有词</button>
 </div>
 <div id="status">状态：idle · 心情：0</div>
-<div class="hint">👆 <b>单击</b>小火 = 戳他（欺负，连戳缩角落）· 🤚 在头顶<b>按住鼠标左键来回搓</b> = 揉头哄他（被戳委屈后搓头也能哄好）· 长按 / 右键小火唤出菜单（含「🎵唱歌」「📖看书」）· 点「睡觉」约 3 秒翻倒躺平深度睡眠 · 移开恢复穿透不挡桌面</div>
+<div class="hint">👆 <b>单击</b>小火 = 戳他（欺负，连戳缩角落）· 🤚 在头顶<b>按住鼠标左键来回搓</b> = 揉头哄他（被戳委屈后搓头也能哄好）· 长按 / 右键小火唤出菜单，选「💬聊天」打字让小火唱歌 / 看书 / 画画 / 念念有词 · 点「睡觉」约 3 秒翻倒躺平深度睡眠 · 移开恢复穿透不挡桌面</div>
 <div id="dbg" style="position:fixed;left:8px;bottom:34px;z-index:60;color:#c33;font-size:11px;font-family:monospace;background:rgba(255,255,255,.7);padding:2px 6px;border-radius:4px;">调试：等待 Rust 数据…</div>
 
 <!-- 全屏框选层（看屏/搜题）：截屏后铺满全屏让你框选 -->
@@ -145,11 +144,7 @@
 <div id="ctxMenu" class="hidden">
   <div data-m="search">📸 搜一搜</div>
   <div data-m="screen">👀 看看屏幕</div>
-  <div data-m="speak">🎤 念念有词</div>
   <div data-m="tips">💡 提示</div>
-  <div data-m="sing">🎵 唱歌</div>
-  <div data-m="read">📖 看书</div>
-  <div data-m="paint">🎨 画点什么</div>
   <div data-m="chat">💬 聊天</div>
   <div data-m="about">ℹ️ 关于</div>
 </div>
