@@ -104,7 +104,7 @@
      想恢复调试信息，把这一行注释掉即可。 */
   #status, .hint, #dbg { display: none !important; }
 </style>
-  <script type="module" crossorigin src="/assets/index-o84o5gj-.js"></script>
+  <script type="module" crossorigin src="/assets/index-DzFjZfzM.js"></script>
 </head>
 <body>
 <canvas id="stage" width="480" height="540"></canvas>
@@ -131,11 +131,18 @@
 </div>
 
 <!-- 看屏结果框 -->
-<div id="screenBox" class="box hidden">
+<div id="screenBox" class="box hidden" style="top:12px;max-height:82%;overflow-y:auto;">
   <button class="close">×</button>
   <div id="screenText"></div>
-  <div class="actions">
-    <button data-s="check">帮我查</button>
+  <div id="screenAskWrap" class="hidden" style="margin-top:8px;">
+    <input id="screenAsk" type="text" placeholder="想问他点啥？比如「我该怎么做」「这报错咋修」（留空就直接看截图）" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:6px;font-size:13px;" />
+    <div class="actions">
+      <button data-s="ask">问问他</button>
+      <button data-s="look">直接看截图</button>
+    </div>
+  </div>
+  <div id="screenResultActions" class="actions hidden">
+    <button data-s="again">再问一次</button>
     <button data-s="no">不用了</button>
   </div>
 </div>

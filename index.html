@@ -130,11 +130,18 @@
 </div>
 
 <!-- 看屏结果框 -->
-<div id="screenBox" class="box hidden">
+<div id="screenBox" class="box hidden" style="top:12px;max-height:82%;overflow-y:auto;">
   <button class="close">×</button>
   <div id="screenText"></div>
-  <div class="actions">
-    <button data-s="check">帮我查</button>
+  <div id="screenAskWrap" class="hidden" style="margin-top:8px;">
+    <input id="screenAsk" type="text" placeholder="想问他点啥？比如「我该怎么做」「这报错咋修」（留空就直接看截图）" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:6px;font-size:13px;" />
+    <div class="actions">
+      <button data-s="ask">问问他</button>
+      <button data-s="look">直接看截图</button>
+    </div>
+  </div>
+  <div id="screenResultActions" class="actions hidden">
+    <button data-s="again">再问一次</button>
     <button data-s="no">不用了</button>
   </div>
 </div>
@@ -2144,45 +2151,89 @@ import { invoke } from '@tauri-apps/api/core';
     c.getContext('2d').drawImage(pickImg, X, Y, RW, RH, 0, 0, c.width, c.height);
     lastRegionB64 = c.toDataURL('image/jpeg', 0.85);
     closeAllPick();                                // 退出全屏，回小窗显示结果
-    runGlm(currentAct, lastRegionB64);
+    if (currentAct === 'screen') showScreenAsk();  // 看屏：先让用户提问/直接看
+    else runGlm(currentAct, lastRegionB64);        // 搜一搜：直接解题
   });
   // Esc 取消框选（不想框了就按 Esc）
   window.addEventListener('keydown', e => {
     if (e.key === 'Escape' && picking) closeAllPick();
   });
 
-  function runGlm(act, imgB64) {
-    const prompt = act === 'search'
-      ? '这是一道题目或问题（可能是文字题、公式、代码或报错截图）。请仔细看图，给出准确的解答步骤和最终答案；若是代码报错，请指出原因并给出修复方案。用中文、条理清晰地回答。'
-      : '请看这张屏幕截图，简要描述你看到的内容：用户大概在做什么、界面上有哪些关键信息（文字、报错、数据、窗口标题等）。用中文简要说明。';
+  function runGlm(act, imgB64, question) {
+    const q = (question || '').trim();
+    let prompt;
+    if (q) {
+      prompt = '这是用户截下的屏幕区域。用户对着这张图问你一个问题，请结合图片内容回答。\n用户的问题：' + q + '\n请用中文、条理清晰地回答，必要时给出具体操作步骤。';
+    } else if (act === 'search') {
+      prompt = '这是一道题目或问题（可能是文字题、公式、代码或报错截图）。请仔细看图，给出准确的解答步骤和最终答案；若是代码报错，请指出原因并给出修复方案。用中文、条理清晰地回答。';
+    } else {
+      prompt = '请看这张屏幕截图，简要描述你看到的内容：用户大概在做什么、界面上有哪些关键信息（文字、报错、数据、窗口标题等）。用中文简要说明。';
+    }
     const box = act === 'search' ? answerBox : screenBox;
     const txt = act === 'search' ? answerText : screenText;
-    txt.innerHTML = '🤔 小火正在看…';
-    box.style.left = '50%'; box.style.top = '40%';
-    box.style.transform = 'translate(-50%,-50%)';
+    txt.innerHTML = q ? ('🤔 小火在看，并琢磨「' + q + '」…') : '🤔 小火正在看…';
+    box.style.left = '50%';
+    box.style.top = act === 'search' ? '40%' : '12px';
+    box.style.transform = act === 'search' ? 'translate(-50%,-50%)' : 'translateX(-50%)';
     box.classList.remove('hidden');
     // Tauri v2 默认把 Rust 的 snake_case 参数转成 camelCase 暴露给前端，
     // 所以这里必须写 imageB64（写 image_b64 会报 missing required key imageB64）
     invoke('ask_glm', { imageB64: imgB64, prompt })
-      .then(res => { txt.innerHTML = res.replace(/\n/g, '<br>'); })
+      .then(res => {
+        txt.innerHTML = res.replace(/\n/g, '<br>');
+        if (act !== 'search') {        // 看屏：结果出来后显示「再问一次」
+          screenAskWrap.classList.add('hidden');
+          screenResultActions.classList.remove('hidden');
+        }
+      })
       .catch(err => { txt.innerHTML = '调用失败：' + (err && err.message ? err.message : err); });
+  }
+
+  // 看屏截图后：先给用户输入问题（也可留空直接看），再发问
+  function showScreenAsk() {
+    screenText.innerHTML = '已截取屏幕区域 📸 想问问小火点啥？还是直接让他看？';
+    screenAskWrap.classList.remove('hidden');
+    screenResultActions.classList.add('hidden');
+    screenAsk.value = '';
+    screenBox.style.left = '50%'; screenBox.style.top = '12px';
+    screenBox.style.transform = 'translateX(-50%)';
+    screenBox.classList.remove('hidden');
+    setTimeout(() => { try { screenAsk.focus(); } catch (e) {} }, 30);
   }
 
   document.querySelector('[data-act="search"]').addEventListener('click', () => startPick('search'));
   answerBox.querySelector('.close').addEventListener('click', () => answerBox.classList.add('hidden'));
 
-  // ---------- 看屏结果框（看屏/搜题共用结果） ----------
+  // ---------- 看屏结果框（看屏支持先提问，也可直接看） ----------
   const screenBox = document.getElementById('screenBox');
   const screenText = document.getElementById('screenText');
+  const screenAskWrap = document.getElementById('screenAskWrap');
+  const screenResultActions = document.getElementById('screenResultActions');
+  const screenAsk = document.getElementById('screenAsk');
   document.querySelector('[data-act="screen"]').addEventListener('click', () => startPick('screen'));
 
-  screenBox.querySelectorAll('.actions button').forEach(b => b.addEventListener('click', () => {
-    if (b.dataset.s === 'check') {
-      screenBox.classList.add('hidden');
-      if (lastRegionB64) runGlm('search', lastRegionB64);   // 看屏后顺手查
-    } else screenBox.classList.add('hidden');
+  screenBox.querySelectorAll('button[data-s]').forEach(b => b.addEventListener('click', () => {
+    const s = b.dataset.s;
+    if (s === 'ask') {
+      // 有/无问题都走 runGlm；问题留空等价于「直接看截图」
+      runGlm('screen', lastRegionB64, screenAsk.value);
+    } else if (s === 'look') {
+      runGlm('screen', lastRegionB64, '');
+    } else if (s === 'again') {
+      // 再问一次：回到提问界面
+      screenAskWrap.classList.remove('hidden');
+      screenResultActions.classList.add('hidden');
+      screenAsk.value = '';
+      screenBox.style.left = '50%'; screenBox.style.top = '12px';
+      screenBox.style.transform = 'translateX(-50%)';
+      setTimeout(() => { try { screenAsk.focus(); } catch (e) {} }, 30);
+    } else {
+      screenBox.classList.add('hidden');   // no / 不用了
+    }
   }));
   screenBox.querySelector('.close').addEventListener('click', () => screenBox.classList.add('hidden'));
+  // 在提问框按回车 = 问问他（问题留空则为直接看）
+  screenAsk.addEventListener('keydown', e => { if (e.key === 'Enter') runGlm('screen', lastRegionB64, screenAsk.value); });
 
   // 念念有词已并入聊天框：在聊天框里打字，小火用 ask_reply 回复，口型随 speakingUntil 自动跟随
 })();
