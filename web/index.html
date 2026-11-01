@@ -3,17 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>小火 · 网页演示版 v0.1.12-web</title>
+<title>小火 · 桌面火柴人 v0.1.5</title>
 <style>
   html, body { margin: 0; height: 100%; }
   body {
     display: flex; align-items: center; justify-content: center;
-    background: #f4f6f9; font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: transparent; font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
     overflow: hidden;
   }
   #stage { background: transparent; display: block; }
 
-  /* 顶部按钮栏（桌面版用，网页版隐藏） */
+  /* 顶部按钮栏 */
   #bar {
     position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
     display: flex; gap: 8px; z-index: 10;
@@ -26,26 +26,12 @@
   #bar button:hover { background: #f0f1f3; }
   #status {
     position: fixed; top: 52px; left: 50%; transform: translateX(-50%);
-    color: #6b7280; font-size: 12px; z-index: 10; letter-spacing: .3px;
+    color: #9aa0a6; font-size: 12px; z-index: 10; letter-spacing: .3px;
   }
   .hint {
     position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
-    color: #6b7280; font-size: 12px; z-index: 10; letter-spacing: .3px; text-align: center;
+    color: #9aa0a6; font-size: 12px; z-index: 10; letter-spacing: .3px; text-align: center;
   }
-
-  /* 网页版动作控制面板（演示用，方便查看各种动作） */
-  #ctrl {
-    position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
-    display: flex; gap: 6px; flex-wrap: wrap; justify-content: center;
-    z-index: 20; max-width: 96vw;
-  }
-  #ctrl button {
-    border: 1px solid #d6d8dc; background: #fff; color: #2b2b2f;
-    padding: 7px 12px; border-radius: 999px; font-size: 13px; cursor: pointer;
-    box-shadow: 0 1px 3px rgba(0,0,0,.06);
-  }
-  #ctrl button:hover { background: #f0f1f3; }
-  #ctrl span { color: #9aa0a6; font-size: 13px; align-self: center; }
 
   /* 全屏框选层（看屏/搜题）：截屏后铺满全屏让你框选 */
   #pickLayer {
@@ -89,6 +75,28 @@
     padding: 6px 0; border-radius: 6px; cursor: pointer; font-size: 12px;
   }
   .box .actions button:hover { background: #3a3a42; }
+  /* 换颜色面板：色板 */
+  #colorBox .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
+  #colorBox .swatch {
+    width: 30px; height: 30px; border-radius: 6px; cursor: pointer;
+    border: 2px solid transparent; box-shadow: 0 0 0 1px rgba(255,255,255,.15);
+  }
+  #colorBox .swatch.sel { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.55); }
+  #colorBox .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  #colorBox input[type=color] { width: 38px; height: 28px; border: none; background: none; cursor: pointer; padding: 0; }
+  /* 唱歌歌词气泡：贴着头顶飘，原创短词循环显示 */
+  #lyricsBox {
+    position: fixed; z-index: 38; max-width: 280px; text-align: center;
+    background: rgba(40,32,28,.92); color: #ffe9d6;
+    border: 1px solid #ff8a3d; border-radius: 12px; padding: 6px 12px;
+    font-size: 13px; line-height: 1.5; box-shadow: 0 4px 16px rgba(0,0,0,.35);
+    pointer-events: none;            /* 歌词不参与交互，不挡桌面点击穿透 */
+  }
+  #lyricsBox::after {
+    content: ''; position: absolute; left: 50%; bottom: -7px; transform: translateX(-50%);
+    border-left: 7px solid transparent; border-right: 7px solid transparent;
+    border-top: 8px solid #ff8a3d;
+  }
 
   /* 聊天框：消息气泡 */
   #chatLog { display: flex; flex-direction: column; gap: 6px; }
@@ -114,35 +122,20 @@
 
   .hidden { display: none !important; }
 
-  /* 网页版：隐藏红色调试字(#dbg)；状态字(#status)与底部提示(.hint)保留，方便查看当前动作与心情 */
-  #dbg { display: none !important; }
+  /* 界面只留小火本体：隐藏灰色的状态字(#status)、底部提示字(.hint) 与 红色的调试字(#dbg)。
+     想恢复调试信息，把这一行注释掉即可。 */
+  #status, .hint, #dbg { display: none !important; }
 </style>
 </head>
 <body>
 <canvas id="stage" width="480" height="540"></canvas>
-
-<!-- 网页版动作控制面板：直接切换动作 / 戳一下 / 哄好，方便查看各种动画 -->
-<div id="ctrl">
-  <span>动作：</span>
-  <button data-s="idle">待机</button>
-  <button data-s="walk">走路</button>
-  <button data-s="run">跑步</button>
-  <button data-s="wave">挥手</button>
-  <button data-s="sleep">睡觉</button>
-  <button data-s="hide">委屈躲开</button>
-  <button data-s="read">📖看书</button>
-  <span>|</span>
-  <button data-s="poke">戳一下</button>
-  <button data-s="sing">🎵唱歌</button>
-  <button data-s="paint">🎨画画</button>
-</div>
 
 <div id="bar" class="hidden">
   <button data-act="search">📸 搜一搜</button>
   <button data-act="screen">👀 看看屏幕</button>
 </div>
 <div id="status">状态：idle · 心情：0</div>
-<div class="hint">网页演示版：上方按钮可切换动作 / 🎵唱歌。👆 <b>单击</b>小火 = 戳他（欺负，连戳会缩角落）；🤚 在头顶<b>按住鼠标左键来回搓</b> = 揉头哄他（被戳委屈后搓头也能哄好）；点「📖看书」看他坐地安静捧书阅读；点「睡觉」约 3 秒翻倒躺平深度睡眠；长按或右键小火唤出菜单。</div>
+<div class="hint">👆 <b>单击</b>小火 = 戳他（欺负，连戳缩角落）· 🤚 在头顶<b>按住鼠标左键来回搓</b> = 揉头哄他（被戳委屈后搓头也能哄好）· 长按 / 右键小火唤出菜单，选「💬聊天」打字让小火唱歌 / 看书 / 画画 / 念念有词 · 点「睡觉」约 3 秒翻倒躺平深度睡眠 · 移开恢复穿透不挡桌面</div>
 <div id="dbg" style="position:fixed;left:8px;bottom:34px;z-index:60;color:#c33;font-size:11px;font-family:monospace;background:rgba(255,255,255,.7);padding:2px 6px;border-radius:4px;">调试：等待 Rust 数据…</div>
 
 <!-- 全屏框选层（看屏/搜题）：截屏后铺满全屏让你框选 -->
@@ -167,6 +160,7 @@
     <div class="actions">
       <button data-s="ask">问问他</button>
       <button data-s="look">直接看截图</button>
+      <button data-s="search">🔍 搜一搜</button>
     </div>
   </div>
   <div id="screenResultActions" class="actions hidden">
@@ -179,9 +173,22 @@
 <div id="ctxMenu" class="hidden">
   <div data-m="search">📸 搜一搜</div>
   <div data-m="screen">👀 看看屏幕</div>
+  <div data-m="color">🎨 换颜色</div>
   <div data-m="tips">💡 提示</div>
   <div data-m="chat">💬 聊天</div>
   <div data-m="about">ℹ️ 关于</div>
+</div>
+
+<!-- 换颜色面板：右键菜单「🎨 换颜色」唤出，选身体色（含纯黑便于在黑色界面藏起来） -->
+<div id="colorBox" class="box hidden" style="top:12px;max-width:300px;">
+  <button class="close">×</button>
+  <div style="font-size:13px;color:#cfd2d8;margin:2px 0 2px;">🎨 选个身体颜色（会记住，下次启动也生效）</div>
+  <div class="swatches" id="colorSwatches"></div>
+  <div class="row">
+    <span style="font-size:12px;color:#9aa0a6;">自定义</span>
+    <input type="color" id="colorPicker" value="#2b2b2f" />
+    <button id="colorReset" style="margin-left:auto;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;">恢复默认</button>
+  </div>
 </div>
 
 <!-- 提示框（菜单「提示」唤出） -->
@@ -199,7 +206,7 @@
 </div>
 
 <!-- 聊天框（菜单「💬 聊天」唤出）：一个输入框统管 唱歌 / 看书 / 画画 / 回复，打字触发 -->
-<div id="chatBox" class="box hidden" style="left:50%;top:48%;transform:translate(-50%,-50%);width:88%;max-width:340px;">
+<div id="chatBox" class="box hidden" style="width:88%;max-width:340px;">
   <button class="close">×</button>
   <div style="font-size:13px;color:#cfd2d8;margin:2px 0 8px;">💬 和小火聊天</div>
   <div id="chatLog" style="max-height:200px;overflow-y:auto;margin-bottom:8px;"></div>
@@ -207,49 +214,17 @@
   <div class="actions"><button id="chatSend">发送</button></div>
 </div>
 
-<script>
-// ---------- 网页版：内置假 invoke（模拟 Tauri 桌面能力，桌面版用真后端） ----------
-async function invoke(cmd, args) {
-  // 桌面版：转发到 Tauri 真后端（前端已嵌进 exe；withGlobalTauri 暴露了 window.__TAURI__.core.invoke）
-  if (typeof window.__TAURI_INTERNALS__ !== 'undefined' && window.__TAURI__ && window.__TAURI__.core) {
-    return window.__TAURI__.core.invoke(cmd, args);
-  }
-  // 以下为网页演示版假数据（浏览器里跑得通，方便看动画 / 走通 UI 流程）
-  if (cmd === 'capture_screen') {
-    // 生成一张演示截图（非真实截屏），让看屏/搜题流程在浏览器里也能走通
-    const c = document.createElement('canvas');
-    c.width = 960; c.height = 600;
-    const g = c.getContext('2d');
-    g.fillStyle = '#eef1f5'; g.fillRect(0, 0, c.width, c.height);
-    g.fillStyle = '#cfd6df'; g.fillRect(60, 90, 380, 220);
-    g.fillStyle = '#b9c1cc'; g.fillRect(560, 90, 340, 140);
-    g.fillStyle = '#2b2b2f'; g.font = '28px sans-serif';
-    g.fillText('网页版演示截图（非真实截屏）', 60, 60);
-    g.fillStyle = '#5b6470'; g.font = '20px sans-serif';
-    g.fillText('拖动框选任意区域 → 交给「小火」分析', 60, 370);
-    return c.toDataURL('image/png');
-  }
-  if (cmd === 'ask_glm') {
-    return '（网页版演示）这是模拟的回答。\n桌面版会调用智谱 GLM-4V，真看懂你框选的屏幕内容并给出分析。';
-  }
-  if (cmd === 'ask_draw') {
-    return '{"caption":"网页版演示","strokes":[{"prim":"circle","a":[150,205,42],"color":"#3aa655"},{"prim":"dot","a":[150,150,6],"color":"#2b2b2f"}]}';
-  }
-  if (cmd === 'critique_draw') {
-    return '{"caption":"网页版演示","strokes":[{"prim":"circle","a":[150,205,42],"color":"#3aa655"}]}';
-  }
-  if (cmd === 'ask_reply') {
-    return '（网页版演示）小火说：在桌面版里我才能真的和你聊天、调用智谱回答问题哦～';
-  }
-  if (cmd === 'toggle_pick') return;   // 全屏切换：网页版由前端 JS 直接控制，无需后端
-  return undefined;
-}
+<!-- 唱歌歌词气泡：sing 状态显示，跟随头顶，原创短词循环 -->
+<div id="lyricsBox" class="box hidden"></div>
 
+<script type="module">
+import { invoke } from '@tauri-apps/api/core';
 (() => {
   "use strict";
   const canvas = document.getElementById('stage');
   const ctx = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
+  const lyricsBox = document.getElementById('lyricsBox');   // 唱歌歌词气泡（模块级，供 startSingLyrics 等引用）
   const DEG = Math.PI / 180;
   const UP = -Math.PI / 2, DOWN = Math.PI / 2;
   const FIG_SCALE = 0.5;             // 桌面宠物整体缩放（偏小，更贴身）
@@ -260,7 +235,12 @@ async function invoke(cmd, args) {
     torsoLen: 85, neckLen: 16, headR: 24,
     thigh: 46, shin: 36, upperArm: 42, foreArm: 28,
     lineW: 6, color: '#2b2b2f',
+    // 眼睛颜色独立于身体色：换身体色时眼睛保持深色，瞳孔/眼神动态始终可读
+    eyeColor: '#2b2b2f',
   };
+  // 身体默认色：优先用上次保存的（localStorage），否则用内置默认；右键「🎨 换颜色」可改
+  let defaultColor = (() => { try { return localStorage.getItem('xiaohuo.color') || '#2b2b2f'; } catch (e) { return '#2b2b2f'; } })();
+  S.color = defaultColor;
   const legSpread = 0.18, armSpread = 0.35;
 
   const point = (o, a, l) => ({ x: o.x + Math.cos(a) * l, y: o.y + Math.sin(a) * l });
@@ -278,7 +258,7 @@ async function invoke(cmd, args) {
     bobAmp: 1.5, walkAmp: 0, walkFreq: 1.1,
     crouch: 0, scale: 1, opacity: 1,
     mouthOpen: 0, eyeOpen: 1,
-    sad: 0, hug: 0, happy: 0, hop: 0, book: 0, sit: 0, sing: 0, read: 0, paint: 0,
+    sad: 0, hug: 0, happy: 0, hop: 0, book: 0, sit: 0, sing: 0, read: 0,
     think: 0, headTilt: 0,
   };
   function poseForState(state, t) {
@@ -374,11 +354,54 @@ async function invoke(cmd, args) {
       sleepCD = cd; readCD = cd;
     }
     const wasPaint = currState === 'paint';
+    const wasSing = currState === 'sing';
     prevState = currState; currState = s;
-    if (wasPaint && s !== 'paint') S.color = '#2b2b2f';  // 离开画画：恢复默认身体色
+    if (s === 'sing' && !wasSing) startSingLyrics();        // 进入唱歌：起歌词
+    else if (wasSing && s !== 'sing') stopSingLyrics();     // 离开唱歌：收歌词
+    if (wasPaint && s !== 'paint') S.color = defaultColor;  // 离开画画：恢复默认身体色（用户自定义过的也保留）
     transStart = performance.now();
     nextSwitchAt = performance.now() + (dur != null ? dur : autoDuration(s));
     if (s === 'walk' || s === 'run') gaitJitter = rand(0.8, 1.25);  // 每趟步态略有差异
+  }
+
+  // ---------- 唱歌歌词（原创短词，避开版权）----------
+  const SONG = [
+    '夜太黑 我就燃起一簇火苗',
+    '烧穿屏幕 把黑夜点亮',
+    '别看我小 这点火也能燎原',
+    '风越大 我越旺 你别眨眼',
+    '键盘敲到底 火星溅成线',
+    '把孤单点着 飘成一缕烟',
+    '陪你熬过 每一个不眠夜',
+    '小火不灭 就等你到天亮',
+  ];
+  let lyricTimer = null, lyricIdx = 0;
+  function startSingLyrics() {
+    if (lyricTimer) return;                       // 已在唱，不重复起
+    lyricIdx = 0;
+    lyricsBox.textContent = SONG[0];
+    lyricsBox.classList.remove('hidden');
+    positionLyrics();
+    lyricTimer = setInterval(() => {
+      lyricIdx = (lyricIdx + 1) % SONG.length;
+      lyricsBox.textContent = SONG[lyricIdx];
+      positionLyrics();
+    }, 1400);
+  }
+  function stopSingLyrics() {
+    if (lyricTimer) { clearInterval(lyricTimer); lyricTimer = null; }
+    lyricsBox.classList.add('hidden');
+  }
+  function positionLyrics() {
+    const bw = lyricsBox.offsetWidth || 160;
+    const bh = lyricsBox.offsetHeight || 32;
+    const headY = posY - 190;                    // 与 positionChatBox 同源：头顶参考线
+    let top = headY - bh - 10;
+    top = Math.max(8, Math.min(top, window.innerHeight - bh - 8));
+    lyricsBox.style.left = (posX - bw / 2) + 'px';
+    lyricsBox.style.transform = 'none';
+    lyricsBox.style.top = top + 'px';
+    lyricsBox.style.bottom = 'auto';
   }
 
   // ---------- 鼠标 / 心情 ----------
@@ -406,7 +429,8 @@ async function invoke(cmd, args) {
   const HIDE_CORNER_Y = H - 120;      // 委屈时退到的屏幕左下角 y（贴底边蹲着），H-120 保证脚不穿底
   const RECOVERY = 0.03;             // 心情回升 / 帧，-100→0 约 55s
 
-  // 鼠标坐标：网页版走 webview(DOM) 事件；桌面版由 Rust 推送。
+  // 鼠标坐标：Tauri 下由 Rust 的 GetCursorPos 轮询经 IPC 推送（窗口穿透与否都收得到）；
+  // 浏览器直接预览时退回 webview 事件。这是修复"穿透后收不到 mousemove"的关键。
   const dpr = window.devicePixelRatio || 1;
   const isTauri = typeof window.__TAURI_INTERNALS__ !== 'undefined';
   let interactMode = false;            // 当前是否处于"可交互"态（悬停宠物/按钮时为真），仅用于状态栏显示
@@ -440,6 +464,8 @@ async function invoke(cmd, args) {
     m.style.left = left + 'px'; m.style.top = top + 'px';
   }
   // 原生的点击 / 右键：无论 Tauri 还是浏览器都走 DOM 事件。
+  // 桌面版下，Rust 会在鼠标悬停宠物/按钮时临时关闭穿透(set_ignore_cursor_events(false))，
+  // 于是这些原生事件照常触发——和浏览器版完全一致，不再依赖脆弱的全局钩子。
   // 长按小火 → 唤出功能菜单（与右键同一个菜单）
   function hitPet(x, y) {   // 与 pokeAt 同一包围盒：只按在小火身上才算
     return !(x < posX - 150 || x > posX + 150 || y < posY - 190 || y > posY + 230);
@@ -497,12 +523,35 @@ async function invoke(cmd, args) {
     showCtxMenu(e.clientX - r.left, e.clientY - r.top);
   });
 
-  // 网页版：直接走 DOM 鼠标事件（不依赖 Tauri 通道）
-  window.addEventListener('mousemove', (e) => {
-    const r = canvas.getBoundingClientRect();
-    setMouse(e.clientX - r.left, e.clientY - r.top);
-  });
-  window.addEventListener('mouseout', () => { mouse.inside = false; });
+  // Tauri 通道：listen 收鼠标坐标；emit 把宠物包围盒发给 Rust 做"悬停即交互"
+  let emitter = null;
+  let rustIgnore = true;               // Rust 回传的真实穿透状态（比前端自算准）
+  let dbgRX = 0;                       // 收到 dbg 的次数，用来确认 Rust→前端链路是通的
+  const dbgEl = document.getElementById('dbg');
+  if (isTauri) {
+    import('@tauri-apps/api/event').then(({ listen, emit }) => {
+      emitter = emit;
+      listen('mouse-move', (e) => setMouse(e.payload[0] / dpr, e.payload[1] / dpr));
+      listen('dbg', (e) => {
+        const p = e.payload;           // [lx, ly, inside, over_pet, want_ignore, sf*100]
+        dbgRX++;
+        rustIgnore = p[4] === 1;
+        dbgEl.textContent = `调试 RX:${dbgRX} 鼠标:${p[0]},${p[1]} 窗内:${p[2]} 悬停宠物:${p[3]} 穿透:${p[4]} dpr:${(p[5]/100).toFixed(2)}`;
+      });
+    }).catch((err) => {
+      // 关键修复：之前用经典 <script> 写 dynamic import，Vite 不会改写裸模块路径，
+      // 浏览器原生 import('@tauri-apps/api/event') 因无 import map 直接 reject → 报"加载失败"。
+      // 改 <script type="module"> 后 Vite 会自动改写，这里保留真实错误以便排查。
+      dbgEl.textContent = '调试：事件模块加载失败 — ' + (err && err.message ? err.message : err);
+      console.error('Tauri event import failed:', err);
+    });
+  } else {
+    window.addEventListener('mousemove', (e) => {
+      const r = canvas.getBoundingClientRect();
+      setMouse(e.clientX - r.left, e.clientY - r.top);
+    });
+    window.addEventListener('mouseout', () => { mouse.inside = false; });
+  }
   // 抑制 webview 原生右键菜单（我们的菜单自己画）
   document.addEventListener('contextmenu', e => e.preventDefault());
   // 提示框：菜单「提示」唤出，列出全部玩法
@@ -512,13 +561,14 @@ async function invoke(cmd, args) {
     txt.innerHTML = [
       '🖱️ <b>长按小火</b>（约半秒）→ 唤出功能菜单',
       '🖱️ 右键小火 → 同样唤出菜单',
-      '👆 单击小火（点一下）= 戳他，会恼会躲，连戳几下缩角落含泪 —— 这是"欺负"',
+      '👆 单击小火 → 戳一下，它会恼、会躲，多戳几下缩角落含泪',
       '🤚 揉头哄好 = 在小火头顶<b>按住鼠标左键、来回搓动</b>（不是悬停、不是单击），他就会笑眼眯眼舒服地眯眼；被戳委屈缩角落后，按住头顶搓也能把他哄出来',
-      '📖 看书 → 坐地捧着书低头安静阅读（不唱歌），偶尔翻页，很专注',
-      '🎵 唱歌 → 站着闭眼陶醉、举臂打拍子、张嘴哼唱，头顶飘出音符',
+      '💬 「💬聊天」框里打字「看会儿书」→ 坐地捧书低头安静阅读，很专注',
+      '💬 「💬聊天」框里打字「唱首歌」→ 站着闭眼陶醉、举臂打拍子、张嘴哼唱，头顶飘音符',
       '😴 「睡觉」后约 3 秒会翻倒躺平进入深度睡眠，醒来会伸展一下',
-      '📸 搜一搜 / 👀 看看屏幕 → 网页版用演示图模拟，桌面版会真截屏后拖框选，交给大模型分析',
-      '💬 「💬聊天」框里随便打字 → 小火用演示回复，嘴会跟着动（念念有词）',
+      '📸 搜一搜 / 👀 看看屏幕 → 真截屏后拖框选，交给大模型分析',
+      '🎨 「💬聊天」框里打字「画只猫」→ 小火按你的文字指令画画',
+      '💬 「💬聊天」框里随便打字 → 小火用智谱回复，嘴会跟着动（念念有词）',
       '🚶 它会自动到处溜达，高兴时眼睛追着你看',
       '✨ 鼠标移开即恢复穿透，不挡桌面点击'
     ].join('<br>');
@@ -529,24 +579,50 @@ async function invoke(cmd, args) {
   document.querySelector('#tipsBox .close').addEventListener('click', () => {
     document.getElementById('tipsBox').classList.add('hidden');
   });
-  // 长按/右键菜单：搜一搜 / 看看屏幕 / 念念有词 / 提示 / 关于
+  // 长按/右键菜单：搜一搜 / 看看屏幕 / 提示 / 💬聊天 / 关于（唱歌·看书·画画·念念有词 都在聊天框里打字触发）
   document.getElementById('ctxMenu').addEventListener('click', e => {
     const act = e.target.dataset.m;
     if (act === 'search') startPick('search');
     else if (act === 'screen') startPick('screen');
-    else if (act === 'speak') speakingUntil = performance.now() + 3500;
-    else if (act === 'tips') showTips();
-    else if (act === 'paint') openPaintInput();
+    else if (act === 'color') openColorBox();
     else if (act === 'chat') openChatBox();
-    else if (act === 'about') alert('小火 · 桌面火柴人（网页演示版）\n透明 Tauri 窗口：骨骼 / 状态机 / 心情 / 表情 / 嘴型。\n长按我（或右键）唤出菜单：搜一搜 / 看看屏幕 / 念念有词 / 提示。\n👆 单击 = 戳我（会恼会躲，多戳缩角落）；🤚 在头顶按住鼠标来回搓 = 揉头哄我（被戳委屈后搓头也能哄好）。\n网页版把截屏/智谱调用模拟掉了，仅用于查看各种动作；真实截屏与理解需要桌面版。');
+    else if (act === 'tips') showTips();
+    else if (act === 'about') alert('小火 · 桌面火柴人\n透明 Tauri 窗口：骨骼 / 状态机 / 心情 / 表情 / 嘴型。\n长按我（或右键）唤出菜单：搜一搜 / 看看屏幕 / 🎨 换颜色 / 提示 / 💬聊天 / 关于。在「💬聊天」框里打字：画只猫 / 唱首歌 / 看会儿书 / 随便聊，小火都会回应（回复时嘴会动）。\n👆 单击 = 戳我（会恼会躲，多戳缩角落）；🤚 在头顶按住鼠标来回搓 = 揉头哄我（被戳委屈后搓头也能哄好）。\n右键「🎨 换颜色」可改身体色并记住（选纯黑在黑色界面就藏起来了）；搜一搜、看看屏幕会真截屏后拖框选，交给大模型（智谱 GLM-4V）分析。');
     document.getElementById('ctxMenu').classList.add('hidden');
   });
+
+  // ---------- 换颜色面板 ----------
+  const colorBox = document.getElementById('colorBox');
+  const colorSwatches = document.getElementById('colorSwatches');
+  const colorPicker = document.getElementById('colorPicker');
+  const PRESET_COLORS = ['#2b2b2f', '#000000', '#ffffff', '#ff5b5b', '#4da3ff', '#4bd07a', '#ffd24d', '#ff7eb6', '#9b6bff'];
+  function setPetColor(c) {
+    c = c || '#2b2b2f';
+    S.color = c; defaultColor = c;
+    try { localStorage.setItem('xiaohuo.color', c); } catch (e) {}
+    colorSwatches.querySelectorAll('.swatch').forEach(s => s.classList.toggle('sel', s.dataset.c === c));
+    colorPicker.value = c;
+  }
+  PRESET_COLORS.forEach(c => {
+    const s = document.createElement('div');
+    s.className = 'swatch'; s.dataset.c = c; s.style.background = c; s.title = c;
+    s.addEventListener('click', () => setPetColor(c));
+    colorSwatches.appendChild(s);
+  });
+  function openColorBox() {
+    setPetColor(defaultColor);   // 同步当前选中的色板/取色器
+    colorBox.style.left = '50%'; colorBox.style.top = '12px';
+    colorBox.style.transform = 'translateX(-50%)';
+    colorBox.classList.remove('hidden');
+  }
+  colorBox.querySelector('.close').addEventListener('click', () => colorBox.classList.add('hidden'));
+  document.getElementById('colorReset').addEventListener('click', () => setPetColor('#2b2b2f'));
+  colorPicker.addEventListener('input', e => setPetColor(e.target.value));
   document.addEventListener('click', e => {
     if (!document.getElementById('ctxMenu').contains(e.target)) document.getElementById('ctxMenu').classList.add('hidden');
   });
 
-  // 把宠物包围盒(窗口内逻辑坐标)发给 Rust（仅在位置变化时），驱动"悬停即交互"；网页版 emitter 为空，无副作用
-  let emitter = null;
+  // 把宠物包围盒(窗口内逻辑坐标)发给 Rust（仅在位置变化时），驱动"悬停即交互"
   let lastRectKey = '';
   let boxOpen = false;            // 任一弹框可见时为 true，emitPetRect 据此把矩形扩成全窗口
   const openBoxes = new Set();
@@ -569,7 +645,7 @@ async function invoke(cmd, args) {
     if (boxOpen) emitter('pet-rect', [0, 0, 480, 540]).catch(() => {});
     else { lastRectKey = ''; emitPetRect(); }
   }
-  ['answerBox', 'screenBox', 'tipsBox', 'paintBox', 'ctxMenu', 'chatBox'].forEach(id => {
+  ['answerBox', 'screenBox', 'tipsBox', 'paintBox', 'ctxMenu', 'chatBox', 'colorBox'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     new MutationObserver(() => {
@@ -704,20 +780,20 @@ async function invoke(cmd, args) {
     const eyes = [{ x: head.x - ex + fx, y: head.y + ey + fy }, { x: head.x + ex + fx, y: head.y + ey + fy }];
     // 开心眼：^^ 弯弯笑眼（哄好时触发，覆盖其他眼型）
     if (happy > 0.5) {
-      ctx.lineWidth = Math.max(1.4, 1.8 * gSC); ctx.strokeStyle = S.color;
+      ctx.lineWidth = Math.max(1.4, 1.8 * gSC); ctx.strokeStyle = S.eyeColor;
       for (const p of eyes) {
         ctx.beginPath(); ctx.arc(p.x, p.y - r * 0.02, r * 0.2, 1.2 * Math.PI, 1.8 * Math.PI); ctx.stroke();
       }
       return;
     }
-    ctx.lineWidth = Math.max(1, 1.2 * gSC); ctx.strokeStyle = S.color; ctx.fillStyle = '#fff';
+    ctx.lineWidth = Math.max(1, 1.2 * gSC); ctx.strokeStyle = S.eyeColor; ctx.fillStyle = '#fff';
     if (eyeOpen > 0.5) {
       for (const p of eyes) {
         ctx.fillStyle = '#fff';   // 每只眼重设眼白：上一只的瞳孔把 fillStyle 改成了深色，否则右眼眼白会被填黑
         ctx.beginPath(); ctx.arc(p.x, p.y, r * 0.17, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
         // 瞳孔明显朝鼠标偏移
         const px = p.x + lookX * r * 0.09, py = p.y + clamp(lookY, -1, 1) * r * 0.09;   // 瞳孔偏移钳制在眼眶内（看书时 lookY 会大于 1）
-        ctx.beginPath(); ctx.arc(px, py, r * 0.09, 0, Math.PI * 2); ctx.fillStyle = S.color; ctx.fill();
+        ctx.beginPath(); ctx.arc(px, py, r * 0.09, 0, Math.PI * 2); ctx.fillStyle = S.eyeColor; ctx.fill();
       }
     } else {
       ctx.lineWidth = Math.max(1.4, 1.6 * gSC);
@@ -757,12 +833,12 @@ async function invoke(cmd, args) {
     if (sing > 0.5) {
       const oh = mo * r * 0.55;
       ctx.beginPath(); ctx.ellipse(head.x, hy, mw * 0.82, Math.max(oh, r * 0.12), 0, 0, Math.PI * 2);
-      ctx.fillStyle = S.color; ctx.fill();
+      ctx.fillStyle = S.eyeColor; ctx.fill();
       return;
     }
     // 开心大笑：明显上扬的大笑嘴（被揉头时触发，盖过委屈/平嘴）
     if (happy > 0.5 && emo < 0.5) {
-      ctx.lineWidth = Math.max(1.6, 2 * gSC); ctx.strokeStyle = S.color;
+      ctx.lineWidth = Math.max(1.6, 2 * gSC); ctx.strokeStyle = S.eyeColor;
       ctx.beginPath(); ctx.arc(head.x, hy - r * 0.02, mw * 0.95, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
       return;
     }
@@ -770,7 +846,7 @@ async function invoke(cmd, args) {
       // 张嘴（说话 / 被戳惊呼）：开口向上的椭圆（颜色填充）
       const oh = mo * r * 0.42;
       ctx.beginPath(); ctx.ellipse(head.x, hy, mw * 0.72, oh, 0, 0, Math.PI * 2);
-      ctx.fillStyle = S.color; ctx.fill();
+      ctx.fillStyle = S.eyeColor; ctx.fill();
       return;
     }
     // 闭嘴：连续弯曲的嘴线。emo 越大，嘴角越下垂（委屈）；emo=0 时中性平嘴（不再傻笑）
@@ -1878,10 +1954,37 @@ async function invoke(cmd, args) {
     const b = document.createElement('div'); b.className = 'bubble'; b.textContent = text;
     row.appendChild(b); chatLog.appendChild(row);
     chatLog.scrollTop = chatLog.scrollHeight;
+    positionChatBox();   // 消息增减后重定位，避免框被裁
     return b;
+  }
+  // 把聊天框放到火柴人上方或下方，绝不挡住它（canvas 坐标 ≈ 窗口像素，1:1）
+  function positionChatBox() {
+    const margin = 8;
+    const headY = posY - 190;   // 包围盒上沿（头顶）
+    const feetY = posY + 40;    // 包围盒下沿（脚底）
+    const bh = chatBox.offsetHeight || 150;
+    const H = window.innerHeight || 540;
+    chatBox.style.left = '50%';
+    chatBox.style.transform = 'translateX(-50%)';
+    chatBox.style.bottom = 'auto';
+    // 选最优落点：优先头顶上方（不压火柴人），其次脚底下方，否则取空间较大侧
+    let top;
+    if (headY - bh - margin >= margin) {
+      top = headY - bh - margin;                  // 头顶上方放得下
+    } else if (feetY + bh + margin <= H - margin) {
+      top = feetY + margin;                        // 脚底下方放得下
+    } else {
+      const spaceAbove = headY - margin;
+      const spaceBelow = H - feetY - margin;
+      top = (spaceAbove >= spaceBelow) ? margin : (H - bh - margin);
+    }
+    // 钳制：无论火柴人在哪、框多高，整框始终完整可见
+    top = Math.max(margin, Math.min(top, H - bh - margin));
+    chatBox.style.top = top + 'px';
   }
   function openChatBox() {
     chatBox.classList.remove('hidden');
+    positionChatBox();
     setTimeout(() => chatInput.focus(), 30);
     if (!chatLog.dataset.welcomed) {
       chatLog.dataset.welcomed = '1';
@@ -1903,12 +2006,12 @@ async function invoke(cmd, args) {
     }
     if (/唱|歌|sing/.test(tl)) {
       addChat('sys', '🎵 小火开始唱歌～');
-      setState('sing');
+      setState('sing', autoDuration('sing'));
       return;
     }
     if (/看书|读书|阅读|看会书|看会儿书|book|read a book|read/.test(tl)) {
       addChat('sys', '📖 小火坐下来看书～');
-      setState('read');
+      setState('read', autoDuration('read'));
       return;
     }
     if (/看屏幕|截图|搜一搜|搜题|screen|search/.test(tl)) {
@@ -1927,6 +2030,7 @@ async function invoke(cmd, args) {
         lastPet.textContent = text;
         // 口型对得上：回复期间让嘴动起来
         speakingUntil = performance.now() + Math.min(6000, Math.max(2000, text.length * 60));
+        positionChatBox();   // 回复换行增长后重定位，避免框被裁
         chatHistory.push({ role: 'assistant', content: text });
         if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
       })
@@ -1936,7 +2040,8 @@ async function invoke(cmd, args) {
   }
   chatBox.querySelector('.close').addEventListener('click', () => chatBox.classList.add('hidden'));
   document.getElementById('chatSend').addEventListener('click', submitChat);
-  chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') submitChat(); });
+  // 中文输入法组合输入中（isComposing / keyCode 229）按 Enter 选词不要误发消息
+  chatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) submitChat(); });
 
   // ---------- 主循环 ----------
   const start = performance.now(), statusEl = document.getElementById('status');
@@ -2045,11 +2150,13 @@ async function invoke(cmd, args) {
       else if (activeArt && activeArt.strokes) S.color = paintColorAt(activeArt, now);   // 普通画作：跟随当前笔画颜色
     }
     draw(pose, t, now);
-    // 状态栏显示当前状态 / 心情 / 鼠标（网页版无穿透概念，省略那部分）
+    if (lyricTimer && !lyricsBox.classList.contains('hidden')) positionLyrics();   // 唱歌时歌词气泡跟随头顶
+    // 状态栏的"可交互/穿透中"用 Rust 回传的真值（rustIgnore），比前端自算准
+    interactMode = !rustIgnore;
     const petting = (now < petUntil);
     const poked = (now - pokeFlash < 400) ? ' · 被戳!' : '';
     const moodWord = mood > 5 ? '开心' : mood < -5 ? '委屈' : '平静';
-    statusEl.textContent = `状态：${currState}${petting ? ' · 被揉头~' : ''} · 心情：${Math.round(mood)}（${moodWord}） · 鼠标：${mouse.inside ? Math.round(mouse.x) + ',' + Math.round(mouse.y) : '外'}${poked}`;
+    statusEl.textContent = `状态：${currState}${petting ? ' · 被揉头~' : ''} · 心情：${Math.round(mood)}（${moodWord}） · 鼠标：${mouse.inside ? Math.round(mouse.x) + ',' + Math.round(mouse.y) : '外'}${poked}${isTauri ? (interactMode ? ' · 可交互' : ' · 穿透中') : ''}`;
     requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);
@@ -2080,7 +2187,7 @@ async function invoke(cmd, args) {
   maybeFestivalPaint();
   setInterval(maybeFestivalPaint, 60 * 60 * 1000);  // 每小时复查，跨天若恰逢节日也会补画
 
-  // ---------- 看屏理解 / 搜题（网页版用演示图模拟；桌面版真截屏 + 智谱 GLM-4V） ----------
+  // ---------- 看屏理解 / 搜题（真截屏 + 智谱 GLM-4V 多模态） ----------
   const answerBox = document.getElementById('answerBox');
   const answerText = document.getElementById('answerText');
   const pickLayer = document.getElementById('pickLayer');
@@ -2098,10 +2205,17 @@ async function invoke(cmd, args) {
 
   function startPick(act) {
     currentAct = act;
+    if (!isTauri) {            // 浏览器版没有截屏能力，给说明
+      answerText.innerHTML = '📎 看屏 / 搜题需要桌面版（能截屏）才能用。请用 <code>npm run tauri dev</code> 打开桌面版。';
+      answerBox.style.left = '50%'; answerBox.style.top = '40%';
+      answerBox.style.transform = 'translate(-50%,-50%)';
+      answerBox.classList.remove('hidden');
+      return;
+    }
     pickHint.textContent = act === 'search'
       ? '拖拽框选题目/问题区域，松手即解题'
       : '拖拽框选你看的屏幕区域，松手即描述';
-    // 网页版：invoke('capture_screen') 返回演示图；invoke('toggle_pick') 为前端直接控制，此处走通用流程
+    // 先截屏（截的是当前桌面）；等图片离屏加载完再全屏显示，避免黑屏一闪
     Promise.resolve(invoke('capture_screen'))
       .then(dataUrl => new Promise((res, rej) => {    // 先把图加载进 <img>（此时图层还藏着，离屏加载）
         const ok = () => (pickImg.naturalWidth > 0 ? res() : rej(new Error('截屏图加载失败')));
@@ -2145,7 +2259,7 @@ async function invoke(cmd, args) {
     if (w < 12 || h < 12) return;                  // 太小：不当作选择，保持框选态让用户重拖（不再误关）
     picking = false;
     pickLayer.classList.add('hidden'); pickRect.style.display = 'none';
-    // 把框选区域从截屏裁出 → 缩到 ≤1024 → 转 JPG，发给智谱（网页版发的是演示图，返回模拟文字）
+    // 把框选区域从截屏裁出 → 缩到 ≤1024 → 转 JPG，发给智谱
     const natW = pickImg.naturalWidth, natH = pickImg.naturalHeight;
     const k = natW / window.innerWidth, ky = natH / window.innerHeight;
     const X = Math.min(sx0, e.clientX) * k, Y = Math.min(sy0, e.clientY) * ky;
@@ -2164,29 +2278,37 @@ async function invoke(cmd, args) {
     if (e.key === 'Escape' && picking) closeAllPick();
   });
 
-  function runGlm(act, imgB64, question) {
+  // act: 'search'（解题/搜索） | 'screen'（看屏/提问）
+  // target: 结果落到 'screen'（看屏框）还是 'answer'（答案框）；不传则按 act 默认
+  function runGlm(act, imgB64, question, target) {
     const q = (question || '').trim();
     let prompt;
-    if (q) {
-      prompt = '这是用户截下的屏幕区域。用户对着这张图问你一个问题，请结合图片内容回答。\n用户的问题：' + q + '\n请用中文、条理清晰地回答，必要时给出具体操作步骤。';
-    } else if (act === 'search') {
+    if (act === 'search') {
       prompt = '这是一道题目或问题（可能是文字题、公式、代码或报错截图）。请仔细看图，给出准确的解答步骤和最终答案；若是代码报错，请指出原因并给出修复方案。用中文、条理清晰地回答。';
+    } else if (q) {
+      prompt = '这是用户截下的屏幕区域。用户对着这张图问你一个问题，请结合图片内容回答。\n用户的问题：' + q + '\n请用中文、条理清晰地回答，必要时给出具体操作步骤。';
     } else {
       prompt = '请看这张屏幕截图，简要描述你看到的内容：用户大概在做什么、界面上有哪些关键信息（文字、报错、数据、窗口标题等）。用中文简要说明。';
     }
-    const box = act === 'search' ? answerBox : screenBox;
-    const txt = act === 'search' ? answerText : screenText;
-    txt.innerHTML = q ? ('🤔 小火在看，并琢磨「' + q + '」…') : '🤔 小火正在看…';
+    // 默认：搜一搜→answerBox，看屏→screenBox；从看屏里点「搜一搜」可强制落到 screenBox
+    const useScreen = (target || (act === 'search' ? 'answer' : 'screen')) === 'screen';
+    const box = useScreen ? screenBox : answerBox;
+    const txt = useScreen ? screenText : answerText;
+    if (act === 'search') {
+      txt.innerHTML = '🤔 小火在搜…';
+    } else {
+      txt.innerHTML = q ? ('🤔 小火在看，并琢磨「' + q + '」…') : '🤔 小火正在看…';
+    }
     box.style.left = '50%';
-    box.style.top = act === 'search' ? '40%' : '12px';
-    box.style.transform = act === 'search' ? 'translate(-50%,-50%)' : 'translateX(-50%)';
+    box.style.top = useScreen ? '12px' : '40%';
+    box.style.transform = useScreen ? 'translateX(-50%)' : 'translate(-50%,-50%)';
     box.classList.remove('hidden');
     // Tauri v2 默认把 Rust 的 snake_case 参数转成 camelCase 暴露给前端，
     // 所以这里必须写 imageB64（写 image_b64 会报 missing required key imageB64）
     invoke('ask_glm', { imageB64: imgB64, prompt })
       .then(res => {
         txt.innerHTML = res.replace(/\n/g, '<br>');
-        if (act !== 'search') {        // 看屏：结果出来后显示「再问一次」
+        if (useScreen) {        // 看屏（或在看屏里搜）：结果出来后显示「再问一次 / 不用了」
           screenAskWrap.classList.add('hidden');
           screenResultActions.classList.remove('hidden');
         }
@@ -2224,6 +2346,9 @@ async function invoke(cmd, args) {
       runGlm('screen', lastRegionB64, screenAsk.value);
     } else if (s === 'look') {
       runGlm('screen', lastRegionB64, '');
+    } else if (s === 'search') {
+      // 在看屏里顺手搜索：用解题提示词，但结果就显示在同一个看屏框里
+      runGlm('search', lastRegionB64, '', 'screen');
     } else if (s === 'again') {
       // 再问一次：回到提问界面
       screenAskWrap.classList.remove('hidden');
@@ -2237,20 +2362,10 @@ async function invoke(cmd, args) {
     }
   }));
   screenBox.querySelector('.close').addEventListener('click', () => screenBox.classList.add('hidden'));
-  // 在提问框按回车 = 问问他（问题留空则为直接看）
-  screenAsk.addEventListener('keydown', e => { if (e.key === 'Enter') runGlm('screen', lastRegionB64, screenAsk.value); });
+  // 在提问框按回车 = 问问他（问题留空则为直接看）；中文输入法组词中的回车不触发
+  screenAsk.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) runGlm('screen', lastRegionB64, screenAsk.value); });
 
-  // 念念有词已并入聊天框：在聊天框里打字，演示版同样走回复逻辑，口型随 speakingUntil 自动跟随
-
-  // ---------- 网页版动作控制面板（仅演示用，方便查看各种动作） ----------
-  const ctrl = document.getElementById('ctrl');
-  ctrl.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
-    const s = b.dataset.s;
-    if (s === 'poke') { pokeAt(posX, posY); }
-    else if (s === 'sing') { setState('sing', autoDuration('sing')); }
-    else if (s === 'paint') openPaintInput();
-    else { setState(s, autoDuration(s)); }
-  }));
+  // 念念有词已并入聊天框：在聊天框里打字，小火用 ask_reply 回复，口型随 speakingUntil 自动跟随
 })();
 </script>
 </body>
