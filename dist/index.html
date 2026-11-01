@@ -75,6 +75,15 @@
     padding: 6px 0; border-radius: 6px; cursor: pointer; font-size: 12px;
   }
   .box .actions button:hover { background: #3a3a42; }
+  /* 换颜色面板：色板 */
+  #colorBox .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
+  #colorBox .swatch {
+    width: 30px; height: 30px; border-radius: 6px; cursor: pointer;
+    border: 2px solid transparent; box-shadow: 0 0 0 1px rgba(255,255,255,.15);
+  }
+  #colorBox .swatch.sel { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.55); }
+  #colorBox .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  #colorBox input[type=color] { width: 38px; height: 28px; border: none; background: none; cursor: pointer; padding: 0; }
 
   /* 聊天框：消息气泡 */
   #chatLog { display: flex; flex-direction: column; gap: 6px; }
@@ -104,7 +113,7 @@
      想恢复调试信息，把这一行注释掉即可。 */
   #status, .hint, #dbg { display: none !important; }
 </style>
-  <script type="module" crossorigin src="/assets/index-D-vfNQ4X.js"></script>
+  <script type="module" crossorigin src="/assets/index-DL_Rkdd1.js"></script>
 </head>
 <body>
 <canvas id="stage" width="480" height="540"></canvas>
@@ -152,9 +161,22 @@
 <div id="ctxMenu" class="hidden">
   <div data-m="search">📸 搜一搜</div>
   <div data-m="screen">👀 看看屏幕</div>
+  <div data-m="color">🎨 换颜色</div>
   <div data-m="tips">💡 提示</div>
   <div data-m="chat">💬 聊天</div>
   <div data-m="about">ℹ️ 关于</div>
+</div>
+
+<!-- 换颜色面板：右键菜单「🎨 换颜色」唤出，选身体色（含纯黑便于在黑色界面藏起来） -->
+<div id="colorBox" class="box hidden" style="top:12px;max-width:300px;">
+  <button class="close">×</button>
+  <div style="font-size:13px;color:#cfd2d8;margin:2px 0 2px;">🎨 选个身体颜色（会记住，下次启动也生效）</div>
+  <div class="swatches" id="colorSwatches"></div>
+  <div class="row">
+    <span style="font-size:12px;color:#9aa0a6;">自定义</span>
+    <input type="color" id="colorPicker" value="#2b2b2f" />
+    <button id="colorReset" style="margin-left:auto;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;">恢复默认</button>
+  </div>
 </div>
 
 <!-- 提示框（菜单「提示」唤出） -->

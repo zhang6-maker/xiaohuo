@@ -75,6 +75,15 @@
     padding: 6px 0; border-radius: 6px; cursor: pointer; font-size: 12px;
   }
   .box .actions button:hover { background: #3a3a42; }
+  /* 换颜色面板：色板 */
+  #colorBox .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
+  #colorBox .swatch {
+    width: 30px; height: 30px; border-radius: 6px; cursor: pointer;
+    border: 2px solid transparent; box-shadow: 0 0 0 1px rgba(255,255,255,.15);
+  }
+  #colorBox .swatch.sel { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.55); }
+  #colorBox .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  #colorBox input[type=color] { width: 38px; height: 28px; border: none; background: none; cursor: pointer; padding: 0; }
 
   /* 聊天框：消息气泡 */
   #chatLog { display: flex; flex-direction: column; gap: 6px; }
@@ -151,9 +160,22 @@
 <div id="ctxMenu" class="hidden">
   <div data-m="search">📸 搜一搜</div>
   <div data-m="screen">👀 看看屏幕</div>
+  <div data-m="color">🎨 换颜色</div>
   <div data-m="tips">💡 提示</div>
   <div data-m="chat">💬 聊天</div>
   <div data-m="about">ℹ️ 关于</div>
+</div>
+
+<!-- 换颜色面板：右键菜单「🎨 换颜色」唤出，选身体色（含纯黑便于在黑色界面藏起来） -->
+<div id="colorBox" class="box hidden" style="top:12px;max-width:300px;">
+  <button class="close">×</button>
+  <div style="font-size:13px;color:#cfd2d8;margin:2px 0 2px;">🎨 选个身体颜色（会记住，下次启动也生效）</div>
+  <div class="swatches" id="colorSwatches"></div>
+  <div class="row">
+    <span style="font-size:12px;color:#9aa0a6;">自定义</span>
+    <input type="color" id="colorPicker" value="#2b2b2f" />
+    <button id="colorReset" style="margin-left:auto;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;">恢复默认</button>
+  </div>
 </div>
 
 <!-- 提示框（菜单「提示」唤出） -->
@@ -197,6 +219,9 @@ import { invoke } from '@tauri-apps/api/core';
     thigh: 46, shin: 36, upperArm: 42, foreArm: 28,
     lineW: 6, color: '#2b2b2f',
   };
+  // 身体默认色：优先用上次保存的（localStorage），否则用内置默认；右键「🎨 换颜色」可改
+  let defaultColor = (() => { try { return localStorage.getItem('xiaohuo.color') || '#2b2b2f'; } catch (e) { return '#2b2b2f'; } })();
+  S.color = defaultColor;
   const legSpread = 0.18, armSpread = 0.35;
 
   const point = (o, a, l) => ({ x: o.x + Math.cos(a) * l, y: o.y + Math.sin(a) * l });
@@ -311,7 +336,7 @@ import { invoke } from '@tauri-apps/api/core';
     }
     const wasPaint = currState === 'paint';
     prevState = currState; currState = s;
-    if (wasPaint && s !== 'paint') S.color = '#2b2b2f';  // 离开画画：恢复默认身体色
+    if (wasPaint && s !== 'paint') S.color = defaultColor;  // 离开画画：恢复默认身体色（用户自定义过的也保留）
     transStart = performance.now();
     nextSwitchAt = performance.now() + (dur != null ? dur : autoDuration(s));
     if (s === 'walk' || s === 'run') gaitJitter = rand(0.8, 1.25);  // 每趟步态略有差异
@@ -497,11 +522,40 @@ import { invoke } from '@tauri-apps/api/core';
     const act = e.target.dataset.m;
     if (act === 'search') startPick('search');
     else if (act === 'screen') startPick('screen');
+    else if (act === 'color') openColorBox();
     else if (act === 'chat') openChatBox();
     else if (act === 'tips') showTips();
-    else if (act === 'about') alert('小火 · 桌面火柴人\n透明 Tauri 窗口：骨骼 / 状态机 / 心情 / 表情 / 嘴型。\n长按我（或右键）唤出菜单：搜一搜 / 看看屏幕 / 提示 / 💬聊天 / 关于。在「💬聊天」框里打字：画只猫 / 唱首歌 / 看会儿书 / 随便聊，小火都会回应（回复时嘴会动）。\n👆 单击 = 戳我（会恼会躲，多戳缩角落）；🤚 在头顶按住鼠标来回搓 = 揉头哄我（被戳委屈后搓头也能哄好）。\n搜一搜、看看屏幕会真截屏后拖框选，交给大模型（智谱 GLM-4V）分析。');
+    else if (act === 'about') alert('小火 · 桌面火柴人\n透明 Tauri 窗口：骨骼 / 状态机 / 心情 / 表情 / 嘴型。\n长按我（或右键）唤出菜单：搜一搜 / 看看屏幕 / 🎨 换颜色 / 提示 / 💬聊天 / 关于。在「💬聊天」框里打字：画只猫 / 唱首歌 / 看会儿书 / 随便聊，小火都会回应（回复时嘴会动）。\n👆 单击 = 戳我（会恼会躲，多戳缩角落）；🤚 在头顶按住鼠标来回搓 = 揉头哄我（被戳委屈后搓头也能哄好）。\n右键「🎨 换颜色」可改身体色并记住（选纯黑在黑色界面就藏起来了）；搜一搜、看看屏幕会真截屏后拖框选，交给大模型（智谱 GLM-4V）分析。');
     document.getElementById('ctxMenu').classList.add('hidden');
   });
+
+  // ---------- 换颜色面板 ----------
+  const colorBox = document.getElementById('colorBox');
+  const colorSwatches = document.getElementById('colorSwatches');
+  const colorPicker = document.getElementById('colorPicker');
+  const PRESET_COLORS = ['#2b2b2f', '#000000', '#ffffff', '#ff5b5b', '#4da3ff', '#4bd07a', '#ffd24d', '#ff7eb6', '#9b6bff'];
+  function setPetColor(c) {
+    c = c || '#2b2b2f';
+    S.color = c; defaultColor = c;
+    try { localStorage.setItem('xiaohuo.color', c); } catch (e) {}
+    colorSwatches.querySelectorAll('.swatch').forEach(s => s.classList.toggle('sel', s.dataset.c === c));
+    colorPicker.value = c;
+  }
+  PRESET_COLORS.forEach(c => {
+    const s = document.createElement('div');
+    s.className = 'swatch'; s.dataset.c = c; s.style.background = c; s.title = c;
+    s.addEventListener('click', () => setPetColor(c));
+    colorSwatches.appendChild(s);
+  });
+  function openColorBox() {
+    setPetColor(defaultColor);   // 同步当前选中的色板/取色器
+    colorBox.style.left = '50%'; colorBox.style.top = '12px';
+    colorBox.style.transform = 'translateX(-50%)';
+    colorBox.classList.remove('hidden');
+  }
+  colorBox.querySelector('.close').addEventListener('click', () => colorBox.classList.add('hidden'));
+  document.getElementById('colorReset').addEventListener('click', () => setPetColor('#2b2b2f'));
+  colorPicker.addEventListener('input', e => setPetColor(e.target.value));
   document.addEventListener('click', e => {
     if (!document.getElementById('ctxMenu').contains(e.target)) document.getElementById('ctxMenu').classList.add('hidden');
   });
@@ -529,7 +583,7 @@ import { invoke } from '@tauri-apps/api/core';
     if (boxOpen) emitter('pet-rect', [0, 0, 480, 540]).catch(() => {});
     else { lastRectKey = ''; emitPetRect(); }
   }
-  ['answerBox', 'screenBox', 'tipsBox', 'paintBox', 'ctxMenu', 'chatBox'].forEach(id => {
+  ['answerBox', 'screenBox', 'tipsBox', 'paintBox', 'ctxMenu', 'chatBox', 'colorBox'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     new MutationObserver(() => {
