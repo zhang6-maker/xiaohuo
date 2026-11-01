@@ -163,7 +163,7 @@
 </div>
 
 <!-- 聊天框（菜单「💬 聊天」唤出）：一个输入框统管 唱歌 / 看书 / 画画 / 回复，打字触发 -->
-<div id="chatBox" class="box hidden" style="left:50%;top:48%;transform:translate(-50%,-50%);width:88%;max-width:340px;">
+<div id="chatBox" class="box hidden" style="width:88%;max-width:340px;">
   <button class="close">×</button>
   <div style="font-size:13px;color:#cfd2d8;margin:2px 0 8px;">💬 和小火聊天</div>
   <div id="chatLog" style="max-height:200px;overflow-y:auto;margin-bottom:8px;"></div>
@@ -1832,8 +1832,31 @@ import { invoke } from '@tauri-apps/api/core';
     chatLog.scrollTop = chatLog.scrollHeight;
     return b;
   }
+  // 把聊天框放到火柴人上方或下方，绝不挡住它（canvas 坐标 ≈ 窗口像素，1:1）
+  function positionChatBox() {
+    const headY = posY - 190;   // 包围盒上沿（头顶）
+    const feetY = posY + 40;    // 包围盒下沿（脚底）
+    const margin = 12;
+    const bh = chatBox.offsetHeight || 150;
+    chatBox.style.left = '50%';
+    chatBox.style.transform = 'translateX(-50%)';
+    // 优先放头顶上方：用 bottom 锚定，消息变多时只往上长，不会反压火柴人
+    if (bh <= headY - margin) {
+      chatBox.style.bottom = (H - (headY - margin)) + 'px';
+      chatBox.style.top = 'auto';
+    } else if (bh <= (H - feetY) - margin) {
+      // 头顶没地方就放脚底下方
+      chatBox.style.top = (feetY + margin) + 'px';
+      chatBox.style.bottom = 'auto';
+    } else {
+      // 实在都没地方（火柴人恰好居中），贴顶至少不出界
+      chatBox.style.top = '8px';
+      chatBox.style.bottom = 'auto';
+    }
+  }
   function openChatBox() {
     chatBox.classList.remove('hidden');
+    positionChatBox();
     setTimeout(() => chatInput.focus(), 30);
     if (!chatLog.dataset.welcomed) {
       chatLog.dataset.welcomed = '1';
