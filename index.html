@@ -773,12 +773,12 @@ import { invoke } from '@tauri-apps/api/core';
     if (sing > 0.5) {
       const oh = mo * r * 0.55;
       ctx.beginPath(); ctx.ellipse(head.x, hy, mw * 0.82, Math.max(oh, r * 0.12), 0, 0, Math.PI * 2);
-      ctx.fillStyle = S.color; ctx.fill();
+      ctx.fillStyle = S.eyeColor; ctx.fill();
       return;
     }
     // 开心大笑：明显上扬的大笑嘴（被揉头时触发，盖过委屈/平嘴）
     if (happy > 0.5 && emo < 0.5) {
-      ctx.lineWidth = Math.max(1.6, 2 * gSC); ctx.strokeStyle = S.color;
+      ctx.lineWidth = Math.max(1.6, 2 * gSC); ctx.strokeStyle = S.eyeColor;
       ctx.beginPath(); ctx.arc(head.x, hy - r * 0.02, mw * 0.95, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
       return;
     }
@@ -786,7 +786,7 @@ import { invoke } from '@tauri-apps/api/core';
       // 张嘴（说话 / 被戳惊呼）：开口向上的椭圆（颜色填充）
       const oh = mo * r * 0.42;
       ctx.beginPath(); ctx.ellipse(head.x, hy, mw * 0.72, oh, 0, 0, Math.PI * 2);
-      ctx.fillStyle = S.color; ctx.fill();
+      ctx.fillStyle = S.eyeColor; ctx.fill();
       return;
     }
     // 闭嘴：连续弯曲的嘴线。emo 越大，嘴角越下垂（委屈）；emo=0 时中性平嘴（不再傻笑）
