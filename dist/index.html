@@ -92,6 +92,23 @@
     box-shadow: 0 0 0 1px rgba(255,255,255,.15); font-size: 12px; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.4);
   }
   #outfitBox .swatch.sel { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.55); }
+  /* 节日祝福动画：顶部居中弹出"XX节日快乐"，自动 5 秒后消失 */
+  #festivalGreet {
+    position: absolute; left: 50%; top: 10px; transform: translateX(-50%) scale(.6);
+    font-size: 22px; font-weight: 800; color: #fff; letter-spacing: 1px; white-space: nowrap;
+    text-shadow: 0 2px 8px rgba(0,0,0,.55), 0 0 16px rgba(255,190,90,.8);
+    background: rgba(0,0,0,.38); padding: 9px 20px; border-radius: 999px;
+    border: 1px solid rgba(255,210,120,.5); pointer-events: none; opacity: 0; z-index: 60;
+  }
+  #festivalGreet.show { animation: greetPop 5s ease forwards; }
+  #festivalGreet.hide { opacity: 0; transition: opacity .4s; }
+  @keyframes greetPop {
+    0%   { opacity: 0; transform: translateX(-50%) scale(.5); }
+    9%   { opacity: 1; transform: translateX(-50%) scale(1.13); }
+    17%  { transform: translateX(-50%) scale(1); }
+    85%  { opacity: 1; transform: translateX(-50%) scale(1); }
+    100% { opacity: 0; transform: translateX(-50%) scale(1); }
+  }
   /* 唱歌歌词气泡：贴着头顶飘，原创短词循环显示 */
   #lyricsBox {
     position: fixed; z-index: 38; max-width: 280px; text-align: center;
@@ -134,7 +151,7 @@
      想恢复调试信息，把这一行注释掉即可。 */
   #status, .hint, #dbg { display: none !important; }
 </style>
-  <script type="module" crossorigin src="/assets/index-CqVRE0Oc.js"></script>
+  <script type="module" crossorigin src="/assets/index-CmNlaI0O.js"></script>
 </head>
 <body>
 <canvas id="stage" width="480" height="540"></canvas>
@@ -213,6 +230,9 @@
   <button class="close">×</button>
   <div id="tipsText"></div>
 </div>
+
+<!-- 节日祝福动画：进入某节日时自动弹出"XX节日快乐" -->
+<div id="festivalGreet"></div>
 
 <!-- 画点什么：输入框（菜单「画点什么」唤出），让小火按文字指令画画 -->
 <div id="paintBox" class="box hidden">

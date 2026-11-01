@@ -92,6 +92,23 @@
     box-shadow: 0 0 0 1px rgba(255,255,255,.15); font-size: 12px; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.4);
   }
   #outfitBox .swatch.sel { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.55); }
+  /* 节日祝福动画：顶部居中弹出"XX节日快乐"，自动 5 秒后消失 */
+  #festivalGreet {
+    position: absolute; left: 50%; top: 10px; transform: translateX(-50%) scale(.6);
+    font-size: 22px; font-weight: 800; color: #fff; letter-spacing: 1px; white-space: nowrap;
+    text-shadow: 0 2px 8px rgba(0,0,0,.55), 0 0 16px rgba(255,190,90,.8);
+    background: rgba(0,0,0,.38); padding: 9px 20px; border-radius: 999px;
+    border: 1px solid rgba(255,210,120,.5); pointer-events: none; opacity: 0; z-index: 60;
+  }
+  #festivalGreet.show { animation: greetPop 5s ease forwards; }
+  #festivalGreet.hide { opacity: 0; transition: opacity .4s; }
+  @keyframes greetPop {
+    0%   { opacity: 0; transform: translateX(-50%) scale(.5); }
+    9%   { opacity: 1; transform: translateX(-50%) scale(1.13); }
+    17%  { transform: translateX(-50%) scale(1); }
+    85%  { opacity: 1; transform: translateX(-50%) scale(1); }
+    100% { opacity: 0; transform: translateX(-50%) scale(1); }
+  }
   /* 唱歌歌词气泡：贴着头顶飘，原创短词循环显示 */
   #lyricsBox {
     position: fixed; z-index: 38; max-width: 280px; text-align: center;
@@ -213,6 +230,9 @@
   <div id="tipsText"></div>
 </div>
 
+<!-- 节日祝福动画：进入某节日时自动弹出"XX节日快乐" -->
+<div id="festivalGreet"></div>
+
 <!-- 画点什么：输入框（菜单「画点什么」唤出），让小火按文字指令画画 -->
 <div id="paintBox" class="box hidden">
   <button class="close">×</button>
@@ -264,14 +284,27 @@ import { invoke } from '@tauri-apps/api/core';
   let outfitMode = (() => { try { return localStorage.getItem('xiaohuo.outfit') || 'auto'; } catch (e) { return 'auto'; } })();
   let clothAlpha = 0;                 // 换装淡入进度：像"自己一笔笔画上衣服"
   let lastOutfitKey = '__init__';     // 上一帧解析出的衣服 key，变化时重新淡入
+  let lastGreetKey = '__init__';      // 上一帧节日 key，用于触发"XX节日快乐"祝福动画
+
+  // 节日中文名（用于祝福动画）
+  const FESTIVAL_NAMES = {
+    halloween: '万圣节', double11: '双十一', christmas: '圣诞节', newyear: '元旦',
+    spring: '春节', lantern: '元宵', labor: '劳动节', qixi: '七夕',
+    midautumn: '中秋节', national: '国庆',
+  };
 
   // 节日窗口（含端点）。wrap=true 表示跨年（12月→次年1月）
   const OUTFIT_FESTIVALS = [
-    { key: 'halloween', from: [10, 25], to: [11, 1] },
-    { key: 'double11',  from: [11, 8],  to: [11, 12] },
-    { key: 'christmas', from: [12, 20], to: [12, 26] },
-    { key: 'newyear',   from: [12, 28], to: [1, 3], wrap: true },
-    { key: 'spring',    from: [2, 8],   to: [2, 22] },
+    { key: 'newyear',   from: [12, 28], to: [1, 3],  wrap: true },     // 元旦（跨年）
+    { key: 'spring',    from: [1, 20],  to: [2, 7]  },                 // 春节
+    { key: 'lantern',   from: [2, 8],   to: [2, 15] },                 // 元宵
+    { key: 'labor',     from: [5, 1],   to: [5, 5]  },                 // 劳动节
+    { key: 'qixi',      from: [8, 10],  to: [8, 25] },                 // 七夕
+    { key: 'midautumn', from: [9, 10],  to: [9, 28] },                 // 中秋
+    { key: 'national',  from: [10, 1],  to: [10, 7] },                 // 国庆
+    { key: 'halloween', from: [10, 25], to: [11, 1] },                 // 万圣节
+    { key: 'double11',  from: [11, 8],  to: [11, 12] },                // 双十一
+    { key: 'christmas', from: [12, 20], to: [12, 26] },                // 圣诞
   ];
   function inWindow(d, f, t, wrap) {
     const m = d.getMonth() + 1, day = d.getDate(), cur = m * 100 + day;
@@ -279,17 +312,26 @@ import { invoke } from '@tauri-apps/api/core';
     return wrap ? (cur >= a || cur <= b) : (cur >= a && cur <= b);
   }
   function getFestival(d = new Date()) {
-    for (const f of OUTFIT_FESTIVALS) if (inWindow(d, f.from, f.to, f.wrap)) return f.key;
+    for (const f of OUTFIT_FESTIVALS) {
+      if (f.wrap) { const cur = (d.getMonth() + 1) * 100 + d.getDate(); if (cur >= f.from[0] * 100 + f.from[1] || cur <= f.to[0] * 100 + f.to[1]) return f.key; }
+      else if (inWindow(d, f.from, f.to)) return f.key;
+    }
     return 'none';
   }
-  // 每套衣服的描述：颜色 + 帽子类型 + 装饰。shirt 为 null 表示光身
+  // 每套衣服的描述：颜色 + 帽子类型 + 装饰。shirt 为 null 表示光身。
+  // 设计原则：每套用不同帽子/配色/胸章，互相绝不撞脸（春节=唐装圆帽、双11=红黑+¥标 …）。
   const OUTFITS = {
     none:      { shirt: null },
-    halloween: { shirt: '#ff7518', pants: '#2b2b2f', sleeve: '#ff7518', hat: 'witch', hatColor: '#4b2e83', hatTrim: '#1a1a1a', accent: '#ffd24d' },
-    double11:  { shirt: '#ff3b3b', pants: '#2b2b2f', sleeve: '#ff3b3b', hat: 'cap',   hatColor: '#ff3b3b', hatTrim: '#ffd24d' },
-    christmas: { shirt: '#d23b3b', pants: '#1f6b3a', sleeve: '#d23b3b', hat: 'santa', hatColor: '#d23b3b', hatTrim: '#ffffff', scarf: '#ffffff', buttons: '#ffd24d' },
-    newyear:   { shirt: '#e23b3b', pants: '#2b2b2f', sleeve: '#e23b3b', hat: 'cap',   hatColor: '#e23b3b', hatTrim: '#ffd24d', buttons: '#ffd24d' },
-    spring:    { shirt: '#e23b3b', pants: '#2b2b2f', sleeve: '#e23b3b', hat: 'cap',   hatColor: '#e23b3b', hatTrim: '#ffd24d', badge: '福' },
+    halloween: { shirt: '#ff7518', pants: '#2b2b2f', sleeve: '#ff7518', hat: 'witch',   hatColor: '#4b2e83', hatTrim: '#1a1a1a', accent: '#ffd24d' },
+    double11:  { shirt: '#ff3b3b', pants: '#2b2b2f', sleeve: '#ff3b3b', hat: 'cap',     hatColor: '#ff3b3b', hatTrim: '#fff',    badge: '¥' },
+    christmas: { shirt: '#d23b3b', pants: '#1f6b3a', sleeve: '#d23b3b', hat: 'santa',   hatColor: '#d23b3b', hatTrim: '#fff',    scarf: '#fff', buttons: '#ffd24d' },
+    newyear:   { shirt: '#e23b3b', pants: '#2b2b2f', sleeve: '#e23b3b', hat: 'cap',     hatColor: '#c8932b', hatTrim: '#fff',    badge: '元' },
+    spring:    { shirt: '#e23b3b', pants: '#2b2b2f', sleeve: '#e23b3b', hat: 'tang',    hatColor: '#1a1a1a', hatTrim: '#ffd24d', badge: '福', buttons: '#ffd24d' },
+    lantern:   { shirt: '#ff5a5a', pants: '#2b2b2f', sleeve: '#ff5a5a', hat: 'lantern', hatColor: '#d23b3b', hatTrim: '#ffd24d', badge: '宵' },
+    labor:     { shirt: '#2f6fb0', pants: '#2b2b2f', sleeve: '#2f6fb0', hat: 'helmet',  hatColor: '#ffd24d', badge: '劳' },
+    qixi:      { shirt: '#ff7eb3', pants: '#6a4ca8', sleeve: '#ff7eb3', badge: '七', accent: '#ff4f9a' },
+    midautumn: { shirt: '#fff4e0', pants: '#2b2b2f', sleeve: '#fff4e0', hat: 'bunny',   hatColor: '#fff',    hatTrim: '#ffd24d', badge: '月' },
+    national:  { shirt: '#de2910', pants: '#2b2b2f', sleeve: '#de2910', scarf: '#de2910', badge: '★' },
   };
   function resolveOutfit() {
     const key = outfitMode === 'auto' ? getFestival() : (outfitMode || 'none');
@@ -706,13 +748,18 @@ import { invoke } from '@tauri-apps/api/core';
   const outfitBox = document.getElementById('outfitBox');
   const outfitSwatches = document.getElementById('outfitSwatches');
   const OUTFIT_OPTS = [
-    { key: 'auto',     label: '自动',     bg: 'linear-gradient(90deg,#ff7518,#d23b3b,#e23b3b)' },
-    { key: 'none',     label: '不穿',     bg: '#2b2b2f' },
-    { key: 'halloween',label: '万圣节',   bg: '#ff7518' },
-    { key: 'double11', label: '双十一',   bg: '#ff3b3b' },
-    { key: 'christmas',label: '圣诞节',   bg: '#d23b3b' },
-    { key: 'newyear',  label: '元旦',     bg: '#e23b3b' },
-    { key: 'spring',   label: '春节',     bg: '#e23b3b' },
+    { key: 'auto',      label: '自动',     bg: 'linear-gradient(90deg,#ff7518,#d23b3b,#e23b3b)' },
+    { key: 'none',      label: '不穿',     bg: '#2b2b2f' },
+    { key: 'spring',    label: '春节',     bg: '#e23b3b' },
+    { key: 'lantern',   label: '元宵',     bg: '#ff5a5a' },
+    { key: 'labor',     label: '劳动节',   bg: '#2f6fb0' },
+    { key: 'qixi',      label: '七夕',     bg: '#ff7eb3' },
+    { key: 'midautumn', label: '中秋',     bg: '#fff4e0' },
+    { key: 'national',  label: '国庆',     bg: '#de2910' },
+    { key: 'halloween', label: '万圣节',   bg: '#ff7518' },
+    { key: 'double11',  label: '双十一',   bg: '#ff3b3b' },
+    { key: 'christmas', label: '圣诞节',   bg: '#d23b3b' },
+    { key: 'newyear',   label: '元旦',     bg: '#c8932b' },
   ];
   function syncOutfitSel() {
     outfitSwatches.querySelectorAll('.swatch').forEach(s => s.classList.toggle('sel', s.dataset.k === outfitMode));
@@ -736,6 +783,21 @@ import { invoke } from '@tauri-apps/api/core';
     outfitBox.classList.remove('hidden');
   }
   outfitBox.querySelector('.close').addEventListener('click', () => outfitBox.classList.add('hidden'));
+
+  // ---------- 节日祝福动画 ----------
+  const greetEl = document.getElementById('festivalGreet');
+  let greetTimer = null;
+  function showFestivalGreeting(name) {
+    greetEl.textContent = '🎉 ' + name + '快乐！';
+    greetEl.classList.remove('hide', 'show');
+    void greetEl.offsetWidth;                 // 重启动画
+    greetEl.classList.add('show');
+    clearTimeout(greetTimer);
+    greetTimer = setTimeout(() => {
+      greetEl.classList.remove('show');
+      greetEl.classList.add('hide');
+    }, 5000);
+  }
 
   // 把宠物包围盒(窗口内逻辑坐标)发给 Rust（仅在位置变化时），驱动"悬停即交互"
   let lastRectKey = '';
@@ -979,6 +1041,11 @@ import { invoke } from '@tauri-apps/api/core';
     const { key, def } = resolveOutfit();
     if (lastOutfitKey !== key) { lastOutfitKey = key; clothAlpha = 0; }   // 换装：从 0 重新淡入，像"自己画上"
     clothAlpha += (1 - clothAlpha) * 0.12;
+    // 节日祝福动画：进入某个节日（非 none）且不同于上次 → 弹"XX节日快乐"
+    if (key !== lastGreetKey) {
+      lastGreetKey = key;
+      if (key !== 'none' && FESTIVAL_NAMES[key]) showFestivalGreeting(FESTIVAL_NAMES[key]);
+    }
     if (!def || !def.shirt) return;
     ctx.save();
     ctx.globalAlpha = clothAlpha;
@@ -1059,6 +1126,33 @@ import { invoke } from '@tauri-apps/api/core';
       ctx.beginPath(); ctx.arc(hx, hy - r * 0.2, r * 1.02, Math.PI, 0); ctx.closePath(); ctx.fill();
       ctx.fillStyle = def.hatTrim || '#fff';
       ctx.beginPath(); ctx.ellipse(hx + r * 0.7, hy - r * 0.15, r * 0.7, 4 * sc, 0, 0, Math.PI); ctx.fill();  // 帽舌
+    } else if (def.hat === 'tang') {
+      ctx.fillStyle = def.hatColor;                       // 唐装瓜皮帽（黑圆帽）
+      ctx.beginPath(); ctx.arc(hx, hy - r * 0.72, r * 0.95, Math.PI, 0); ctx.closePath(); ctx.fill();
+      ctx.fillRect(hx - r * 0.95, hy - r * 0.8, r * 1.9, 5 * sc);
+      ctx.fillStyle = def.hatTrim || '#ffd24d';           // 金箍
+      ctx.fillRect(hx - r * 0.95, hy - r * 0.82, r * 1.9, 3 * sc);
+      ctx.beginPath(); ctx.arc(hx, hy - r * 1.55, 3 * sc, 0, Math.PI * 2); ctx.fill();   // 顶揪
+    } else if (def.hat === 'lantern') {
+      ctx.strokeStyle = def.hatTrim || '#ffd24d'; ctx.lineWidth = 2 * sc;   // 提杆
+      line({ x: hx, y: hy - r * 2.15 }, { x: hx, y: hy - r * 2.0 });
+      ctx.fillStyle = def.hatColor;                       // 红灯笼
+      ctx.beginPath(); ctx.ellipse(hx, hy - r * 1.25, r * 0.82, r * 0.95, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = def.hatTrim || '#ffd24d';
+      ctx.fillRect(hx - r * 0.82, hy - r * 1.32, r * 1.64, 3 * sc);   // 上下金箍
+      ctx.fillRect(hx - r * 0.82, hy - r * 0.5,  r * 1.64, 3 * sc);
+    } else if (def.hat === 'helmet') {
+      ctx.fillStyle = def.hatColor;                       // 安全帽（黄）
+      ctx.beginPath(); ctx.arc(hx, hy - r * 0.5, r * 0.98, Math.PI, 0); ctx.closePath(); ctx.fill();
+      ctx.fillRect(hx - r * 0.98, hy - r * 0.56, r * 1.96, 5 * sc);   // 帽檐
+      ctx.fillRect(hx - 4 * sc, hy - r * 1.55, 8 * sc, r * 1.05);     // 顶筋
+    } else if (def.hat === 'bunny') {
+      ctx.fillStyle = def.hatColor || '#fff';             // 玉兔长耳
+      ctx.beginPath(); ctx.ellipse(hx - r * 0.42, hy - r * 1.7, r * 0.26, r * 0.95, -0.15, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(hx + r * 0.46, hy - r * 1.75, r * 0.26, r * 0.95, 0.15, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ffb6c8';                          // 耳内粉
+      ctx.beginPath(); ctx.ellipse(hx - r * 0.42, hy - r * 1.7, r * 0.11, r * 0.58, -0.15, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(hx + r * 0.46, hy - r * 1.75, r * 0.11, r * 0.58, 0.15, 0, Math.PI * 2); ctx.fill();
     }
     if (def.badge) {                                      // 福字胸章
       ctx.fillStyle = '#ffd24d';
