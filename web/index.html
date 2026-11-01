@@ -473,6 +473,7 @@ import { invoke } from '@tauri-apps/api/core';
   let pressTimer = null, pressStart = null, longPressFired = false;
   // 揉头交互状态：用"按住+移动"区分于"单击=戳"，避免手势撞车
   let mouseDown = false, downAt = 0, downX = 0, downY = 0, downOnHead = false, rubActive = false, downMoved = 0;
+  let windowDragging = false, bodyDragCandidate = false;   // 抓住身体/腿拖动整个窗口
   // 光标是否在头顶区域（揉头判定用；半径比头略大，便于"搓"到）
   function headAt(x, y) {
     const _bp = poseForState(currState, (performance.now() - start) / 1000);
@@ -489,6 +490,7 @@ import { invoke } from '@tauri-apps/api/core';
     pressStart = { x: e.clientX, y: e.clientY };
     downAt = performance.now(); downX = e.clientX; downY = e.clientY; downMoved = 0;
     mouseDown = true; downOnHead = headAt(x, y); rubActive = false;
+    windowDragging = false; bodyDragCandidate = !downOnHead;  // 头=揉头；身体/腿=拖动整个窗口
     pressTimer = setTimeout(() => {                    // 长按不动 450ms → 唤出菜单
       longPressFired = true; rubActive = false; mouseDown = false;
       showCtxMenu(x, y);
@@ -501,6 +503,12 @@ import { invoke } from '@tauri-apps/api/core';
     if (dist > downMoved) downMoved = dist;
     if (dist > 8) {                                    // 挪动超过 8px：不是长按，取消菜单计时
       clearTimeout(pressTimer); pressTimer = null; pressStart = null;
+      // 在身体/腿上"按住+拖动"= 拖整窗（头=揉，身体=移窗，用不同部位区分手势，避免撞车）
+      if (bodyDragCandidate && !windowDragging && appWindow) {
+        windowDragging = true;
+        try { appWindow.startDragging(); } catch (err) { windowDragging = false; console.warn('拖窗失败', err); }
+        return;
+      }
       // 在头顶区域"按住+移动"= 揉头（与"单击=戳"用完全不同的手势区分：戳是点，揉是按住搓）
       const r = canvas.getBoundingClientRect();
       if (downOnHead) rubActive = headAt(e.clientX - r.left, e.clientY - r.top);
@@ -508,6 +516,7 @@ import { invoke } from '@tauri-apps/api/core';
   });
   window.addEventListener('mouseup', () => {
     clearTimeout(pressTimer); pressTimer = null; pressStart = null;
+    if (windowDragging) { windowDragging = false; mouseDown = false; return; }  // 刚才是拖窗，不算戳
     const dur = performance.now() - downAt;
     if (rubActive) { rubActive = false; mouseDown = false; return; }   // 刚才是揉头，不算戳
     // 短按且几乎没移动 = 单击 → 戳一下（欺负）；长按已唤菜单则不算
@@ -525,6 +534,7 @@ import { invoke } from '@tauri-apps/api/core';
 
   // Tauri 通道：listen 收鼠标坐标；emit 把宠物包围盒发给 Rust 做"悬停即交互"
   let emitter = null;
+  let appWindow = null;        // Tauri 窗口对象（拖动整窗用 startDragging）
   let rustIgnore = true;               // Rust 回传的真实穿透状态（比前端自算准）
   let dbgRX = 0;                       // 收到 dbg 的次数，用来确认 Rust→前端链路是通的
   const dbgEl = document.getElementById('dbg');
@@ -545,6 +555,10 @@ import { invoke } from '@tauri-apps/api/core';
       dbgEl.textContent = '调试：事件模块加载失败 — ' + (err && err.message ? err.message : err);
       console.error('Tauri event import failed:', err);
     });
+    // 窗口拖动：拿到窗口对象后调用 startDragging() 把整个窗口拖走
+    import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
+      appWindow = getCurrentWindow();
+    }).catch((err) => { console.warn('窗口模块加载失败（拖窗不可用）', err); });
   } else {
     window.addEventListener('mousemove', (e) => {
       const r = canvas.getBoundingClientRect();
@@ -570,6 +584,7 @@ import { invoke } from '@tauri-apps/api/core';
       '🎨 「💬聊天」框里打字「画只猫」→ 小火按你的文字指令画画',
       '💬 「💬聊天」框里随便打字 → 小火用智谱回复，嘴会跟着动（念念有词）',
       '🚶 它会自动到处溜达，高兴时眼睛追着你看',
+      '✊ 抓住小火<b>身体或腿按住拖动</b> → 把整个窗口拖到屏幕任意位置（头顶按住搓=揉、单击=戳、长按/右键=菜单，别搞混）',
       '✨ 鼠标移开即恢复穿透，不挡桌面点击'
     ].join('<br>');
     box.style.left = '50%'; box.style.top = '40%';
@@ -587,7 +602,7 @@ import { invoke } from '@tauri-apps/api/core';
     else if (act === 'color') openColorBox();
     else if (act === 'chat') openChatBox();
     else if (act === 'tips') showTips();
-    else if (act === 'about') alert('小火 · 桌面火柴人\n透明 Tauri 窗口：骨骼 / 状态机 / 心情 / 表情 / 嘴型。\n长按我（或右键）唤出菜单：搜一搜 / 看看屏幕 / 🎨 换颜色 / 提示 / 💬聊天 / 关于。在「💬聊天」框里打字：画只猫 / 唱首歌 / 看会儿书 / 随便聊，小火都会回应（回复时嘴会动）。\n👆 单击 = 戳我（会恼会躲，多戳缩角落）；🤚 在头顶按住鼠标来回搓 = 揉头哄我（被戳委屈后搓头也能哄好）。\n右键「🎨 换颜色」可改身体色并记住（选纯黑在黑色界面就藏起来了）；搜一搜、看看屏幕会真截屏后拖框选，交给大模型（智谱 GLM-4V）分析。');
+    else if (act === 'about') alert('小火 · 桌面火柴人\n透明 Tauri 窗口：骨骼 / 状态机 / 心情 / 表情 / 嘴型。\n长按我（或右键）唤出菜单：搜一搜 / 看看屏幕 / 🎨 换颜色 / 提示 / 💬聊天 / 关于。在「💬聊天」框里打字：画只猫 / 唱首歌 / 看会儿书 / 随便聊，小火都会回应（回复时嘴会动）。\n👆 单击 = 戳我（会恼会躲，多戳缩角落）；🤚 在头顶按住鼠标来回搓 = 揉头哄我（被戳委屈后搓头也能哄好）；✊ 抓住身体或腿按住拖动 = 把整个窗口拖到屏幕任意位置。\n右键「🎨 换颜色」可改身体色并记住（选纯黑在黑色界面就藏起来了）；搜一搜、看看屏幕会真截屏后拖框选，交给大模型（智谱 GLM-4V）分析。');
     document.getElementById('ctxMenu').classList.add('hidden');
   });
 
