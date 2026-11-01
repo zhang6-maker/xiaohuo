@@ -218,6 +218,8 @@ import { invoke } from '@tauri-apps/api/core';
     torsoLen: 85, neckLen: 16, headR: 24,
     thigh: 46, shin: 36, upperArm: 42, foreArm: 28,
     lineW: 6, color: '#2b2b2f',
+    // 眼睛颜色独立于身体色：换身体色时眼睛保持深色，瞳孔/眼神动态始终可读
+    eyeColor: '#2b2b2f',
   };
   // 身体默认色：优先用上次保存的（localStorage），否则用内置默认；右键「🎨 换颜色」可改
   let defaultColor = (() => { try { return localStorage.getItem('xiaohuo.color') || '#2b2b2f'; } catch (e) { return '#2b2b2f'; } })();
@@ -718,20 +720,20 @@ import { invoke } from '@tauri-apps/api/core';
     const eyes = [{ x: head.x - ex + fx, y: head.y + ey + fy }, { x: head.x + ex + fx, y: head.y + ey + fy }];
     // 开心眼：^^ 弯弯笑眼（哄好时触发，覆盖其他眼型）
     if (happy > 0.5) {
-      ctx.lineWidth = Math.max(1.4, 1.8 * gSC); ctx.strokeStyle = S.color;
+      ctx.lineWidth = Math.max(1.4, 1.8 * gSC); ctx.strokeStyle = S.eyeColor;
       for (const p of eyes) {
         ctx.beginPath(); ctx.arc(p.x, p.y - r * 0.02, r * 0.2, 1.2 * Math.PI, 1.8 * Math.PI); ctx.stroke();
       }
       return;
     }
-    ctx.lineWidth = Math.max(1, 1.2 * gSC); ctx.strokeStyle = S.color; ctx.fillStyle = '#fff';
+    ctx.lineWidth = Math.max(1, 1.2 * gSC); ctx.strokeStyle = S.eyeColor; ctx.fillStyle = '#fff';
     if (eyeOpen > 0.5) {
       for (const p of eyes) {
         ctx.fillStyle = '#fff';   // 每只眼重设眼白：上一只的瞳孔把 fillStyle 改成了深色，否则右眼眼白会被填黑
         ctx.beginPath(); ctx.arc(p.x, p.y, r * 0.17, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
         // 瞳孔明显朝鼠标偏移
         const px = p.x + lookX * r * 0.09, py = p.y + clamp(lookY, -1, 1) * r * 0.09;   // 瞳孔偏移钳制在眼眶内（看书时 lookY 会大于 1）
-        ctx.beginPath(); ctx.arc(px, py, r * 0.09, 0, Math.PI * 2); ctx.fillStyle = S.color; ctx.fill();
+        ctx.beginPath(); ctx.arc(px, py, r * 0.09, 0, Math.PI * 2); ctx.fillStyle = S.eyeColor; ctx.fill();
       }
     } else {
       ctx.lineWidth = Math.max(1.4, 1.6 * gSC);
