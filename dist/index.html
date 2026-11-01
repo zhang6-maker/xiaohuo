@@ -84,6 +84,14 @@
   #colorBox .swatch.sel { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.55); }
   #colorBox .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
   #colorBox input[type=color] { width: 38px; height: 28px; border: none; background: none; cursor: pointer; padding: 0; }
+  /* 换装面板：色板（服装选项） */
+  #outfitBox .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
+  #outfitBox .swatch {
+    display: flex; align-items: center; justify-content: center; min-width: 66px; height: 30px;
+    border-radius: 6px; cursor: pointer; border: 2px solid transparent;
+    box-shadow: 0 0 0 1px rgba(255,255,255,.15); font-size: 12px; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.4);
+  }
+  #outfitBox .swatch.sel { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.55); }
   /* 唱歌歌词气泡：贴着头顶飘，原创短词循环显示 */
   #lyricsBox {
     position: fixed; z-index: 38; max-width: 280px; text-align: center;
@@ -126,7 +134,7 @@
      想恢复调试信息，把这一行注释掉即可。 */
   #status, .hint, #dbg { display: none !important; }
 </style>
-  <script type="module" crossorigin src="/assets/index-Dm5TyBQ1.js"></script>
+  <script type="module" crossorigin src="/assets/index-CqVRE0Oc.js"></script>
 </head>
 <body>
 <canvas id="stage" width="480" height="540"></canvas>
@@ -175,6 +183,7 @@
   <div data-m="search">📸 搜一搜</div>
   <div data-m="screen">👀 看看屏幕</div>
   <div data-m="color">🎨 换颜色</div>
+  <div data-m="outfit">👕 换装</div>
   <div data-m="tips">💡 提示</div>
   <div data-m="chat">💬 聊天</div>
   <div data-m="about">ℹ️ 关于</div>
@@ -190,6 +199,13 @@
     <input type="color" id="colorPicker" value="#2b2b2f" />
     <button id="colorReset" style="margin-left:auto;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;">恢复默认</button>
   </div>
+</div>
+
+<!-- 换装面板：右键菜单「👕 换装」唤出。选「自动」时节日会自己穿；选具体节日可提前预览；都会记住 -->
+<div id="outfitBox" class="box hidden" style="top:12px;max-width:320px;">
+  <button class="close">×</button>
+  <div style="font-size:13px;color:#cfd2d8;margin:2px 0 2px;">👕 选套衣服（节日会自动穿，也会记住）</div>
+  <div class="swatches" id="outfitSwatches"></div>
 </div>
 
 <!-- 提示框（菜单「提示」唤出） -->

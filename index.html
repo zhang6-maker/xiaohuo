@@ -84,6 +84,14 @@
   #colorBox .swatch.sel { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.55); }
   #colorBox .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
   #colorBox input[type=color] { width: 38px; height: 28px; border: none; background: none; cursor: pointer; padding: 0; }
+  /* 换装面板：色板（服装选项） */
+  #outfitBox .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
+  #outfitBox .swatch {
+    display: flex; align-items: center; justify-content: center; min-width: 66px; height: 30px;
+    border-radius: 6px; cursor: pointer; border: 2px solid transparent;
+    box-shadow: 0 0 0 1px rgba(255,255,255,.15); font-size: 12px; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.4);
+  }
+  #outfitBox .swatch.sel { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.55); }
   /* 唱歌歌词气泡：贴着头顶飘，原创短词循环显示 */
   #lyricsBox {
     position: fixed; z-index: 38; max-width: 280px; text-align: center;
@@ -174,6 +182,7 @@
   <div data-m="search">📸 搜一搜</div>
   <div data-m="screen">👀 看看屏幕</div>
   <div data-m="color">🎨 换颜色</div>
+  <div data-m="outfit">👕 换装</div>
   <div data-m="tips">💡 提示</div>
   <div data-m="chat">💬 聊天</div>
   <div data-m="about">ℹ️ 关于</div>
@@ -189,6 +198,13 @@
     <input type="color" id="colorPicker" value="#2b2b2f" />
     <button id="colorReset" style="margin-left:auto;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;">恢复默认</button>
   </div>
+</div>
+
+<!-- 换装面板：右键菜单「👕 换装」唤出。选「自动」时节日会自己穿；选具体节日可提前预览；都会记住 -->
+<div id="outfitBox" class="box hidden" style="top:12px;max-width:320px;">
+  <button class="close">×</button>
+  <div style="font-size:13px;color:#cfd2d8;margin:2px 0 2px;">👕 选套衣服（节日会自动穿，也会记住）</div>
+  <div class="swatches" id="outfitSwatches"></div>
 </div>
 
 <!-- 提示框（菜单「提示」唤出） -->
@@ -242,6 +258,43 @@ import { invoke } from '@tauri-apps/api/core';
   let defaultColor = (() => { try { return localStorage.getItem('xiaohuo.color') || '#2b2b2f'; } catch (e) { return '#2b2b2f'; } })();
   S.color = defaultColor;
   const legSpread = 0.18, armSpread = 0.35;
+
+  // ---------- 节日换装（纯装饰叠加层：只画衣服，绝不改动 pose / 状态机，故不影响任何动作） ----------
+  // 换装模式：'auto' 跟随节日自动穿；或指定某个节日 key；或 'none' 光身火柴人
+  let outfitMode = (() => { try { return localStorage.getItem('xiaohuo.outfit') || 'auto'; } catch (e) { return 'auto'; } })();
+  let clothAlpha = 0;                 // 换装淡入进度：像"自己一笔笔画上衣服"
+  let lastOutfitKey = '__init__';     // 上一帧解析出的衣服 key，变化时重新淡入
+
+  // 节日窗口（含端点）。wrap=true 表示跨年（12月→次年1月）
+  const OUTFIT_FESTIVALS = [
+    { key: 'halloween', from: [10, 25], to: [11, 1] },
+    { key: 'double11',  from: [11, 8],  to: [11, 12] },
+    { key: 'christmas', from: [12, 20], to: [12, 26] },
+    { key: 'newyear',   from: [12, 28], to: [1, 3], wrap: true },
+    { key: 'spring',    from: [2, 8],   to: [2, 22] },
+  ];
+  function inWindow(d, f, t, wrap) {
+    const m = d.getMonth() + 1, day = d.getDate(), cur = m * 100 + day;
+    const a = f[0] * 100 + f[1], b = t[0] * 100 + t[1];
+    return wrap ? (cur >= a || cur <= b) : (cur >= a && cur <= b);
+  }
+  function getFestival(d = new Date()) {
+    for (const f of OUTFIT_FESTIVALS) if (inWindow(d, f.from, f.to, f.wrap)) return f.key;
+    return 'none';
+  }
+  // 每套衣服的描述：颜色 + 帽子类型 + 装饰。shirt 为 null 表示光身
+  const OUTFITS = {
+    none:      { shirt: null },
+    halloween: { shirt: '#ff7518', pants: '#2b2b2f', sleeve: '#ff7518', hat: 'witch', hatColor: '#4b2e83', hatTrim: '#1a1a1a', accent: '#ffd24d' },
+    double11:  { shirt: '#ff3b3b', pants: '#2b2b2f', sleeve: '#ff3b3b', hat: 'cap',   hatColor: '#ff3b3b', hatTrim: '#ffd24d' },
+    christmas: { shirt: '#d23b3b', pants: '#1f6b3a', sleeve: '#d23b3b', hat: 'santa', hatColor: '#d23b3b', hatTrim: '#ffffff', scarf: '#ffffff', buttons: '#ffd24d' },
+    newyear:   { shirt: '#e23b3b', pants: '#2b2b2f', sleeve: '#e23b3b', hat: 'cap',   hatColor: '#e23b3b', hatTrim: '#ffd24d', buttons: '#ffd24d' },
+    spring:    { shirt: '#e23b3b', pants: '#2b2b2f', sleeve: '#e23b3b', hat: 'cap',   hatColor: '#e23b3b', hatTrim: '#ffd24d', badge: '福' },
+  };
+  function resolveOutfit() {
+    const key = outfitMode === 'auto' ? getFestival() : (outfitMode || 'none');
+    return { key, def: OUTFITS[key] || OUTFITS.none };
+  }
 
   const point = (o, a, l) => ({ x: o.x + Math.cos(a) * l, y: o.y + Math.sin(a) * l });
   const lerp = (a, b, t) => a + (b - a) * t;
@@ -611,9 +664,10 @@ import { invoke } from '@tauri-apps/api/core';
     if (act === 'search') startPick('search');
     else if (act === 'screen') startPick('screen');
     else if (act === 'color') openColorBox();
+    else if (act === 'outfit') openOutfitBox();
     else if (act === 'chat') openChatBox();
     else if (act === 'tips') showTips();
-    else if (act === 'about') alert('小火 · 桌面火柴人\n透明 Tauri 窗口：骨骼 / 状态机 / 心情 / 表情 / 嘴型。\n长按我（或右键）唤出菜单：搜一搜 / 看看屏幕 / 🎨 换颜色 / 提示 / 💬聊天 / 关于。在「💬聊天」框里打字：画只猫 / 唱首歌 / 看会儿书 / 随便聊，小火都会回应（回复时嘴会动）。\n👆 单击 = 戳我（会恼会躲，多戳缩角落）；🤚 在头顶按住鼠标来回搓 = 揉头哄我（被戳委屈后搓头也能哄好）；✊ 抓住身体或腿按住拖动 = 把整个窗口拖到屏幕任意位置。\n右键「🎨 换颜色」可改身体色并记住（选纯黑在黑色界面就藏起来了）；搜一搜、看看屏幕会真截屏后拖框选，交给大模型（智谱 GLM-4V）分析。');
+    else if (act === 'about') alert('小火 · 桌面火柴人\n透明 Tauri 窗口：骨骼 / 状态机 / 心情 / 表情 / 嘴型。\n长按我（或右键）唤出菜单：搜一搜 / 看看屏幕 / 🎨 换颜色 / 提示 / 💬聊天 / 关于。在「💬聊天」框里打字：画只猫 / 唱首歌 / 看会儿书 / 随便聊，小火都会回应（回复时嘴会动）。\n👆 单击 = 戳我（会恼会躲，多戳缩角落）；🤚 在头顶按住鼠标来回搓 = 揉头哄我（被戳委屈后搓头也能哄好）；✊ 抓住身体或腿按住拖动 = 把整个窗口拖到屏幕任意位置。\n右键「🎨 换颜色」可改身体色并记住（选纯黑在黑色界面就藏起来了）；「👕 换装」可让过节自动穿衣服（万圣/双十一/圣诞/元旦/春节），也能手动预览，衣服只是叠加层、不影响任何动作；搜一搜、看看屏幕会真截屏后拖框选，交给大模型（智谱 GLM-4V）分析。');
     document.getElementById('ctxMenu').classList.add('hidden');
   });
 
@@ -648,6 +702,41 @@ import { invoke } from '@tauri-apps/api/core';
     if (!document.getElementById('ctxMenu').contains(e.target)) document.getElementById('ctxMenu').classList.add('hidden');
   });
 
+  // ---------- 换装面板 ----------
+  const outfitBox = document.getElementById('outfitBox');
+  const outfitSwatches = document.getElementById('outfitSwatches');
+  const OUTFIT_OPTS = [
+    { key: 'auto',     label: '自动',     bg: 'linear-gradient(90deg,#ff7518,#d23b3b,#e23b3b)' },
+    { key: 'none',     label: '不穿',     bg: '#2b2b2f' },
+    { key: 'halloween',label: '万圣节',   bg: '#ff7518' },
+    { key: 'double11', label: '双十一',   bg: '#ff3b3b' },
+    { key: 'christmas',label: '圣诞节',   bg: '#d23b3b' },
+    { key: 'newyear',  label: '元旦',     bg: '#e23b3b' },
+    { key: 'spring',   label: '春节',     bg: '#e23b3b' },
+  ];
+  function syncOutfitSel() {
+    outfitSwatches.querySelectorAll('.swatch').forEach(s => s.classList.toggle('sel', s.dataset.k === outfitMode));
+  }
+  function setOutfit(mode) {
+    outfitMode = mode;
+    try { localStorage.setItem('xiaohuo.outfit', mode); } catch (e) {}
+    syncOutfitSel();
+    lastOutfitKey = '__force__';     // 强制下次 draw 重新淡入，像"自己画上衣服"
+  }
+  OUTFIT_OPTS.forEach(o => {
+    const s = document.createElement('div');
+    s.className = 'swatch'; s.dataset.k = o.key; s.textContent = o.label; s.style.background = o.bg;
+    s.addEventListener('click', () => setOutfit(o.key));
+    outfitSwatches.appendChild(s);
+  });
+  function openOutfitBox() {
+    syncOutfitSel();
+    outfitBox.style.left = '50%'; outfitBox.style.top = '12px';
+    outfitBox.style.transform = 'translateX(-50%)';
+    outfitBox.classList.remove('hidden');
+  }
+  outfitBox.querySelector('.close').addEventListener('click', () => outfitBox.classList.add('hidden'));
+
   // 把宠物包围盒(窗口内逻辑坐标)发给 Rust（仅在位置变化时），驱动"悬停即交互"
   let lastRectKey = '';
   let boxOpen = false;            // 任一弹框可见时为 true，emitPetRect 据此把矩形扩成全窗口
@@ -671,7 +760,7 @@ import { invoke } from '@tauri-apps/api/core';
     if (boxOpen) emitter('pet-rect', [0, 0, 480, 540]).catch(() => {});
     else { lastRectKey = ''; emitPetRect(); }
   }
-  ['answerBox', 'screenBox', 'tipsBox', 'paintBox', 'ctxMenu', 'chatBox', 'colorBox'].forEach(id => {
+  ['answerBox', 'screenBox', 'tipsBox', 'paintBox', 'ctxMenu', 'chatBox', 'colorBox', 'outfitBox'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     new MutationObserver(() => {
@@ -883,6 +972,104 @@ import { invoke } from '@tauri-apps/api/core';
     ctx.stroke();
   }
 
+  // ---------- 节日衣服（叠加层）----------
+  // 关键：完全用 buildFigure 算出的骨架锚点 k 绘制，每帧重算；绝不动 pose / S.state / 状态机，
+  // 所以衣服会随走路、跑、躺倒、揉头、戳等所有动作自然跟随，却改不了任何动作——"穿了衣服还是在动"。
+  function drawClothes(k, sc, now) {
+    const { key, def } = resolveOutfit();
+    if (lastOutfitKey !== key) { lastOutfitKey = key; clothAlpha = 0; }   // 换装：从 0 重新淡入，像"自己画上"
+    clothAlpha += (1 - clothAlpha) * 0.12;
+    if (!def || !def.shirt) return;
+    ctx.save();
+    ctx.globalAlpha = clothAlpha;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+
+    // 裤子：覆盖两条腿（root→knee→foot），用裤子色粗描边盖住火柴棒
+    if (def.pants) {
+      ctx.strokeStyle = def.pants; ctx.lineWidth = S.lineW * sc * 2.0;
+      line(k.root, k.kneePtL); line(k.kneePtL, k.footL);
+      line(k.root, k.kneePtR); line(k.kneePtR, k.footR);
+    }
+    // 上衣：肩→胯 之间填一块圆角"身体"，盖住躯干火柴棒
+    if (def.shirt) {
+      const sh = k.shoulders, rt = k.root;
+      const dx = rt.x - sh.x, dy = rt.y - sh.y, len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len, ny = dx / len;               // 躯干法向
+      const w = 16 * sc;                                  // 半宽
+      const topA = { x: sh.x + nx * w,        y: sh.y + ny * w };
+      const topB = { x: sh.x - nx * w,        y: sh.y - ny * w };
+      const botA = { x: rt.x + nx * w * 0.8,  y: rt.y + ny * w * 0.8 };
+      const botB = { x: rt.x - nx * w * 0.8,  y: rt.y - ny * w * 0.8 };
+      ctx.fillStyle = def.shirt;
+      ctx.beginPath();
+      ctx.moveTo(topA.x, topA.y); ctx.lineTo(topB.x, topB.y);
+      ctx.lineTo(botB.x, botB.y); ctx.lineTo(botA.x, botA.y); ctx.closePath(); ctx.fill();
+      // 短袖：覆盖肩→肘（前臂仍露出身体的火柴棒，像短袖）
+      if (def.sleeve) {
+        ctx.strokeStyle = def.sleeve; ctx.lineWidth = S.lineW * sc * 1.7;
+        line(sh, k.elbowPtL); line(sh, k.elbowPtR);
+      }
+      // 纽扣：竖排小点（仅在指定时画）
+      if (def.buttons) {
+        ctx.fillStyle = def.buttons;
+        for (let i = 1; i <= 2; i++) {
+          const tx = i / 3;
+          ctx.beginPath();
+          ctx.arc(sh.x + (rt.x - sh.x) * tx, sh.y + (rt.y - sh.y) * tx, 2.2 * sc, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+    // 围巾（圣诞）：脖子一圈
+    if (def.scarf) {
+      ctx.strokeStyle = def.scarf; ctx.lineWidth = S.lineW * sc * 1.2;
+      ctx.beginPath(); ctx.arc(k.headBottom.x, k.headBottom.y, 8 * sc, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.restore();
+  }
+  // 帽子画在头顶（脸在下层，不被遮）。drawClothes 已把 clothAlpha 推到接近 1，这里直接复用
+  function drawHat(k, sc) {
+    const { def } = resolveOutfit();
+    if (!def || !def.hat) return;
+    ctx.save();
+    ctx.globalAlpha = clothAlpha;
+    const hx = k.head.x, hy = k.head.y, r = k.head.r;
+    if (def.hat === 'santa') {
+      ctx.fillStyle = def.hatColor;                       // 红帽身
+      ctx.beginPath();
+      ctx.moveTo(hx - r * 0.95, hy - r * 0.5);
+      ctx.quadraticCurveTo(hx, hy - r * 2.1, hx + r * 0.5, hy - r * 1.7);
+      ctx.lineTo(hx + r * 0.2, hy - r * 1.3);
+      ctx.quadraticCurveTo(hx - r * 0.3, hy - r * 0.9, hx + r * 0.95, hy - r * 0.5);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = def.hatTrim;                        // 白边
+      ctx.fillRect(hx - r * 0.95, hy - r * 0.62, r * 1.9, 4 * sc);
+      ctx.beginPath(); ctx.arc(hx + r * 0.5, hy - r * 1.7, 4 * sc, 0, Math.PI * 2); ctx.fill();   // 绒球
+    } else if (def.hat === 'witch') {
+      ctx.fillStyle = def.hatColor;                       // 巫师尖帽
+      ctx.beginPath();
+      ctx.moveTo(hx - r * 1.0, hy - r * 0.55);
+      ctx.lineTo(hx + r * 1.0, hy - r * 0.55);
+      ctx.lineTo(hx + r * 0.15, hy - r * 2.4);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = def.hatTrim;                        // 帽檐
+      ctx.beginPath(); ctx.ellipse(hx, hy - r * 0.55, r * 1.15, 4 * sc, 0, 0, Math.PI * 2); ctx.fill();
+    } else if (def.hat === 'cap') {
+      ctx.fillStyle = def.hatColor;                       // 鸭舌帽
+      ctx.beginPath(); ctx.arc(hx, hy - r * 0.2, r * 1.02, Math.PI, 0); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = def.hatTrim || '#fff';
+      ctx.beginPath(); ctx.ellipse(hx + r * 0.7, hy - r * 0.15, r * 0.7, 4 * sc, 0, 0, Math.PI); ctx.fill();  // 帽舌
+    }
+    if (def.badge) {                                      // 福字胸章
+      ctx.fillStyle = '#ffd24d';
+      ctx.beginPath(); ctx.arc(k.root.x, k.root.y - 6 * sc, 7 * sc, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#8a0000'; ctx.font = (9 * sc) + 'px sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(def.badge, k.root.x, k.root.y - 6 * sc);
+    }
+    ctx.restore();
+  }
+
   function draw(pose, t, now) {
     ctx.clearRect(0, 0, W, H);
     drawArtworks(now);          // 先画已存在的画作（小火画的画），再画小火本身
@@ -922,8 +1109,10 @@ import { invoke } from '@tauri-apps/api/core';
     line(k.shoulders, k.headBottom);
     line(k.shoulders, k.elbowPtL); line(k.elbowPtL, k.handL);
     line(k.shoulders, k.elbowPtR); line(k.elbowPtR, k.handR);
+    drawClothes(k, sc, now);          // 衣服：覆盖躯干/腿/袖，脸仍由后面的头/眼/嘴画在最上层
 
     ctx.beginPath(); ctx.arc(k.head.x, k.head.y, k.head.r, 0, Math.PI * 2); ctx.stroke();
+    drawHat(k, sc);                   // 帽子画在头顶（脸在下层，不被遮）
     drawEyes(k.head, pose.eyeOpen, pose.sad, now, pose.happy);
     let mo = 0.06;
     if (pose.sing > 0.5) mo = 0.2 + 0.55 * Math.abs(Math.sin(t * 7));     // 唱歌：嘴随节奏张合
