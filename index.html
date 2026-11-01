@@ -290,7 +290,7 @@ import { invoke } from '@tauri-apps/api/core';
   const FESTIVAL_NAMES = {
     halloween: '万圣节', double11: '双十一', christmas: '圣诞节', newyear: '元旦',
     spring: '春节', lantern: '元宵', labor: '劳动节', qixi: '七夕',
-    midautumn: '中秋节', national: '国庆',
+    midautumn: '中秋节', national: '国庆', qingming: '清明',
   };
 
   // 节日窗口（含端点）。wrap=true 表示跨年（12月→次年1月）
@@ -298,6 +298,7 @@ import { invoke } from '@tauri-apps/api/core';
     { key: 'newyear',   from: [12, 28], to: [1, 3],  wrap: true },     // 元旦（跨年）
     { key: 'spring',    from: [1, 20],  to: [2, 7]  },                 // 春节
     { key: 'lantern',   from: [2, 8],   to: [2, 15] },                 // 元宵
+    { key: 'qingming',  from: [4, 3],   to: [4, 6]  },                 // 清明
     { key: 'labor',     from: [5, 1],   to: [5, 5]  },                 // 劳动节
     { key: 'qixi',      from: [8, 10],  to: [8, 25] },                 // 七夕
     { key: 'midautumn', from: [9, 10],  to: [9, 28] },                 // 中秋
@@ -322,19 +323,40 @@ import { invoke } from '@tauri-apps/api/core';
   // 设计原则：每套用不同帽子/配色/胸章，互相绝不撞脸（春节=唐装圆帽、双11=红黑+¥标 …）。
   const OUTFITS = {
     none:      { shirt: null },
+    // —— 常服（按季节自动穿，平时也好看）——
+    casual:    { shirt: '#5b8def', pants: '#3a3a44', sleeve: '#5b8def', scarf: '#3f6fc0' },              // 蓝连帽卫衣（领口）
+    scarf:     { shirt: '#c9772f', pants: '#3a3a44', sleeve: '#c9772f', scarf: '#b5482f' },              // 毛衣 + 围巾
+    down:      { shirt: '#3a6ea5', pants: '#2b2b2f', sleeve: '#3a6ea5', scarf: '#e8e8ec', hat: 'beanie', hatColor: '#3a6ea5', hatTrim: '#e8e8ec', quilt: true }, // 羽绒服（绗缝+毛线帽+围巾）
+    swim:      { shirt: null,    pants: '#1ca9c9', sleeve: null, glasses: true },                         // 泳衣 + 墨镜（光身 + 泳裤）
+    // —— 节日 ——
     halloween: { shirt: '#ff7518', pants: '#2b2b2f', sleeve: '#ff7518', hat: 'witch',   hatColor: '#4b2e83', hatTrim: '#1a1a1a', accent: '#ffd24d' },
     double11:  { shirt: '#ff3b3b', pants: '#2b2b2f', sleeve: '#ff3b3b', hat: 'cap',     hatColor: '#ff3b3b', hatTrim: '#fff',    badge: '¥' },
     christmas: { shirt: '#d23b3b', pants: '#1f6b3a', sleeve: '#d23b3b', hat: 'santa',   hatColor: '#d23b3b', hatTrim: '#fff',    scarf: '#fff', buttons: '#ffd24d' },
     newyear:   { shirt: '#e23b3b', pants: '#2b2b2f', sleeve: '#e23b3b', hat: 'cap',     hatColor: '#c8932b', hatTrim: '#fff',    badge: '元' },
     spring:    { shirt: '#e23b3b', pants: '#2b2b2f', sleeve: '#e23b3b', hat: 'tang',    hatColor: '#1a1a1a', hatTrim: '#ffd24d', badge: '福', buttons: '#ffd24d' },
     lantern:   { shirt: '#ff5a5a', pants: '#2b2b2f', sleeve: '#ff5a5a', hat: 'lantern', hatColor: '#d23b3b', hatTrim: '#ffd24d', badge: '宵' },
+    qingming:  { shirt: '#8bc48a', pants: '#5b4636', sleeve: '#8bc48a', hat: 'straw',   hatColor: '#d9c08a', hatTrim: '#b89a5a', badge: '柳' }, // 清明：草绿衣 + 斗笠 + 柳
     labor:     { shirt: '#2f6fb0', pants: '#2b2b2f', sleeve: '#2f6fb0', hat: 'helmet',  hatColor: '#ffd24d', badge: '劳' },
     qixi:      { shirt: '#ff7eb3', pants: '#6a4ca8', sleeve: '#ff7eb3', badge: '七', accent: '#ff4f9a' },
     midautumn: { shirt: '#fff4e0', pants: '#2b2b2f', sleeve: '#fff4e0', hat: 'bunny',   hatColor: '#fff',    hatTrim: '#ffd24d', badge: '月' },
-    national:  { shirt: '#de2910', pants: '#2b2b2f', sleeve: '#de2910', scarf: '#de2910', badge: '★' },
+    national:  { shirt: '#de2910', pants: '#2b2b2f', sleeve: '#de2910', redScarf: '#de2910', badge: '★' },  // 国庆：红领巾三角巾 + 金星（完整显示）
   };
+  // 季节常服：按月份近似（非真实天气）。深冬极寒→羽绒服；深秋-初春→围巾；盛夏→泳衣；其余→常服
+  function getSeasonOutfit(d = new Date()) {
+    const cur = (d.getMonth() + 1) * 100 + d.getDate();
+    if (cur >= 1215 || cur <= 215) return 'down';     // 深冬极寒
+    if (cur >= 1101 && cur <= 315) return 'scarf';    // 深秋到初春
+    if (cur >= 601 && cur <= 831) return 'swim';      // 盛夏高温
+    return 'casual';                                   // 春 / 初秋
+  }
   function resolveOutfit() {
-    const key = outfitMode === 'auto' ? getFestival() : (outfitMode || 'none');
+    let key;
+    if (outfitMode === 'auto') {
+      const f = getFestival();
+      key = (f !== 'none') ? f : getSeasonOutfit();   // 节日优先于季节常服
+    } else {
+      key = outfitMode || 'none';
+    }
     return { key, def: OUTFITS[key] || OUTFITS.none };
   }
 
@@ -470,16 +492,32 @@ import { invoke } from '@tauri-apps/api/core';
     '陪你熬过 每一个不眠夜',
     '小火不灭 就等你到天亮',
   ];
+  // 节日专属歌词：在对应节日唱歌时自动替换（地图键 = 节日 key）
+  const SONG_BY_FESTIVAL = {
+    spring:    ['红红火火 又一年', '烟花炸开 满天星', '红包拿来 笑开颜', '小火给您 拜个年', '辞旧迎新 好运连', '福字贴上 门两边', '炮竹声声 岁更迭', '新春快乐 共团圆'],
+    lantern:   ['花灯高高 挂满天', '元宵滚滚 甜心间', '猜个谜语 乐翻天', '小火提灯 庆团圆', '龙腾狮舞 街头喧', '月圆人圆 情绵绵', '汤圆下锅 热气漫', '上元佳节 共欢颜'],
+    qingming:  ['清明雨 纷纷下', '踏青去 正当时', '柳枝插 门头上', '小火种 一缕春', '风筝起 云边荡', '新绿染 满山岗', '慎终远 思念长', '春和景 好时光'],
+    labor:     ['汗水亮 晶晶闪', '劳动最 光荣篇', '双手创 新明天', '小火也 卖力干', '扫去尘 迎新颜', '一砖一 瓦成山', '勤为本 心自安', '致敬每 份奉献'],
+    qixi:      ['银河亮 闪闪星', '鹊桥搭 两岸情', '牛郎织 女相会', '小火也 动了心', '葡萄架 听私语', '一年等 这一夕', '愿天下 有情人', '朝朝暮 暮不离'],
+    midautumn: ['月亮圆 又团圆', '月饼甜 又酥香', '嫦娥在 云之端', '小火陪 你赏月', '桂子落 满庭芳', '清辉洒 千里光', '思故乡 共此望', '人间好 是秋凉'],
+    national:  ['国旗飘 迎风扬', '祖国生 日安康', '山河壮 岁月长', '小火也 骄傲唱', '繁荣景 看东方', '万众心 聚一堂', '锦绣路 在前方', '国泰民 安永昌'],
+    halloween: ['南瓜灯 亮幽幽', '鬼脸笑 敲门头', '不给糖 就捣蛋', '小火也 来捣乱', '蝙蝠飞 月光寒', '糖果袋 鼓满满', '万圣夜 任疯玩', '尖叫吧 小幽灵'],
+    double11:  ['购物车 满满当', '钱包空 空荡荡', '剁手停 不下来', '小火也 下了一单', '零点钟 抢疯抢', '尾款人 心头慌', '快递堆 成座山', '明年再 说不晚'],
+    christmas: ['铃儿响 叮当叮', '雪花落 轻轻扬', '圣诞树 闪星光', '小火送 你吉祥', '袜子里 藏愿望', '炉火暖 驱风霜', '平安夜 钟声长', 'merry chr istmas 唱'],
+    newyear:   ['钟声敲 零点整', '旧年翻 篇随风', '新年立 新愿望', '小火陪 你闯荡', '烟花漫 天际红', '辞别昨 拥抱明', '一岁首 万事兴', '元旦乐 共前程'],
+  };
   let lyricTimer = null, lyricIdx = 0;
   function startSingLyrics() {
     if (lyricTimer) return;                       // 已在唱，不重复起
+    const cur = resolveOutfit().key;
+    const list = SONG_BY_FESTIVAL[cur] || SONG;   // 节日里唱专属词，平时唱小火原词
     lyricIdx = 0;
-    lyricsBox.textContent = SONG[0];
+    lyricsBox.textContent = list[0];
     lyricsBox.classList.remove('hidden');
     positionLyrics();
     lyricTimer = setInterval(() => {
-      lyricIdx = (lyricIdx + 1) % SONG.length;
-      lyricsBox.textContent = SONG[lyricIdx];
+      lyricIdx = (lyricIdx + 1) % list.length;
+      lyricsBox.textContent = list[lyricIdx];
       positionLyrics();
     }, 1400);
   }
@@ -752,6 +790,7 @@ import { invoke } from '@tauri-apps/api/core';
     { key: 'none',      label: '不穿',     bg: '#2b2b2f' },
     { key: 'spring',    label: '春节',     bg: '#e23b3b' },
     { key: 'lantern',   label: '元宵',     bg: '#ff5a5a' },
+    { key: 'qingming',  label: '清明',     bg: '#8bc48a' },
     { key: 'labor',     label: '劳动节',   bg: '#2f6fb0' },
     { key: 'qixi',      label: '七夕',     bg: '#ff7eb3' },
     { key: 'midautumn', label: '中秋',     bg: '#fff4e0' },
@@ -760,6 +799,10 @@ import { invoke } from '@tauri-apps/api/core';
     { key: 'double11',  label: '双十一',   bg: '#ff3b3b' },
     { key: 'christmas', label: '圣诞节',   bg: '#d23b3b' },
     { key: 'newyear',   label: '元旦',     bg: '#c8932b' },
+    { key: 'casual',    label: '常服',     bg: '#5b8def' },
+    { key: 'scarf',     label: '围巾',     bg: '#c9772f' },
+    { key: 'down',      label: '羽绒服',   bg: '#3a6ea5' },
+    { key: 'swim',      label: '泳衣',     bg: '#1ca9c9' },
   ];
   function syncOutfitSel() {
     outfitSwatches.querySelectorAll('.swatch').forEach(s => s.classList.toggle('sel', s.dataset.k === outfitMode));
@@ -1046,12 +1089,12 @@ import { invoke } from '@tauri-apps/api/core';
       lastGreetKey = key;
       if (key !== 'none' && FESTIVAL_NAMES[key]) showFestivalGreeting(FESTIVAL_NAMES[key]);
     }
-    if (!def || !def.shirt) return;
+    if (!def) return;
     ctx.save();
     ctx.globalAlpha = clothAlpha;
     ctx.lineJoin = 'round'; ctx.lineCap = 'round';
 
-    // 裤子：覆盖两条腿（root→knee→foot），用裤子色粗描边盖住火柴棒
+    // 裤子：覆盖两条腿（root→knee→foot），用裤子色粗描边盖住火柴棒（泳裤也能画，故不依赖 shirt）
     if (def.pants) {
       ctx.strokeStyle = def.pants; ctx.lineWidth = S.lineW * sc * 2.0;
       line(k.root, k.kneePtL); line(k.kneePtL, k.footL);
@@ -1086,8 +1129,36 @@ import { invoke } from '@tauri-apps/api/core';
           ctx.fill();
         }
       }
+      // 羽绒服绗缝线（横向分段，跟动作但只是装饰）
+      if (def.quilt) {
+        ctx.strokeStyle = 'rgba(0,0,0,0.16)'; ctx.lineWidth = 1 * sc;
+        for (let i = 1; i <= 3; i++) {
+          const f = i / 4;
+          const qa = { x: topA.x + (botA.x - topA.x) * f, y: topA.y + (botA.y - topA.y) * f };
+          const qb = { x: topB.x + (botB.x - topB.x) * f, y: topB.y + (botB.y - topB.y) * f };
+          line(qa, qb);
+        }
+      }
+      // 红领巾（三角巾，国庆用）：肩下三角，盖在胸前
+      if (def.redScarf) {
+        ctx.fillStyle = def.redScarf;
+        const cy = sh.y + 2 * sc, by = rt.y + 16 * sc;
+        ctx.beginPath();
+        ctx.moveTo(sh.x - 11 * sc, cy);
+        ctx.lineTo(sh.x + 11 * sc, cy);
+        ctx.lineTo(sh.x, by);
+        ctx.closePath(); ctx.fill();
+      }
     }
-    // 围巾（圣诞）：脖子一圈
+    // 胸章（福/¥/★/元/宵/劳/七/月/柳…）：无论有没有帽子都画在胸前（修复国庆金星不显示）
+    if (def.badge) {
+      ctx.fillStyle = '#ffd24d';
+      ctx.beginPath(); ctx.arc(k.root.x, k.root.y - 6 * sc, 7 * sc, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#8a0000'; ctx.font = (9 * sc) + 'px sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(def.badge, k.root.x, k.root.y - 6 * sc);
+    }
+    // 围巾（圣诞/常服/羽绒服…）：脖子一圈
     if (def.scarf) {
       ctx.strokeStyle = def.scarf; ctx.lineWidth = S.lineW * sc * 1.2;
       ctx.beginPath(); ctx.arc(k.headBottom.x, k.headBottom.y, 8 * sc, 0, Math.PI * 2); ctx.stroke();
@@ -1097,7 +1168,7 @@ import { invoke } from '@tauri-apps/api/core';
   // 帽子画在头顶（脸在下层，不被遮）。drawClothes 已把 clothAlpha 推到接近 1，这里直接复用
   function drawHat(k, sc) {
     const { def } = resolveOutfit();
-    if (!def || !def.hat) return;
+    if (!def) return;
     ctx.save();
     ctx.globalAlpha = clothAlpha;
     const hx = k.head.x, hy = k.head.y, r = k.head.r;
@@ -1153,14 +1224,34 @@ import { invoke } from '@tauri-apps/api/core';
       ctx.fillStyle = '#ffb6c8';                          // 耳内粉
       ctx.beginPath(); ctx.ellipse(hx - r * 0.42, hy - r * 1.7, r * 0.11, r * 0.58, -0.15, 0, Math.PI * 2); ctx.fill();
       ctx.beginPath(); ctx.ellipse(hx + r * 0.46, hy - r * 1.75, r * 0.11, r * 0.58, 0.15, 0, Math.PI * 2); ctx.fill();
+    } else if (def.hat === 'straw') {                     // 斗笠（清明）
+      ctx.fillStyle = def.hatColor || '#d9c08a';
+      ctx.beginPath();
+      ctx.moveTo(hx - r * 1.4, hy - r * 0.45);
+      ctx.quadraticCurveTo(hx, hy - r * 1.9, hx + r * 1.4, hy - r * 0.45);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = def.hatTrim || '#b89a5a';
+      ctx.fillRect(hx - r * 1.4, hy - r * 0.5, r * 2.8, 3 * sc);     // 帽檐边
+    } else if (def.hat === 'beanie') {                    // 毛线帽（羽绒服）
+      ctx.fillStyle = def.hatColor || '#3a6ea5';
+      ctx.beginPath(); ctx.arc(hx, hy - r * 0.35, r * 1.0, Math.PI, 0); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = def.hatTrim || '#e8e8ec';
+      ctx.fillRect(hx - r * 1.0, hy - r * 0.44, r * 2.0, 4 * sc);     // 帽边
     }
-    if (def.badge) {                                      // 福字胸章
-      ctx.fillStyle = '#ffd24d';
-      ctx.beginPath(); ctx.arc(k.root.x, k.root.y - 6 * sc, 7 * sc, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#8a0000'; ctx.font = (9 * sc) + 'px sans-serif';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(def.badge, k.root.x, k.root.y - 6 * sc);
+    ctx.restore();
+  }
+
+  // 墨镜（泳衣）：画在眼睛之上，盖住眼白只露深色镜片
+  function drawGlasses(k, sc) {
+    const r = k.head.r, ex = 0.34 * r, ey = -0.12 * r;
+    const eyes = [{ x: k.head.x - ex, y: k.head.y + ey }, { x: k.head.x + ex, y: k.head.y + ey }];
+    ctx.save();
+    ctx.globalAlpha = clothAlpha;
+    ctx.fillStyle = 'rgba(20,20,30,0.88)'; ctx.strokeStyle = '#0a0a12'; ctx.lineWidth = 2 * sc;
+    for (const p of eyes) {
+      ctx.beginPath(); ctx.ellipse(p.x, p.y, r * 0.22, r * 0.16, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     }
+    ctx.beginPath(); ctx.moveTo(eyes[0].x + r * 0.2, eyes[0].y); ctx.lineTo(eyes[1].x - r * 0.2, eyes[1].y); ctx.stroke();
     ctx.restore();
   }
 
@@ -1208,6 +1299,8 @@ import { invoke } from '@tauri-apps/api/core';
     ctx.beginPath(); ctx.arc(k.head.x, k.head.y, k.head.r, 0, Math.PI * 2); ctx.stroke();
     drawHat(k, sc);                   // 帽子画在头顶（脸在下层，不被遮）
     drawEyes(k.head, pose.eyeOpen, pose.sad, now, pose.happy);
+    const gd = resolveOutfit().def;
+    if (gd && gd.glasses) drawGlasses(k, sc);
     let mo = 0.06;
     if (pose.sing > 0.5) mo = 0.2 + 0.55 * Math.abs(Math.sin(t * 7));     // 唱歌：嘴随节奏张合
     else if (now < speakingUntil) mo = 0.12 + 0.8 * Math.abs(Math.sin(t * 15));
