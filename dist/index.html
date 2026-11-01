@@ -92,6 +92,12 @@
     box-shadow: 0 0 0 1px rgba(255,255,255,.15); font-size: 12px; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.4);
   }
   #outfitBox .swatch.sel { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.55); }
+  /* 换装面板：三层分区（衣服 / 围巾 / 发型） */
+  #outfitBox .ob-sec { margin: 8px 0 4px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.10); }
+  #outfitBox .ob-sec:first-child { border-top: none; padding-top: 0; }
+  #outfitBox .ob-title { font-size: 12px; color: #cfd2d8; margin: 2px 0 4px; }
+  #outfitBox .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 2px; }
+  #scarfToggle.off { opacity: .5; }
   /* 节日祝福动画：顶部居中弹出"XX节日快乐"，自动 5 秒后消失 */
   #festivalGreet {
     position: absolute; left: 50%; top: 10px; transform: translateX(-50%) scale(.6);
@@ -151,7 +157,7 @@
      想恢复调试信息，把这一行注释掉即可。 */
   #status, .hint, #dbg { display: none !important; }
 </style>
-  <script type="module" crossorigin src="/assets/index-BFKb2YXQ.js"></script>
+  <script type="module" crossorigin src="/assets/index-7dd98YI_.js"></script>
 </head>
 <body>
 <canvas id="stage" width="480" height="540"></canvas>
@@ -218,17 +224,33 @@
   </div>
 </div>
 
-<!-- 换装面板：右键菜单「👕 换装」唤出。选「自动」时节日会自己穿；选具体节日可提前预览；都会记住 -->
-<div id="outfitBox" class="box hidden" style="top:12px;max-width:320px;">
+<!-- 换装面板：右键菜单「👕 换装」唤出。衣服 / 围巾 / 发型 三层完全独立，互不干扰；都会记住 -->
+<div id="outfitBox" class="box hidden" style="top:12px;max-width:340px;">
   <button class="close">×</button>
-  <div style="font-size:13px;color:#cfd2d8;margin:2px 0 2px;">👕 选套衣服（节日会自动穿，也会记住）</div>
-  <div class="swatches" id="outfitSwatches"></div>
-  <div class="row" style="margin-top:10px;align-items:center;gap:8px;display:flex;">
-    <span style="font-size:12px;color:#9aa0a6;">常服色</span>
-    <input type="color" id="casualPicker" value="#5b8def" style="width:34px;height:26px;border:none;background:none;padding:0;cursor:pointer;" />
-    <span style="font-size:12px;color:#9aa0a6;margin-left:8px;">围巾色</span>
-    <input type="color" id="scarfPicker" value="#b5482f" style="width:34px;height:26px;border:none;background:none;padding:0;cursor:pointer;" />
-    <button id="outfitColorReset" style="margin-left:auto;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;">恢复默认</button>
+  <div class="ob-sec">
+    <div class="ob-title">👕 衣服</div>
+    <div class="swatches" id="shirtSwatches"></div>
+    <div class="row" style="margin-top:6px;align-items:center;gap:8px;display:flex;">
+      <span style="font-size:12px;color:#9aa0a6;">衣服色</span>
+      <input type="color" id="shirtPicker" value="#5b8def" style="width:34px;height:26px;border:none;background:none;padding:0;cursor:pointer;" />
+      <button id="shirtColorReset" style="margin-left:auto;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;">恢复默认</button>
+    </div>
+  </div>
+  <div class="ob-sec">
+    <div class="ob-title">🧣 围巾</div>
+    <div class="row" style="align-items:center;gap:8px;display:flex;">
+      <button id="scarfToggle" style="border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;">围巾：开</button>
+      <span style="font-size:12px;color:#9aa0a6;">围巾色</span>
+      <input type="color" id="scarfPicker" value="#b5482f" style="width:34px;height:26px;border:none;background:none;padding:0;cursor:pointer;" />
+    </div>
+  </div>
+  <div class="ob-sec">
+    <div class="ob-title">💇 发型</div>
+    <div class="swatches" id="hairSwatches"></div>
+    <div class="row" style="margin-top:6px;align-items:center;gap:8px;display:flex;">
+      <span style="font-size:12px;color:#9aa0a6;">发色</span>
+      <input type="color" id="hairPicker" value="#6b4a2b" style="width:34px;height:26px;border:none;background:none;padding:0;cursor:pointer;" />
+    </div>
   </div>
 </div>
 
