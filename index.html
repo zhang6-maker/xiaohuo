@@ -222,6 +222,13 @@
   <button class="close">×</button>
   <div style="font-size:13px;color:#cfd2d8;margin:2px 0 2px;">👕 选套衣服（节日会自动穿，也会记住）</div>
   <div class="swatches" id="outfitSwatches"></div>
+  <div class="row" style="margin-top:10px;align-items:center;gap:8px;display:flex;">
+    <span style="font-size:12px;color:#9aa0a6;">常服色</span>
+    <input type="color" id="casualPicker" value="#5b8def" style="width:34px;height:26px;border:none;background:none;padding:0;cursor:pointer;" />
+    <span style="font-size:12px;color:#9aa0a6;margin-left:8px;">围巾色</span>
+    <input type="color" id="scarfPicker" value="#b5482f" style="width:34px;height:26px;border:none;background:none;padding:0;cursor:pointer;" />
+    <button id="outfitColorReset" style="margin-left:auto;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;">恢复默认</button>
+  </div>
 </div>
 
 <!-- 提示框（菜单「提示」唤出） -->
@@ -277,6 +284,9 @@ import { invoke } from '@tauri-apps/api/core';
   // 身体默认色：优先用上次保存的（localStorage），否则用内置默认；右键「🎨 换颜色」可改
   let defaultColor = (() => { try { return localStorage.getItem('xiaohuo.color') || '#2b2b2f'; } catch (e) { return '#2b2b2f'; } })();
   S.color = defaultColor;
+  // 常服色 / 围巾色：各自独立配色并记住（右键「👕 换装」面板里可改），与身体色、节日色互不影响
+  let casualColor = (() => { try { return localStorage.getItem('xiaohuo.casual') || '#5b8def'; } catch (e) { return '#5b8def'; } })();
+  let scarfColor  = (() => { try { return localStorage.getItem('xiaohuo.scarf')  || '#b5482f'; } catch (e) { return '#b5482f'; } })();
   const legSpread = 0.18, armSpread = 0.35;
 
   // ---------- 节日换装（纯装饰叠加层：只画衣服，绝不改动 pose / 状态机，故不影响任何动作） ----------
@@ -324,8 +334,8 @@ import { invoke } from '@tauri-apps/api/core';
   const OUTFITS = {
     none:      { shirt: null },
     // —— 常服（按季节自动穿，平时也好看）——
-    casual:    { shirt: '#5b8def', pants: '#3a3a44', sleeve: '#5b8def', scarf: '#3f6fc0' },              // 蓝连帽卫衣（领口）
-    scarf:     { shirt: '#c9772f', pants: '#3a3a44', sleeve: '#c9772f', scarf: '#b5482f' },              // 毛衣 + 围巾
+    casual:    { shirt: '#5b8def', pants: '#3a3a44', sleeve: '#5b8def', hoodie: true, pocket: true },   // 常服：连帽卫衣（帽兜+口袋，无围巾）；颜色可调
+    scarf:     { shirt: '#c9772f', pants: '#3a3a44', sleeve: '#c9772f', vneck: true, scarf: '#b5482f' }, // 围巾：圆领毛衣+V领+大围巾（围巾色可调）；与常服廓形彻底不同
     down:      { shirt: '#2f6f9e', pants: '#2b2b2f', sleeve: '#2f6f9e', hood: true, hoodTrim: '#eef3f8', scarf: '#eef3f8', quilt: true, flake: true, puffy: true }, // 羽绒服：连帽胖外套 + 雪绒领 + 雪花（廓形与双11彻底拉开）
     swim:      { shirt: null,    pants: '#1ca9c9', sleeve: null, glasses: true },                         // 泳衣 + 墨镜（光身 + 泳裤）
     // —— 节日 ——
@@ -785,6 +795,17 @@ import { invoke } from '@tauri-apps/api/core';
   // ---------- 换装面板 ----------
   const outfitBox = document.getElementById('outfitBox');
   const outfitSwatches = document.getElementById('outfitSwatches');
+  // 常服 / 围巾 独立配色：各自取色器，实时改、各自记住
+  const casualPicker = document.getElementById('casualPicker');
+  const scarfPicker  = document.getElementById('scarfPicker');
+  function setCasualColor(c) { casualColor = c; try { localStorage.setItem('xiaohuo.casual', c); } catch (e) {} }
+  function setScarfColor(c)  { scarfColor  = c; try { localStorage.setItem('xiaohuo.scarf',  c); } catch (e) {} }
+  casualPicker.addEventListener('input', e => setCasualColor(e.target.value));
+  scarfPicker.addEventListener('input',  e => setScarfColor(e.target.value));
+  document.getElementById('outfitColorReset').addEventListener('click', () => {
+    setCasualColor('#5b8def'); setScarfColor('#b5482f');
+    casualPicker.value = '#5b8def'; scarfPicker.value = '#b5482f';
+  });
   const OUTFIT_OPTS = [
     { key: 'auto',      label: '自动',     bg: 'linear-gradient(90deg,#ff7518,#d23b3b,#e23b3b)' },
     { key: 'none',      label: '不穿',     bg: '#2b2b2f' },
@@ -821,6 +842,7 @@ import { invoke } from '@tauri-apps/api/core';
   });
   function openOutfitBox() {
     syncOutfitSel();
+    casualPicker.value = casualColor; scarfPicker.value = scarfColor;
     outfitBox.style.left = '50%'; outfitBox.style.top = '12px';
     outfitBox.style.transform = 'translateX(-50%)';
     outfitBox.classList.remove('hidden');
@@ -1093,6 +1115,10 @@ import { invoke } from '@tauri-apps/api/core';
   // 所以衣服会随走路、跑、躺倒、揉头、戳等所有动作自然跟随，却改不了任何动作——"穿了衣服还是在动"。
   function drawClothes(k, sc, now) {
     const { key, def } = resolveOutfit();
+    // 动态配色：常服/围巾可各自换色（不影响其他节日服），每帧重算，避免改 OUTFITS 字面量
+    const eff = Object.assign({}, def);
+    if (key === 'casual') { eff.shirt = casualColor; eff.sleeve = casualColor; }
+    if (key === 'scarf')  { eff.scarf = scarfColor; }
     if (lastOutfitKey !== key) { lastOutfitKey = key; clothAlpha = 0; }   // 换装：从 0 重新淡入，像"自己画上"
     clothAlpha += (1 - clothAlpha) * 0.12;
     // 节日祝福动画：进入某个节日（非 none）且不同于上次 → 弹"XX节日快乐"
@@ -1115,13 +1141,13 @@ import { invoke } from '@tauri-apps/api/core';
     // 身体坐标系里的一个点：沿垂直方向 u（px），沿身体向下 v（ux）
     const pt = (u, v) => ({ x: C.x + px * u * sc + ux * v * sc, y: C.y + py * u * sc + uy * v * sc });
 
-    // 连帽（羽绒服）：头后画一圈，随后画的脸盖在上面，只露出帽圈
+    // 连帽（羽绒服）：头周围一圈"帽圈 + 雪绒领"，留脸的洞，避免把整颗脑袋染蓝
     if (def.hood) {
       const hr = k.head.r;
-      ctx.fillStyle = def.shirt;
-      ctx.beginPath(); ctx.arc(k.head.x, k.head.y, hr * 1.34, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = def.hoodTrim || '#eef3f8'; ctx.lineWidth = 5 * sc; ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.arc(k.head.x, k.head.y + hr * 0.18, hr * 1.28, Math.PI * 0.12, Math.PI * 0.88); ctx.stroke();
+      ctx.strokeStyle = eff.shirt; ctx.lineWidth = hr * 0.55 * sc; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(k.head.x, k.head.y, hr * 1.16, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = def.hoodTrim || '#eef3f8'; ctx.lineWidth = 3 * sc;
+      ctx.beginPath(); ctx.arc(k.head.x, k.head.y, hr * 0.95, Math.PI * 0.12, Math.PI * 0.88); ctx.stroke();
     }
 
     // 裤子：覆盖两条腿（root→knee→foot），粗描边盖住火柴棒
@@ -1139,14 +1165,38 @@ import { invoke } from '@tauri-apps/api/core';
       const topB = { x: sh.x - px * w,  y: sh.y - py * w };
       const botA = { x: rt.x + px * wB, y: rt.y + py * wB };
       const botB = { x: rt.x - px * wB, y: rt.y - py * wB };
-      ctx.fillStyle = def.shirt;
+      ctx.fillStyle = eff.shirt;
       ctx.beginPath();
       ctx.moveTo(topA.x, topA.y); ctx.lineTo(topB.x, topB.y);
       ctx.lineTo(botB.x, botB.y); ctx.lineTo(botA.x, botA.y); ctx.closePath(); ctx.fill();
       // 短袖：覆盖肩→肘
       if (def.sleeve) {
-        ctx.strokeStyle = def.sleeve; ctx.lineWidth = S.lineW * sc * (def.puffy ? 2.1 : 1.7);
+        ctx.strokeStyle = eff.sleeve; ctx.lineWidth = S.lineW * sc * (def.puffy ? 2.1 : 1.7);
         line(sh, k.elbowPtL); line(sh, k.elbowPtR);
+      }
+      // 卫衣帽兜（常服）：脖子后一团帽兜，不挡脸
+      if (eff.hoodie) {
+        ctx.fillStyle = eff.shirt;
+        ctx.beginPath();
+        ctx.moveTo(N.x - px * 10 * sc, N.y - py * 10 * sc);
+        ctx.quadraticCurveTo(N.x, N.y - uy * 16 * sc, N.x + px * 10 * sc, N.y + py * 10 * sc);
+        ctx.lineTo(N.x + px * 10 * sc, N.y + py * 5 * sc);
+        ctx.quadraticCurveTo(N.x, N.y - uy * 5 * sc, N.x - px * 10 * sc, N.y - py * 5 * sc);
+        ctx.closePath(); ctx.fill();
+      }
+      // 卫衣口袋（常服）：肚前一字袋
+      if (eff.pocket) {
+        ctx.strokeStyle = 'rgba(0,0,0,0.22)'; ctx.lineWidth = 1.8 * sc;
+        const wP = 13 * sc, pY = C.y + uy * 30 * sc;
+        line({ x: C.x - px * wP, y: pY - py * wP * 0.5 }, { x: C.x + px * wP, y: pY + py * wP * 0.5 });
+        line({ x: C.x - px * wP, y: pY - py * wP * 0.5 }, { x: C.x - px * wP, y: pY + py * wP * 0.7 });
+        line({ x: C.x + px * wP, y: pY + py * wP * 0.5 }, { x: C.x + px * wP, y: pY + py * wP * 0.7 });
+      }
+      // V 领（围巾）：圆领毛衣的 V 领口
+      if (eff.vneck) {
+        ctx.strokeStyle = 'rgba(0,0,0,0.28)'; ctx.lineWidth = 2 * sc;
+        line({ x: N.x - px * 5 * sc, y: N.y - py * 5 * sc }, { x: N.x, y: N.y + uy * 6 * sc });
+        line({ x: N.x + px * 5 * sc, y: N.y + py * 5 * sc }, { x: N.x, y: N.y + uy * 6 * sc });
       }
       // 羽绒绗缝（横+竖，像鼓胀的羽绒格）
       if (def.quilt) {
@@ -1248,7 +1298,7 @@ import { invoke } from '@tauri-apps/api/core';
         }
       }
     }
-    if (def.scarf) scarfAt(def.scarf);
+    if (eff.scarf) scarfAt(eff.scarf);
 
     // 通用胸章（福/元/宵/劳/七/月/柳…）
     if (def.badge) {
@@ -1327,11 +1377,6 @@ import { invoke } from '@tauri-apps/api/core';
       ctx.closePath(); ctx.fill();
       ctx.fillStyle = def.hatTrim || '#b89a5a';
       ctx.fillRect(hx - r * 1.4, hy - r * 0.5, r * 2.8, 3 * sc);     // 帽檐边
-    } else if (def.hat === 'beanie') {                    // 毛线帽（羽绒服）
-      ctx.fillStyle = def.hatColor || '#3a6ea5';
-      ctx.beginPath(); ctx.arc(hx, hy - r * 0.35, r * 1.0, Math.PI, 0); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = def.hatTrim || '#e8e8ec';
-      ctx.fillRect(hx - r * 1.0, hy - r * 0.44, r * 2.0, 4 * sc);     // 帽边
     }
     ctx.restore();
   }

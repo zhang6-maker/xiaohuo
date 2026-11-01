@@ -151,7 +151,7 @@
      想恢复调试信息，把这一行注释掉即可。 */
   #status, .hint, #dbg { display: none !important; }
 </style>
-  <script type="module" crossorigin src="/assets/index-CR5kU26c.js"></script>
+  <script type="module" crossorigin src="/assets/index-BFKb2YXQ.js"></script>
 </head>
 <body>
 <canvas id="stage" width="480" height="540"></canvas>
@@ -223,6 +223,13 @@
   <button class="close">×</button>
   <div style="font-size:13px;color:#cfd2d8;margin:2px 0 2px;">👕 选套衣服（节日会自动穿，也会记住）</div>
   <div class="swatches" id="outfitSwatches"></div>
+  <div class="row" style="margin-top:10px;align-items:center;gap:8px;display:flex;">
+    <span style="font-size:12px;color:#9aa0a6;">常服色</span>
+    <input type="color" id="casualPicker" value="#5b8def" style="width:34px;height:26px;border:none;background:none;padding:0;cursor:pointer;" />
+    <span style="font-size:12px;color:#9aa0a6;margin-left:8px;">围巾色</span>
+    <input type="color" id="scarfPicker" value="#b5482f" style="width:34px;height:26px;border:none;background:none;padding:0;cursor:pointer;" />
+    <button id="outfitColorReset" style="margin-left:auto;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;">恢复默认</button>
+  </div>
 </div>
 
 <!-- 提示框（菜单「提示」唤出） -->
