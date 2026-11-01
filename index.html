@@ -2270,7 +2270,7 @@ import { invoke } from '@tauri-apps/api/core';
     c.getContext('2d').drawImage(pickImg, X, Y, RW, RH, 0, 0, c.width, c.height);
     lastRegionB64 = c.toDataURL('image/jpeg', 0.85);
     closeAllPick();                                // 退出全屏，回小窗显示结果
-    if (currentAct === 'screen') showScreenAsk();  // 看屏：先让用户提问/直接看
+    if (currentAct === 'screen') { showScreenAsk(); runGlm('screen', lastRegionB64, ''); }  // 看屏：弹提问框并自动直接看一次（不必再点按钮）
     else runGlm(currentAct, lastRegionB64);        // 搜一搜：直接解题
   });
   // Esc 取消框选（不想框了就按 Esc）
@@ -2308,7 +2308,7 @@ import { invoke } from '@tauri-apps/api/core';
     invoke('ask_glm', { imageB64: imgB64, prompt })
       .then(res => {
         txt.innerHTML = res.replace(/\n/g, '<br>');
-        if (useScreen) {        // 看屏（或在看屏里搜）：结果出来后显示「再问一次 / 不用了」
+        if (useScreen && q) {   // 仅当用户带问题发问才收起提问框并显示「再问一次」；自动看/直接看时保留提问框便于追问
           screenAskWrap.classList.add('hidden');
           screenResultActions.classList.remove('hidden');
         }
