@@ -473,7 +473,7 @@ import { invoke } from '@tauri-apps/api/core';
   let pressTimer = null, pressStart = null, longPressFired = false;
   // 揉头交互状态：用"按住+移动"区分于"单击=戳"，避免手势撞车
   let mouseDown = false, downAt = 0, downX = 0, downY = 0, downOnHead = false, rubActive = false, downMoved = 0;
-  let windowDragging = false, bodyDragCandidate = false;   // 抓住身体/腿拖动整个窗口
+  let windowDragging = false, bodyDragCandidate = false, dragStartClient = null;   // 抓住身体/腿拖动整个窗口
   // 光标是否在头顶区域（揉头判定用；半径比头略大，便于"搓"到）
   function headAt(x, y) {
     const _bp = poseForState(currState, (performance.now() - start) / 1000);
@@ -497,6 +497,12 @@ import { invoke } from '@tauri-apps/api/core';
     }, 450);
   });
   window.addEventListener('mousemove', e => {
+    // 拖窗进行中：持续把鼠标位移发给 Rust，由 Rust 搬窗口（拖拽期间 Rust 强制关穿透，鼠标不会丢）
+    if (windowDragging && dragStartClient) {
+      const ddx = e.clientX - dragStartClient.x, ddy = e.clientY - dragStartClient.y;
+      if (isTauri) invoke('drag_move', { dx: ddx, dy: ddy }).catch(() => {});
+      return;
+    }
     if (!pressStart) return;
     const dx = e.clientX - pressStart.x, dy = e.clientY - pressStart.y;
     const dist = Math.hypot(dx, dy);
@@ -504,9 +510,10 @@ import { invoke } from '@tauri-apps/api/core';
     if (dist > 8) {                                    // 挪动超过 8px：不是长按，取消菜单计时
       clearTimeout(pressTimer); pressTimer = null; pressStart = null;
       // 在身体/腿上"按住+拖动"= 拖整窗（头=揉，身体=移窗，用不同部位区分手势，避免撞车）
-      if (bodyDragCandidate && !windowDragging && appWindow) {
+      if (bodyDragCandidate && !windowDragging) {
         windowDragging = true;
-        try { appWindow.startDragging(); } catch (err) { windowDragging = false; console.warn('拖窗失败', err); }
+        dragStartClient = { x: e.clientX, y: e.clientY };
+        if (isTauri) invoke('drag_start').catch(err => { windowDragging = false; dragStartClient = null; console.warn('拖窗启动失败', err); });
         return;
       }
       // 在头顶区域"按住+移动"= 揉头（与"单击=戳"用完全不同的手势区分：戳是点，揉是按住搓）
@@ -516,7 +523,11 @@ import { invoke } from '@tauri-apps/api/core';
   });
   window.addEventListener('mouseup', () => {
     clearTimeout(pressTimer); pressTimer = null; pressStart = null;
-    if (windowDragging) { windowDragging = false; mouseDown = false; return; }  // 刚才是拖窗，不算戳
+    if (windowDragging) {                              // 刚才是拖窗，不算戳
+      windowDragging = false; dragStartClient = null; mouseDown = false;
+      if (isTauri) invoke('drag_end').catch(() => {});
+      return;
+    }
     const dur = performance.now() - downAt;
     if (rubActive) { rubActive = false; mouseDown = false; return; }   // 刚才是揉头，不算戳
     // 短按且几乎没移动 = 单击 → 戳一下（欺负）；长按已唤菜单则不算
