@@ -84,6 +84,19 @@
   #colorBox .swatch.sel { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.55); }
   #colorBox .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
   #colorBox input[type=color] { width: 38px; height: 28px; border: none; background: none; cursor: pointer; padding: 0; }
+  /* 唱歌歌词气泡：贴着头顶飘，原创短词循环显示 */
+  #lyricsBox {
+    position: fixed; z-index: 38; max-width: 280px; text-align: center;
+    background: rgba(40,32,28,.92); color: #ffe9d6;
+    border: 1px solid #ff8a3d; border-radius: 12px; padding: 6px 12px;
+    font-size: 13px; line-height: 1.5; box-shadow: 0 4px 16px rgba(0,0,0,.35);
+    pointer-events: none;            /* 歌词不参与交互，不挡桌面点击穿透 */
+  }
+  #lyricsBox::after {
+    content: ''; position: absolute; left: 50%; bottom: -7px; transform: translateX(-50%);
+    border-left: 7px solid transparent; border-right: 7px solid transparent;
+    border-top: 8px solid #ff8a3d;
+  }
 
   /* 聊天框：消息气泡 */
   #chatLog { display: flex; flex-direction: column; gap: 6px; }
@@ -113,7 +126,7 @@
      想恢复调试信息，把这一行注释掉即可。 */
   #status, .hint, #dbg { display: none !important; }
 </style>
-  <script type="module" crossorigin src="/assets/index-CFg0tljm.js"></script>
+  <script type="module" crossorigin src="/assets/index-BMoe08Xt.js"></script>
 </head>
 <body>
 <canvas id="stage" width="480" height="540"></canvas>
@@ -201,6 +214,9 @@
   <input id="chatInput" type="text" placeholder="画只猫 / 唱首歌 / 看会儿书 / 或随便聊" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:6px;font-size:13px;" />
   <div class="actions"><button id="chatSend">发送</button></div>
 </div>
+
+<!-- 唱歌歌词气泡：sing 状态显示，跟随头顶，原创短词循环 -->
+<div id="lyricsBox" class="box hidden"></div>
 
 </body>
 </html>
