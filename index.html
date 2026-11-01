@@ -1830,29 +1830,33 @@ import { invoke } from '@tauri-apps/api/core';
     const b = document.createElement('div'); b.className = 'bubble'; b.textContent = text;
     row.appendChild(b); chatLog.appendChild(row);
     chatLog.scrollTop = chatLog.scrollHeight;
+    positionChatBox();   // 消息增减后重定位，避免框被裁
     return b;
   }
   // 把聊天框放到火柴人上方或下方，绝不挡住它（canvas 坐标 ≈ 窗口像素，1:1）
   function positionChatBox() {
+    const margin = 8;
     const headY = posY - 190;   // 包围盒上沿（头顶）
     const feetY = posY + 40;    // 包围盒下沿（脚底）
-    const margin = 12;
     const bh = chatBox.offsetHeight || 150;
+    const H = window.innerHeight || 540;
     chatBox.style.left = '50%';
     chatBox.style.transform = 'translateX(-50%)';
-    // 优先放头顶上方：用 bottom 锚定，消息变多时只往上长，不会反压火柴人
-    if (bh <= headY - margin) {
-      chatBox.style.bottom = (H - (headY - margin)) + 'px';
-      chatBox.style.top = 'auto';
-    } else if (bh <= (H - feetY) - margin) {
-      // 头顶没地方就放脚底下方
-      chatBox.style.top = (feetY + margin) + 'px';
-      chatBox.style.bottom = 'auto';
+    chatBox.style.bottom = 'auto';
+    // 选最优落点：优先头顶上方（不压火柴人），其次脚底下方，否则取空间较大侧
+    let top;
+    if (headY - bh - margin >= margin) {
+      top = headY - bh - margin;                  // 头顶上方放得下
+    } else if (feetY + bh + margin <= H - margin) {
+      top = feetY + margin;                        // 脚底下方放得下
     } else {
-      // 实在都没地方（火柴人恰好居中），贴顶至少不出界
-      chatBox.style.top = '8px';
-      chatBox.style.bottom = 'auto';
+      const spaceAbove = headY - margin;
+      const spaceBelow = H - feetY - margin;
+      top = (spaceAbove >= spaceBelow) ? margin : (H - bh - margin);
     }
+    // 钳制：无论火柴人在哪、框多高，整框始终完整可见
+    top = Math.max(margin, Math.min(top, H - bh - margin));
+    chatBox.style.top = top + 'px';
   }
   function openChatBox() {
     chatBox.classList.remove('hidden');
@@ -1902,6 +1906,7 @@ import { invoke } from '@tauri-apps/api/core';
         lastPet.textContent = text;
         // 口型对得上：回复期间让嘴动起来
         speakingUntil = performance.now() + Math.min(6000, Math.max(2000, text.length * 60));
+        positionChatBox();   // 回复换行增长后重定位，避免框被裁
         chatHistory.push({ role: 'assistant', content: text });
         if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
       })
