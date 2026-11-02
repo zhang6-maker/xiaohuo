@@ -30,8 +30,16 @@ pub fn run() {
             drag_start: Arc::new(Mutex::new(None)),
         })
         .setup(|app| {
-            // 加载 .env（dev 时 cwd=D:\xiaohuo，故优先 src-tauri/.env）
-            let _ = dotenvy::from_path("src-tauri/.env").or_else(|_| dotenvy::from_path(".env"));
+            // 加载 .env：优先 exe 所在目录（兼容便携版与 MSI 安装版），其次 src-tauri/.env 与 cwd/.env
+            let exe_dir_env = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.join(".env")));
+            let _ = match exe_dir_env {
+                Some(p) => dotenvy::from_path(&p)
+                    .or_else(|_| dotenvy::from_path("src-tauri/.env"))
+                    .or_else(|_| dotenvy::from_path(".env")),
+                None => dotenvy::from_path("src-tauri/.env").or_else(|_| dotenvy::from_path(".env")),
+            };
 
             let app_handle = app.handle().clone();
 
