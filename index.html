@@ -315,7 +315,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
   let defaultColor = (() => { try { return localStorage.getItem('xiaohuo.color') || '#2b2b2f'; } catch (e) { return '#2b2b2f'; } })();
   S.color = defaultColor;
   // 围巾色（独立层，与衣服/发型互不干扰）
-  let scarfColor  = (() => { try { return localStorage.getItem('xiaohuo.scarf')  || '#b5482f'; } catch (e) { return '#b5482f'; } })();
+  S.scarfColor = (() => { try { return localStorage.getItem('xiaohuo.scarf')  || '#b5482f'; } catch (e) { return '#b5482f'; } })();
   const legSpread = 0.18, armSpread = 0.35;
 
   // ---------- 换装分层：衣服 / 围巾 / 发型 三者完全独立，互不干扰 ----------
@@ -414,7 +414,6 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
   }
   // 发型解析：auto 按日期自动选款+色；none=光头；其余用选定款式+选定发色
   const HAIR_STYLES = ['short', 'spiky', 'bun', 'ponytail_high', 'ponytail_low', 'mohawk', 'long', 'slick', 'buzz', 'chelsea', 'slash'];
-  const HAIR_PALETTE = ['#2b2b2f', '#6b4a2b', '#1a1a1a', '#3a2a1a', '#0b3d2e', '#5a2a6b', '#b5482f', '#8a6d3b'];
   function resolveHair() {
     let sel = S.hair;
     if (sel === 'ponytail') sel = 'ponytail_high';   // 旧值兼容：单马尾→高马尾
@@ -689,7 +688,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
   }
   let pressTimer = null, pressStart = null, longPressFired = false;
   // 揉头交互状态：用"按住+移动"区分于"单击=戳"，避免手势撞车
-  let mouseDown = false, downAt = 0, downX = 0, downY = 0, downOnHead = false, rubActive = false, downMoved = 0;
+  let downAt = 0, downX = 0, downY = 0, downOnHead = false, rubActive = false, downMoved = 0;
   let windowDragging = false, bodyDragCandidate = false, dragStartClient = null;   // 抓住身体/腿拖动整个窗口
   // 光标是否在头顶区域（揉头判定用；半径比头略大，便于"搓"到）
   function headAt(x, y) {
@@ -706,10 +705,10 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     longPressFired = false;
     pressStart = { x: e.clientX, y: e.clientY };
     downAt = performance.now(); downX = e.clientX; downY = e.clientY; downMoved = 0;
-    mouseDown = true; downOnHead = headAt(x, y); rubActive = false;
+    downOnHead = headAt(x, y); rubActive = false;
     windowDragging = false; bodyDragCandidate = !downOnHead;  // 头=揉头；身体/腿=拖动整个窗口
     pressTimer = setTimeout(() => {                    // 长按不动 450ms → 唤出菜单
-      longPressFired = true; rubActive = false; mouseDown = false;
+      longPressFired = true; rubActive = false;
       showCtxMenu(x, y);
     }, 450);
   });
@@ -741,18 +740,17 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
   window.addEventListener('mouseup', () => {
     clearTimeout(pressTimer); pressTimer = null; pressStart = null;
     if (windowDragging) {                              // 刚才是拖窗，不算戳
-      windowDragging = false; dragStartClient = null; mouseDown = false;
+      windowDragging = false; dragStartClient = null;
       if (isTauri) invoke('drag_end').catch(() => {});
       return;
     }
     const dur = performance.now() - downAt;
-    if (rubActive) { rubActive = false; mouseDown = false; return; }   // 刚才是揉头，不算戳
+    if (rubActive) { rubActive = false; return; }   // 刚才是揉头，不算戳
     // 短按且几乎没移动 = 单击 → 戳一下（欺负）；长按已唤菜单则不算
     if (!longPressFired && downMoved < 8 && dur < 450) {
       const r = canvas.getBoundingClientRect();
       pokeAt(downX - r.left, downY - r.top);
     }
-    mouseDown = false;
   });
   canvas.addEventListener('contextmenu', (e) => {
     e.preventDefault();
@@ -2467,11 +2465,6 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     for (const set of PREF_ICON_SETS) { const hit = usable.find(ic => ic.split(':')[0] === set); if (hit) return hit; }
     return usable[0];
   }
-  function extractFirstPath(svg) {
-    if (typeof svg !== 'string') return null;
-    const m = svg.match(/d="([^"]*)"/);
-    return m ? m[1] : null;
-  }
   // 从图标 body(可能含多条 path) 提取所有 d 路径，确保多路径图标(如动物轮廓+眼睛)完整临摹，而非只画第一条
   function iconPaths(body) {
     if (typeof body !== 'string') return [];
@@ -2534,14 +2527,14 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     if (go) { go.disabled = true; go.textContent = '找…'; }
     for (const q of queries) {
       try {
-        const sr = await fetch('https://api.iconify.design/search?query=' + encodeURIComponent(q) + '&limit=48', { mode: 'cors' });
+        const sr = await fetchWithTimeout('https://api.iconify.design/search?query=' + encodeURIComponent(q) + '&limit=48', { timeout: 5000, mode: 'cors' });
         if (!sr.ok) continue;
         const sj = await sr.json();
         const icon = pickIcon(sj.icons || []);
         if (!icon) continue;
         // 用权威批量接口取图标数据（单图标接口 mdi:snake.json 已全局 404 失效）
         const parts = icon.split(':'); const ip = parts[0]; const iname = parts[1] || parts[0];
-        const jr = await fetch('https://api.iconify.design/' + ip + '.json?icons=' + encodeURIComponent(iname), { mode: 'cors' });
+        const jr = await fetchWithTimeout('https://api.iconify.design/' + ip + '.json?icons=' + encodeURIComponent(iname), { timeout: 5000, mode: 'cors' });
         if (!jr.ok) continue;
         const jj = await jr.json();
         const entry = jj && jj.icons && jj.icons[iname];

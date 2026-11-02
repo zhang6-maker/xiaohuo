@@ -10,9 +10,7 @@ src-tauri/gen
 !.env.example
 
 # ===== 开发期临时文件（不入库） =====
-/_check*.mjs
 /_final.txt
-/_gen_preview.mjs
 /_hairtest.cjs
 /_hairtest/
 /_harness.js

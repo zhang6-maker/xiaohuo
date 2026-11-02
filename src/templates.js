@@ -21,6 +21,16 @@ export const KNOWN_TEMPLATE_KEYS = [
   'heart', 'rocket', 'moon', 'flag', 'christmas',
 ];
 
+// 小火"能画的实物/概念"模板键 —— 与 index.html 的 makeArtwork 的 if(type===...) 分支一一对应。
+// 校验脚本(_check4/_check5) 与预览生成器(_gen_preview) 必须从此处 import，禁止各自硬编码，
+// 否则会出现"测试脚本少一个 christmas / 预览脚本多一个 christmas"的 18/19 漂移。
+// 'random' 是合法的"随机"占位键（makeArtwork 对未命中类型回退到随机笔触，返回随机图形数组）。
+export const TEMPLATES = [
+  'tree', 'sun', 'flower', 'star', 'cloud', 'cow', 'sheep',
+  'fireworks', 'christmas', 'cat', 'dog', 'rabbit', 'fish',
+  'house', 'heart', 'rocket', 'flag', 'moon', 'random',
+];
+
 // 运行时校验：manifest.zhToKey 的值集合必须与 QD_CLASSES 完全一致
 export function validateQdManifest(manifest) {
   if (!manifest || !manifest.zhToKey) {
