@@ -17,6 +17,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// 框选态标志：进入"看屏/搜题"全屏框选时置 true，期间窗口必须完全可交互（否则框选点不到）
 struct AppState {
     picking: Arc<Mutex<bool>>,
+    dragging: Arc<Mutex<bool>>,
+    drag_start: Arc<Mutex<Option<tauri::PhysicalPosition<f64>>>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -24,6 +26,8 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState {
             picking: Arc::new(Mutex::new(false)),
+            dragging: Arc::new(Mutex::new(false)),
+            drag_start: Arc::new(Mutex::new(None)),
         })
         .setup(|app| {
             // 加载 .env（dev 时 cwd=D:\xiaohuo，故优先 src-tauri/.env）
@@ -62,6 +66,7 @@ pub fn run() {
 
             // 框选态标志，供轮询线程读取
             let picking = app.state::<AppState>().picking.clone();
+            let dragging = app.state::<AppState>().dragging.clone();
 
             // 前端每帧把宠物包围盒(窗口内逻辑坐标 [x,y,w,h])经 event 发过来
             let rect = Arc::new(Mutex::new([250i32, 170i32, 300i32, 230i32]));
@@ -131,8 +136,10 @@ pub fn run() {
                     let over_bar = false;
 
                     // 框选态：强制完全可交互（否则全屏下框选点不到）
+                    // 拖拽态：也强制完全可交互，免得拖快了光标离开宠物包围盒后穿透被打开、丢鼠标事件导致拖拽卡死
                     let picking_now = *picking.lock().unwrap_or_else(|_| picking.lock().unwrap());
-                    let want_ignore = if picking_now {
+                    let dragging_now = *dragging.lock().unwrap_or_else(|_| dragging.lock().unwrap());
+                    let want_ignore = if picking_now || dragging_now {
                         false
                     } else {
                         !(over_pet || over_bar)
@@ -162,7 +169,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![capture_screen, ask_glm, ask_draw, critique_draw, toggle_pick, ask_reply])
+        .invoke_handler(tauri::generate_handler![capture_screen, ask_glm, ask_draw, critique_draw, toggle_pick, ask_reply, drag_start, drag_move, drag_end])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -537,4 +544,35 @@ fn toggle_pick(full: bool, app: tauri::AppHandle) {
     if let Some(st) = app.try_state::<AppState>() {
         *st.picking.lock().unwrap() = full;
     }
+}
+
+// 拖拽整窗：前端抓住宠物身体后，由 Rust 搬窗口。
+// 这样不依赖 Tauri 的 startDragging（透明+点击穿透下易失效），也更可控。
+#[tauri::command]
+fn drag_start(app: tauri::AppHandle, state: tauri::State<AppState>) {
+    if let Some(w) = app.get_webview_window("main") {
+        if let Ok(p) = w.outer_position() {
+            *state.drag_start.lock().unwrap() =
+                Some(tauri::PhysicalPosition::new(p.x as f64, p.y as f64));
+        }
+    }
+    *state.dragging.lock().unwrap() = true;
+}
+
+#[tauri::command]
+fn drag_move(dx: f64, dy: f64, app: tauri::AppHandle, state: tauri::State<AppState>) {
+    if let Some(w) = app.get_webview_window("main") {
+        let sf = w.scale_factor().unwrap_or(1.0);
+        if let Some(start) = *state.drag_start.lock().unwrap() {
+            let nx = start.x + dx * sf;
+            let ny = start.y + dy * sf;
+            let _ = w.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(nx as i32, ny as i32)));
+        }
+    }
+}
+
+#[tauri::command]
+fn drag_end(state: tauri::State<AppState>) {
+    *state.dragging.lock().unwrap() = false;
+    *state.drag_start.lock().unwrap() = None;
 }

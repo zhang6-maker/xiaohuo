@@ -98,6 +98,8 @@
   #outfitBox .ob-title { font-size: 12px; color: #cfd2d8; margin: 2px 0 4px; }
   #outfitBox .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 2px; }
   #scarfToggle.off { opacity: .5; }
+  /* 换装面板：限制在窗口内，超出可滚动，确保最底部的发型区不会被窗口下沿裁掉 */
+  #outfitBox { max-height: calc(100vh - 24px); overflow-y: auto; }
   /* 节日祝福动画：顶部居中弹出"XX节日快乐"，自动 5 秒后消失 */
   #festivalGreet {
     position: absolute; left: 50%; top: 10px; transform: translateX(-50%) scale(.6);
@@ -236,19 +238,23 @@
     </div>
   </div>
   <div class="ob-sec">
-    <div class="ob-title">🧣 围巾</div>
-    <div class="row" style="align-items:center;gap:8px;display:flex;">
-      <button id="scarfToggle" style="border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;">围巾：开</button>
-      <span style="font-size:12px;color:#9aa0a6;">围巾色</span>
-      <input type="color" id="scarfPicker" value="#b5482f" style="width:34px;height:26px;border:none;background:none;padding:0;cursor:pointer;" />
-    </div>
-  </div>
-  <div class="ob-sec">
     <div class="ob-title">💇 发型</div>
     <div class="swatches" id="hairSwatches"></div>
     <div class="row" style="margin-top:6px;align-items:center;gap:8px;display:flex;">
       <span style="font-size:12px;color:#9aa0a6;">发色</span>
       <input type="color" id="hairPicker" value="#6b4a2b" style="width:34px;height:26px;border:none;background:none;padding:0;cursor:pointer;" />
+    </div>
+    <div class="row" id="bangRow" style="margin-top:6px;align-items:center;gap:8px;display:none;">
+      <span style="font-size:12px;color:#9aa0a6;white-space:nowrap;">斜度</span>
+      <input type="range" id="bangSlider" min="-100" max="100" value="0" style="flex:1;accent-color:#9a7b4f;" />
+    </div>
+  </div>
+  <div class="ob-sec">
+    <div class="ob-title">🧣 围巾</div>
+    <div class="row" style="align-items:center;gap:8px;display:flex;">
+      <button id="scarfToggle" style="border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;">围巾：开</button>
+      <span style="font-size:12px;color:#9aa0a6;">围巾色</span>
+      <input type="color" id="scarfPicker" value="#b5482f" style="width:34px;height:26px;border:none;background:none;padding:0;cursor:pointer;" />
     </div>
   </div>
 </div>
@@ -284,6 +290,8 @@
 
 <script type="module">
 import { invoke } from '@tauri-apps/api/core';
+import { fetchWithTimeout } from './src/fetchWithTimeout.js';
+import { QD_CLASSES, validateQdManifest } from './src/templates.js';
 (() => {
   "use strict";
   const canvas = document.getElementById('stage');
@@ -320,7 +328,9 @@ import { invoke } from '@tauri-apps/api/core';
   S.scarfOn = (() => { try { return localStorage.getItem('xiaohuo.scarfOn') !== '0'; } catch (e) { return true; } })();
   // 发型层：'auto' 按日期自动选款+色 | 'none' | 各款式；发型色独立
   S.hair = (() => { try { return localStorage.getItem('xiaohuo.hair') || 'auto'; } catch (e) { return 'auto'; } })();
+  if (S.hair === 'ponytail') S.hair = 'ponytail_high';  // 旧值兼容：单马尾→高马尾
   S.hairColor = (() => { try { return localStorage.getItem('xiaohuo.hairColor') || '#6b4a2b'; } catch (e) { return '#6b4a2b'; } })();
+  S.bangSlant = (() => { try { const v = parseFloat(localStorage.getItem('xiaohuo.bangSlant')); return isNaN(v) ? 0 : Math.max(-1, Math.min(1, v)); } catch (e) { return 0; } })();  // 斜刘海斜度：-1 左 / 0 中 / 1 右
   let clothAlpha = 0;                 // 换装淡入进度：像"自己一笔笔画上衣服"
   let lastOutfitKey = '__init__';     // 上一帧解析出的衣服 key，变化时重新淡入
   let lastGreetKey = '__init__';      // 上一帧节日 key，用于触发"XX节日快乐"祝福动画
@@ -403,16 +413,19 @@ import { invoke } from '@tauri-apps/api/core';
     return { key, def: OUTFITS[key] || OUTFITS.casual };
   }
   // 发型解析：auto 按日期自动选款+色；none=光头；其余用选定款式+选定发色
-  const HAIR_STYLES = ['short', 'spiky', 'bun', 'ponytail', 'mohawk', 'long'];
+  const HAIR_STYLES = ['short', 'spiky', 'bun', 'ponytail_high', 'ponytail_low', 'mohawk', 'long', 'slick', 'buzz', 'chelsea', 'slash'];
   const HAIR_PALETTE = ['#2b2b2f', '#6b4a2b', '#1a1a1a', '#3a2a1a', '#0b3d2e', '#5a2a6b', '#b5482f', '#8a6d3b'];
   function resolveHair() {
-    if (S.hair === 'auto') {
+    let sel = S.hair;
+    if (sel === 'ponytail') sel = 'ponytail_high';   // 旧值兼容：单马尾→高马尾
+    if (sel === 'auto') {
+      // 自动选款（按日期轮换），发色用你手选的——否则发色取色器在 auto 下看着像坏了
       const start = new Date(new Date().getFullYear(), 0, 0);
       const doy = Math.floor((Date.now() - start) / 86400000);
-      return { style: HAIR_STYLES[doy % HAIR_STYLES.length], color: HAIR_PALETTE[Math.floor(doy / 7) % HAIR_PALETTE.length] };
+      return { style: HAIR_STYLES[doy % HAIR_STYLES.length], color: S.hairColor };
     }
-    if (S.hair === 'none') return { style: null, color: S.hairColor };
-    return { style: S.hair, color: S.hairColor };
+    if (sel === 'none') return { style: null, color: S.hairColor };
+    return { style: sel, color: S.hairColor };
   }
 
   const point = (o, a, l) => ({ x: o.x + Math.cos(a) * l, y: o.y + Math.sin(a) * l });
@@ -609,6 +622,10 @@ import { invoke } from '@tauri-apps/api/core';
   // 深度睡眠：睡着后过一会儿绕脚底翻倒躺平（倒地睡）；哄好：明显的开心反应计时
   const DEEP_SLEEP_DELAY = 3500, TOPPLE_MAX = Math.PI / 2, PET_DUR = 3200;
   let lieAngle = 0, petUntil = 0;
+  // 愤怒姿态：被连续吵醒 / 聊天惹他不爽时，身体变红 + 怒容几秒
+  const ANGRY_DUR = 4000, ANGRY_COLOR = '#e23b2e', WAKE_GRACE = 18000;
+  let angryUntil = 0;                                    // 愤怒姿态截止时间戳（此间身体变红 + 怒容）
+  let wakeStreak = 0, lastWakeAt = 0, justWokeAt = -1e9;  // 连续吵醒睡梦的连击计数 + 刚被吵醒的宽限期
   function pickRoam() {
     roamTX = rand(120, W - 120);          // 水平留在窗口内（留出身体余量）
     roamTY = rand(150, H - 90);           // 垂直留出头/脚余量，免得跑出画面
@@ -630,6 +647,7 @@ import { invoke } from '@tauri-apps/api/core';
   let pokeFlash = 0;                   // 最近一次被戳的时间戳（0=无），draw 里闪一下作为"戳到了"的即时反馈
   function pokeAt(x, y) {
     if (x < posX - 150 || x > posX + 150 || y < posY - 190 || y > posY + 230) return;
+    disturbSleep();                                       // 睡着/刚被吵醒时戳他 = 连续吵醒，连击计数
     const now = performance.now();
     if (now - lastPoke > 1500) clickCount = 0;
     clickCount++; lastPoke = now; mood = clamp(mood - 25, -100, 100);
@@ -639,6 +657,17 @@ import { invoke } from '@tauri-apps/api/core';
       clickCount = 0; mood = Math.min(mood, -60);
       nextPeekAt = now + rand(3000, 5000); setState('hide');
     }
+  }
+  // 从睡梦中把小火吵醒：睡着或刚被吵醒的宽限期内，每次打扰 +1 连击；连着 ≥2 次 → 暴怒（身体变红 + 怒容几秒）
+  function makeAngry(ms) { angryUntil = Math.max(angryUntil, performance.now() + ms); }
+  function disturbSleep() {
+    const now = performance.now();
+    const recentlyWoke = now - justWokeAt < WAKE_GRACE;
+    if (currState !== 'sleep' && !recentlyWoke) return;   // 只在睡着或刚被吵醒的宽限期内才算"吵醒"
+    if (now - lastWakeAt > WAKE_GRACE) wakeStreak = 0;    // 间隔太久不算"连续"
+    wakeStreak++; lastWakeAt = now; justWokeAt = now;
+    if (currState === 'sleep') setState('idle', autoDuration('idle')); // 先叫醒（强制离开睡眠态）
+    if (wakeStreak >= 2) { makeAngry(ANGRY_DUR); wakeStreak = 0; }    // 连着吵醒两次 → 暴怒
   }
   function showCtxMenu(x, y) {
     const m = document.getElementById('ctxMenu');
@@ -846,6 +875,8 @@ import { invoke } from '@tauri-apps/api/core';
   const hairPicker    = document.getElementById('hairPicker');
   const scarfToggle   = document.getElementById('scarfToggle');
   const shirtColorReset = document.getElementById('shirtColorReset');
+  const bangRow      = document.getElementById('bangRow');
+  const bangSlider   = document.getElementById('bangSlider');
   function saveG() { try { localStorage.setItem('xiaohuo.gcolors', JSON.stringify(garmentColors)); } catch (e) {} }
   function syncShirtSel() { shirtSwatches.querySelectorAll('.swatch').forEach(s => s.classList.toggle('sel', s.dataset.k === S.shirt)); }
   function syncHairSel()  { hairSwatches.querySelectorAll('.swatch').forEach(s => s.classList.toggle('sel', s.dataset.k === S.hair)); }
@@ -857,6 +888,9 @@ import { invoke } from '@tauri-apps/api/core';
     hairPicker.value = S.hairColor;
     scarfToggle.textContent = '围巾：' + (S.scarfOn ? '开' : '关');
     scarfToggle.classList.toggle('off', !S.scarfOn);
+    const isSlash = S.hair === 'slash';
+    bangRow.style.display = isSlash ? 'flex' : 'none';
+    if (isSlash) bangSlider.value = Math.round(S.bangSlant * 100);
   }
   function setShirt(mode) {
     S.shirt = mode;
@@ -893,9 +927,14 @@ import { invoke } from '@tauri-apps/api/core';
     { key: 'auto',    label: '自动',  bg: '#888' },
     { key: 'none',    label: '光头',  bg: '#2b2b2f' },
     { key: 'short',   label: '短发',  bg: '#6b4a2b' },
+    { key: 'slick',   label: '背头',  bg: '#4a3520' },
+    { key: 'buzz',    label: '平头',  bg: '#5b4636' },
+    { key: 'chelsea', label: '切尔西', bg: '#3a3a3f' },
+    { key: 'slash',   label: '斜刘海', bg: '#7a5a3a' },
     { key: 'spiky',   label: '刺猬头', bg: '#444' },
     { key: 'bun',     label: '丸子头', bg: '#caa' },
-    { key: 'ponytail',label: '马尾',  bg: '#a63' },
+    { key: 'ponytail_high', label: '高马尾', bg: '#a63' },
+    { key: 'ponytail_low',  label: '低马尾', bg: '#9a5a2a' },
     { key: 'mohawk',  label: '莫西干', bg: '#933' },
     { key: 'long',    label: '长发',  bg: '#964' },
   ];
@@ -917,6 +956,10 @@ import { invoke } from '@tauri-apps/api/core';
   });
   scarfPicker.addEventListener('input', e => { S.scarfColor = e.target.value; try { localStorage.setItem('xiaohuo.scarf', e.target.value); } catch (e) {} });
   hairPicker.addEventListener('input',  e => { S.hairColor = e.target.value; try { localStorage.setItem('xiaohuo.hairColor', e.target.value); } catch (e) {} });
+  bangSlider.addEventListener('input', e => {
+    S.bangSlant = clamp(parseInt(e.target.value, 10) / 100, -1, 1);
+    try { localStorage.setItem('xiaohuo.bangSlant', S.bangSlant); } catch (e) {}
+  });
   scarfToggle.addEventListener('click', () => {
     S.scarfOn = !S.scarfOn;
     try { localStorage.setItem('xiaohuo.scarfOn', S.scarfOn ? '1' : '0'); } catch (e) {}
@@ -1112,7 +1155,7 @@ import { invoke } from '@tauri-apps/api/core';
     }
     ctx.closePath(); ctx.fillStyle = fill; ctx.fill();
   }
-  function drawEyes(head, eyeOpen, emo, now, happy) {
+  function drawEyes(head, eyeOpen, emo, now, happy, angry) {
     const r = head.r, ex = 0.34 * r, ey = -0.12 * r;
     // 整张脸朝鼠标偏移，强化"转头看"的观感
     const fx = lookX * r * 0.16, fy = lookY * r * 0.16;
@@ -1123,6 +1166,22 @@ import { invoke } from '@tauri-apps/api/core';
       for (const p of eyes) {
         ctx.beginPath(); ctx.arc(p.x, p.y - r * 0.02, r * 0.2, 1.2 * Math.PI, 1.8 * Math.PI); ctx.stroke();
       }
+      return;
+    }
+    // 愤怒：怒眉（内低外高倒八字）+ 向内下斜的尖角眼（>< 感），盖过委屈/平眼
+    if (angry > 0.5) {
+      ctx.lineWidth = Math.max(1.4, 1.8 * gSC); ctx.strokeStyle = S.eyeColor;
+      eyes.forEach((p, i) => {
+        const m = i === 0 ? 1 : -1;                      // 左右镜像：眼/眉的斜向都朝眉心（内低外高）
+        ctx.beginPath();                                  // 怒眼：向内下斜的尖角眼
+        ctx.moveTo(p.x - m * r * 0.16, p.y - r * 0.10);
+        ctx.lineTo(p.x + m * r * 0.14, p.y + r * 0.10);
+        ctx.stroke();
+        ctx.beginPath();                                  // 怒眉：内低外高的倒八字（皱眉）
+        ctx.moveTo(p.x - m * r * 0.24, p.y - r * 0.34);
+        ctx.lineTo(p.x + m * r * 0.12, p.y - r * 0.14);
+        ctx.stroke();
+      });
       return;
     }
     ctx.lineWidth = Math.max(1, 1.2 * gSC); ctx.strokeStyle = S.eyeColor; ctx.fillStyle = '#fff';
@@ -1166,7 +1225,7 @@ import { invoke } from '@tauri-apps/api/core';
       }
     }
   }
-  function drawMouth(head, mo, emo, happy, sing) {
+  function drawMouth(head, mo, emo, happy, sing, angry) {
     const r = head.r, hy = head.y + r * 0.42, mw = r * 0.5;
     // 唱歌：明显张开的嘴（随节奏），用于 sing 状态（盖过开心弧与说话嘴）
     if (sing > 0.5) {
@@ -1179,6 +1238,15 @@ import { invoke } from '@tauri-apps/api/core';
     if (happy > 0.5 && emo < 0.5) {
       ctx.lineWidth = Math.max(1.6, 2 * gSC); ctx.strokeStyle = S.eyeColor;
       ctx.beginPath(); ctx.arc(head.x, hy - r * 0.02, mw * 0.95, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+      return;
+    }
+    // 愤怒：咧开的怒吼嘴（向下鼓的闭合透镜形、填充），与委屈细线嘴/惊讶椭圆嘴区分
+    if (angry > 0.5) {
+      ctx.beginPath();
+      ctx.moveTo(head.x - mw * 0.85, hy - r * 0.06);
+      ctx.quadraticCurveTo(head.x, hy + r * 0.30, head.x + mw * 0.85, hy - r * 0.06);
+      ctx.closePath();
+      ctx.fillStyle = S.eyeColor; ctx.fill();
       return;
     }
     if (mo > 0.18) {
@@ -1517,46 +1585,118 @@ import { invoke } from '@tauri-apps/api/core';
 
   // 发型：在头圈之上、帽子之下绘制（节日帽会盖住发顶）。多发型 + 发色独立可换
   function drawHair(k, sc) {
-    const { style, color } = resolveHair();
+    const { style: raw, color } = resolveHair();
+    const style = raw === 'ponytail' ? 'ponytail_high' : raw;   // 旧值兼容
     if (!style) return;
     const r = k.head.r, hx = k.head.x, hy = k.head.y;
     ctx.save();
     ctx.globalAlpha = 1;
-    ctx.fillStyle = color;
-    // 头顶盖（莫西干除外）
-    if (style !== 'mohawk') {
+    ctx.fillStyle = color; ctx.strokeStyle = color;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    // 头顶盖：外弧(π→2π) 包头顶；curve=真→沿头内弧收口(无平直刘海)，否则平直前缘(frontDrop 越大露额越多)
+    function cap(frontDrop, curve) {
       ctx.beginPath();
       ctx.arc(hx, hy, r * 1.0, Math.PI, 2 * Math.PI);
-      ctx.lineTo(hx + r * 0.86, hy - r * 0.12);
-      ctx.lineTo(hx - r * 0.86, hy - r * 0.12);
+      if (curve) {
+        ctx.arc(hx, hy, r * (1 - frontDrop), 2 * Math.PI, Math.PI, true);
+      } else {
+        const y = hy - frontDrop * r;
+        ctx.lineTo(hx + r * 0.86, y);
+        ctx.lineTo(hx - r * 0.86, y);
+      }
       ctx.closePath(); ctx.fill();
+    }
+    if (style === 'mohawk') {
+      ctx.beginPath();
+      ctx.moveTo(hx - r * 0.22, hy - r * 0.2);
+      ctx.lineTo(hx - r * 0.30, hy - r * 1.5);
+      ctx.lineTo(hx + r * 0.30, hy - r * 1.5);
+      ctx.lineTo(hx + r * 0.22, hy - r * 0.2);
+      ctx.closePath(); ctx.fill();
+      ctx.restore(); return;
+    }
+    if (style === 'slick') {
+      // 背头：成功人士油头——贴头薄层 + M 型后退发际（额角发亮、脑门全露）+ 直后梳纹 + 油光
+      ctx.beginPath();
+      ctx.arc(hx, hy, r * 1.05, Math.PI * 1.03, Math.PI * 1.97);               // 外缘：贴头薄层（左耳→顶→右耳）
+      ctx.quadraticCurveTo(hx + r * 0.94, hy - r * 0.38, hx + r * 0.52, hy - r * 0.68); // 右侧薄发带上行到右额角（深后退）
+      ctx.quadraticCurveTo(hx + r * 0.28, hy - r * 0.50, hx, hy - r * 0.50);   // 右弓：额角→额心
+      ctx.quadraticCurveTo(hx - r * 0.28, hy - r * 0.50, hx - r * 0.52, hy - r * 0.68); // 左弓：额心→左额角
+      ctx.quadraticCurveTo(hx - r * 0.94, hy - r * 0.38, hx - r * 1.047, hy - r * 0.065); // 左侧薄发带下行回耳
+      ctx.closePath(); ctx.fill();
+      // 直后梳纹：从额前发际向后脑直扫（方向性）
+      ctx.strokeStyle = 'rgba(255,255,255,.32)'; ctx.lineWidth = r * 0.05;
+      for (const dx of [-0.24, 0.06, 0.30]) {
+        ctx.beginPath();
+        ctx.moveTo(hx + dx * r, hy - r * 0.54);
+        ctx.quadraticCurveTo(hx + (dx + 0.05) * r, hy - r * 0.82, hx + (dx + 0.10) * r, hy - r * 0.98);
+        ctx.stroke();
+      }
+      // 油光：左上方一道斜亮条（背头最标志性视觉信号）
+      ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = r * 0.09;
+      ctx.beginPath();
+      ctx.moveTo(hx - r * 0.40, hy - r * 0.74);
+      ctx.quadraticCurveTo(hx - r * 0.26, hy - r * 0.96, hx + r * 0.02, hy - r * 0.99);
+      ctx.stroke();
+      ctx.strokeStyle = color;
+    } else if (style === 'buzz') {
+      // 平头：贴头骨的一层短发（顶厚侧薄），两侧露头皮
+      ctx.beginPath();
+      ctx.arc(hx, hy, r * 1.0, Math.PI * 1.00, Math.PI * 2.00);
+      ctx.arc(hx, hy + r * 0.08, r * 0.84, Math.PI * 2.00, Math.PI * 1.00, true);
+      ctx.closePath(); ctx.fill();
+    } else if (style === 'chelsea') {
+      // 切尔西：undercut——两侧剃青露头皮（太阳穴无发），只有顶部一整块厚发+齐平厚刘海+鬓角
+      ctx.beginPath();
+      ctx.arc(hx, hy, r * 1.02, Math.PI * 1.10, Math.PI * 1.90);            // 顶部厚块（不延伸到两侧下半）
+      ctx.lineTo(hx + r * 0.66, hy - r * 0.20);                             // 齐平刘海右端（盖眉骨）
+      ctx.lineTo(hx - r * 0.66, hy - r * 0.20);                             // 齐平刘海左端
+      ctx.closePath(); ctx.fill();
+      ctx.fillRect(hx - r * 0.94, hy - r * 0.32, r * 0.16, r * 0.36);       // 左鬓角
+      ctx.fillRect(hx + r * 0.78, hy - r * 0.32, r * 0.16, r * 0.36);       // 右鬓角
+      ctx.strokeStyle = 'rgba(255,255,255,.30)'; ctx.lineWidth = r * 0.05;  // 齐平剪口纹理（亮色才可见）
+      ctx.beginPath(); ctx.moveTo(hx - r * 0.30, hy - r * 0.56); ctx.lineTo(hx - r * 0.26, hy - r * 0.36); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(hx + r * 0.22, hy - r * 0.55); ctx.lineTo(hx + r * 0.26, hy - r * 0.35); ctx.stroke();
+      ctx.strokeStyle = color;
+    } else if (style === 'slash') {
+      // 斜刘海：满头短发（两侧包到耳际，与剃青的切尔西区分）+ 贯穿额头的直/斜刘海
+      // 滑块三档：左=盖左眼角(左斜) / 中=水平平刘海(不斜) / 右=盖右眼角(右斜)；系数0.52保证斜度肉眼可辨
+      const hL = clamp(0.22 + S.bangSlant * 0.52, -0.06, 0.66);             // 左端发际高：越小越盖左眼
+      const hR = clamp(0.22 - S.bangSlant * 0.52, -0.06, 0.66);             // 右端发际高
+      const yL = hy - r * hL, yR = hy - r * hR;
+      ctx.beginPath();
+      ctx.arc(hx, hy, r * 0.99, Math.PI, 2 * Math.PI);                      // 满头顶（两侧有发）
+      ctx.lineTo(hx + r * 0.88, yR);                                        // 右侧发际
+      ctx.lineTo(hx - r * 0.88, yL);                                        // 直/斜刘海边缘（核心特征）
+      ctx.closePath(); ctx.fill();
+    } else {
+      cap(0.16, false);   // 短发/丸子/马尾/长发：常规短盖
     }
     if (style === 'spiky') {
       ctx.beginPath();
       const n = 6;
       for (let i = 0; i < n; i++) {
-        const a = Math.PI + (i + 0.5) / n * Math.PI;
+        const a = Math.PI * 1.18 + (i + 0.5) / n * Math.PI * 0.64;   // 刺只在头顶，不从耳朵水平炸出
         const bx1 = hx + Math.cos(a - 0.18) * r * 0.95, by1 = hy + Math.sin(a - 0.18) * r * 0.95;
         const bx2 = hx + Math.cos(a + 0.18) * r * 0.95, by2 = hy + Math.sin(a + 0.18) * r * 0.95;
-        const tx = hx + Math.cos(a) * r * 1.5, ty = hy + Math.sin(a) * r * 1.5;
+        const tx = hx + Math.cos(a) * r * 1.35, ty = hy + Math.sin(a) * r * 1.35;
         ctx.moveTo(bx1, by1); ctx.lineTo(tx, ty); ctx.lineTo(bx2, by2);
       }
       ctx.closePath(); ctx.fill();
     } else if (style === 'bun') {
       ctx.beginPath(); ctx.arc(hx, hy - r * 1.25, r * 0.32, 0, Math.PI * 2); ctx.fill();
-    } else if (style === 'ponytail') {
-      ctx.beginPath();
-      ctx.moveTo(hx + r * 0.7, hy - r * 0.5);
-      ctx.quadraticCurveTo(hx + r * 1.6, hy + r * 0.4, hx + r * 1.1, hy + r * 1.5);
-      ctx.quadraticCurveTo(hx + r * 1.3, hy + r * 0.5, hx + r * 0.6, hy + r * 0.4);
-      ctx.closePath(); ctx.fill();
-    } else if (style === 'mohawk') {
-      ctx.beginPath();
-      ctx.moveTo(hx - r * 0.22, hy - r * 0.2);
-      ctx.lineTo(hx - r * 0.28, hy - r * 1.5);
-      ctx.lineTo(hx + r * 0.28, hy - r * 1.5);
-      ctx.lineTo(hx + r * 0.22, hy - r * 0.2);
-      ctx.closePath(); ctx.fill();
+    } else if (style === 'ponytail_high' || style === 'ponytail_low') {
+      const high = style === 'ponytail_high';
+      // 从脑后侧缘垂下，明显在脸(±0.34r)之外，不再压脸
+      const rootX = hx + r * 0.92, rootY = high ? hy - r * 0.35 : hy + r * 0.15;
+      const tipX = hx + r * (high ? 1.45 : 1.20), tipY = high ? hy + r * 1.25 : hy + r * 1.70;
+      const ctrlX = hx + r * 1.35, ctrlY = (rootY + tipY) / 2;
+      ctx.lineWidth = r * 0.30;
+      ctx.beginPath(); ctx.moveTo(rootX, rootY);
+      ctx.quadraticCurveTo(ctrlX, ctrlY, tipX, tipY); ctx.stroke();
+      ctx.fillStyle = 'rgba(0,0,0,.4)';                 // 皮筋
+      ctx.beginPath(); ctx.arc(rootX, rootY, r * 0.13, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = color;
     } else if (style === 'long') {
       ctx.beginPath();
       ctx.moveTo(hx - r * 0.95, hy - r * 0.6);
@@ -1618,14 +1758,14 @@ import { invoke } from '@tauri-apps/api/core';
     ctx.beginPath(); ctx.arc(k.head.x, k.head.y, k.head.r, 0, Math.PI * 2); ctx.stroke();
     drawHair(k, sc);                  // 发型（帽圈之下、脸之上；节日帽会盖住发顶）
     drawHat(k, sc);                   // 帽子画在头顶（脸在下层，不被遮）
-    drawEyes(k.head, pose.eyeOpen, pose.sad, now, pose.happy);
+    drawEyes(k.head, pose.eyeOpen, pose.sad, now, pose.happy, pose.angry);
     const gd = resolveOutfit().def;
     if (gd && gd.glasses) drawGlasses(k, sc);
     let mo = 0.06;
     if (pose.sing > 0.5) mo = 0.2 + 0.55 * Math.abs(Math.sin(t * 7));     // 唱歌：嘴随节奏张合
     else if (now < speakingUntil) mo = 0.12 + 0.8 * Math.abs(Math.sin(t * 15));
     if (now - pokeFlash < 180) mo = Math.max(mo, 0.5);   // 被戳瞬间张嘴惊呼，强化"变脸"
-    drawMouth(k.head, mo, pose.sad, pose.happy, pose.sing);
+    drawMouth(k.head, mo, pose.sad, pose.happy, pose.sing, pose.angry);
 
     // 睡眠时画 Zzz（eyeOpen<0.35 即在睡；状态过渡时随 lerp 自然淡入淡出）
     if (pose.eyeOpen < 0.35) {
@@ -1640,6 +1780,15 @@ import { invoke } from '@tauri-apps/api/core';
         ctx.font = sz + 'px sans-serif';
         ctx.fillText('z', k.head.x + 16 * sc + i * 9 * sc, k.head.y - 16 * sc - i * 11 * sc - ph * 7 * sc);
       }
+      ctx.restore();
+    }
+    // 愤怒：头顶冒红色怒气符号（💢）
+    if (now < angryUntil) {
+      ctx.save();
+      ctx.globalAlpha = pose.opacity;
+      ctx.font = (k.head.r * 0.95) + 'px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('💢', k.head.x + k.head.r * 0.85, k.head.y - k.head.r * 1.05);
       ctx.restore();
     }
     ctx.restore();
@@ -2178,16 +2327,33 @@ import { invoke } from '@tauri-apps/api/core';
   // 已下载 16 类（猫/狗/鱼/鸟/鸭/房子/树/花/太阳/星星/山/车/杯子/椅子/书/苹果），每类 200 张真人手绘简笔画。
   // 命中即随机抽一张临摹。注意：QD 风格天生粗糙（数据本身性质，救不回），不做视觉筛选，仅当图标库也没有时才走这里。
   let _qdManifest = null;
-  function qdBase() {
-    const p = (typeof location !== 'undefined' && location.pathname) || '';
-    if (p.indexOf('/web/index.html') >= 0 || p.endsWith('/web/') || p === '/web') return 'qd/';
-    return 'web/qd/';
+  let _qdBaseUsed = null;
+  // 兼容 dev(web/qd/) 与 prod(qd/) 两种资产位置：先按环境猜首选，失败再逐个回退并缓存命中路径。
+  // 否则生产 exe 里会一直 404 → 静默回退 LLM，Quick Draw 长尾兜底形同虚设。
+  function qdBases() {
+    const host = (typeof location !== 'undefined' && location.hostname) || '';
+    const dev = host === 'localhost' || host === '127.0.0.1' || host.startsWith('192.168.') || host.startsWith('10.');
+    return _qdBaseUsed ? [_qdBaseUsed, 'qd/', 'web/qd/'] : (dev ? ['web/qd/', 'qd/'] : ['qd/', 'web/qd/']);
+  }
+  async function qdFetch(rel) {
+    let last;
+    for (const b of qdBases()) {
+      try {
+        const r = await fetchWithTimeout(b + rel, { timeout: 5000 });
+        if (r.ok) { _qdBaseUsed = b; return r; }
+        last = new Error('qd ' + b + rel + ' ' + r.status);
+      } catch (e) { last = e; }
+    }
+    throw last || new Error('qd fetch failed ' + rel);
   }
   async function loadQdManifest() {
     if (_qdManifest) return _qdManifest;
-    const r = await fetch(qdBase() + 'manifest.json');
-    if (!r.ok) throw new Error('qd manifest ' + r.status);
+    const r = await qdFetch('manifest.json');
     _qdManifest = await r.json();
+    // TEMPLATES 单一清单校验：运行时比对 manifest 与 QD_CLASSES，第一时间暴露 18/19 漂移
+    const v = validateQdManifest(_qdManifest);
+    if (!v.ok) console.warn('[qd] 类目漂移：缺失', v.missing, '多余', v.extra, '（应以 src/templates.js 的 QD_CLASSES 为准）');
+    else console.info('[qd] 类目清单校验通过（', QD_CLASSES.length, '类）');
     return _qdManifest;
   }
   function qdKeyFor(v) {
@@ -2225,7 +2391,7 @@ import { invoke } from '@tauri-apps/api/core';
       return llmPaint(v);
     }
     try {
-      const r = await fetch(qdBase() + key + '.json');
+      const r = await qdFetch(key + '.json');
       if (!r.ok) throw new Error('qd ' + key + ' ' + r.status);
       const j = await r.json();
       const samples = j && j.samples;
@@ -2531,17 +2697,14 @@ import { invoke } from '@tauri-apps/api/core';
     try {
       const q = (term || '').replace(/^(画|画个|画一只|画一幅|画一)\s*/, '').replace(/\s+/g, '').trim();
       if (!q) return null;
-      const ac = new AbortController();
-      const timer = setTimeout(() => ac.abort(), 4500);
       const sUrl = `https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(q)}&srlimit=1&format=json`;
-      const sRes = await fetch(sUrl, { signal: ac.signal });
-      clearTimeout(timer);
+      const sRes = await fetchWithTimeout(sUrl, { timeout: 4500, cache: 60000 });
       if (!sRes.ok) return null;
       const sJson = await sRes.json();
       const title = sJson && sJson.query && sJson.query.search && sJson.query.search[0] && sJson.query.search[0].title;
       if (!title) return null;
       const sumUrl = `https://zh.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`;
-      const r = await fetch(sumUrl, { signal: ac.signal });
+      const r = await fetchWithTimeout(sumUrl, { timeout: 4500, cache: 60000 });
       if (!r.ok) return null;
       const j = await r.json();
       return (j && j.extract) ? { title, text: j.extract } : null;
@@ -2716,11 +2879,17 @@ import { invoke } from '@tauri-apps/api/core';
   function submitChat() {
     const v = chatInput.value.trim();
     if (!v) return;
+    const now = performance.now();
+    if (currState === 'sleep' || now - justWokeAt < WAKE_GRACE) disturbSleep();  // 他睡着你还发消息 = 吵醒
+    if (mood < -15) makeAngry(3000);                                            // 本就不爽你还找他聊 → 更火大
     chatInput.value = '';
     addChat('me', v);
     const tl = v.toLowerCase();
     // 意图分流：画画 / 唱歌 / 看书 / 看屏 / 其余=聊天回复
-    if (/画|draw/.test(tl)) {
+    // 画画意图：仅明确指令才触发，避免"我想看看你画画的水平""你会画画吗"等评价/疑问句误触发画画
+    const PAINT_BAD = /(吗|？|\?|水平|技术|厉害|行不行|好不好|会不会|怎么|为什么|可以吗|能吗|试试|看看你|喜欢|爱|想学|教我|是不是|能否|能不能)/;
+    const PAINT_GOOD = /^(画|draw)|(请|帮|让|给|叫|要|想|希望|小火|你|我|他|她|咱).{0,4}(画|draw)|画(个|只|一|幅|张|棵|条|头|匹|朵|支|座|颗|片|本|间|根|块|辆|杯)|draw\s+(a|an|the|some|me|us)/i;
+    if (PAINT_GOOD.test(tl) && !PAINT_BAD.test(tl)) {
       addChat('sys', '🎨 小火开始画…');
       const pt = document.getElementById('paintText'); if (pt) pt.value = v;
       submitPaint();
@@ -2839,8 +3008,10 @@ import { invoke } from '@tauri-apps/api/core';
     const alpha = easeInOut(clamp((now - transStart) / 200, 0, 1));
     const pose = lerpPose(prev, cur, alpha);
 
-    // 心情双向解耦于状态机：mood<0 委屈垂头撇嘴；mood>0 开心笑眼（被宠/揉头转正）
-    if (mood < 0) {
+    // 愤怒姿态优先：身体变红 + 怒容（独立计时，不污染 mood 的委屈/开心逻辑）
+    if (now < angryUntil) {
+      pose.angry = 1; pose.sad = 0; pose.happy = 0; pose.headDrop = Math.max(pose.headDrop, 8);
+    } else if (mood < 0) {
       const s = clamp(-mood / 100, 0, 1);   // mood: 0→0, -100→1
       pose.headDrop += 14 * s;
       pose.sad = Math.max(pose.sad, s);
@@ -2871,7 +3042,10 @@ import { invoke } from '@tauri-apps/api/core';
       if (activeArt && activeArt.isFx) S.color = activeArt.glowColor || S.color;        // 粒子烟花：身体跟随最近一次爆炸/升空的颜色
       else if (activeArt && activeArt.strokes) S.color = paintColorAt(activeArt, now);   // 普通画作：跟随当前笔画颜色
     }
+    const _bodyColor = S.color;
+    if (now < angryUntil) S.color = ANGRY_COLOR;   // 愤怒：身体（火柴人线条）变红几秒
     draw(pose, t, now);
+    if (now < angryUntil) S.color = _bodyColor;
     if (lyricTimer && !lyricsBox.classList.contains('hidden')) positionLyrics();   // 唱歌时歌词气泡跟随头顶
     // 状态栏的"可交互/穿透中"用 Rust 回传的真值（rustIgnore），比前端自算准
     interactMode = !rustIgnore;

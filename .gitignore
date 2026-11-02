@@ -1,18 +1,30 @@
-# 依赖
 node_modules
-
-# Rust 编译产物（编译完由 build.bat 自动清理）
-src-tauri/target
-src-tauri/target_dev
-
-# Tauri 自动生成的 schema（可重新生成）
+dist
+src-tauri/target*
 src-tauri/gen
 
-# 密钥 / 本地配置 —— 绝不提交
+# 密钥 / 本地配置 —— 绝不提交（.env 里是真实 ZHIPU_API_KEY）
 .env
 .env.local
 .env.*
 !.env.example
 
-# 注意：dist/ 故意不忽略。cargo build --release 直接读取 ../dist，
-# 仓库内保留 dist 可让他人无需 npm 即可编译。前端改完请重新 npm run build。
+# ===== 开发期临时文件（不入库） =====
+/_check*.mjs
+/_final.txt
+/_gen_preview.mjs
+/_hairtest.cjs
+/_hairtest/
+/_harness.js
+/_tmp_*.npz
+/build_*.log
+/*.bat
+*.bak*
+*.exe
+
+# 旧前端快照里的临时资源（仅保留 web/qd 画图数据 与 web/index.html 双副本）
+/web/read_preview.png
+/web/read_preview.svg
+
+# 开发期探测脚本
+/tools/
