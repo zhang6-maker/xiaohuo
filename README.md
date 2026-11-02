@@ -3,7 +3,7 @@
 > 一只住在桌面最上层的透明火柴人。它平时**不挡事**——鼠标可以直接穿过它去点桌面；需要它干活时，它会"看"你的屏幕：圈一块区域，让它讲题、解释、画张简笔画，或者点评你的涂鸦。
 
 基于 **Tauri v2 + Rust**，AI 能力调用 **智谱 GLM-4V** 多模态模型。
-仓库自带 **预编译 exe（约 4MB）**，填入你自己的 API Key 就能直接启动——**不需要装 Rust / Node**。
+提供 **预编译 exe（约 4MB）** 作为 [GitHub Releases](https://github.com/zhang6-maker/xiaohuo/releases) 附件，下载后填入你自己的 API Key 就能直接启动——**不需要装 Rust / Node**。
 
 ---
 
@@ -116,19 +116,17 @@ cargo build --release     # 产物：src-tauri/target/release/xiaohuo.exe
 ## 目录结构
 
 ```
-xiaohuo-opensource/
-├── xiaohuo.exe        # 预编译 exe（约 4MB），填 key 直接用
-├── .env.example       # 复制为 .env 并填 key
+xiaohuo/
+├── .env.example       # 复制为 .env 并填 key（与 exe 同目录）
 ├── README.md          # 本文件
 ├── LICENSE            # MIT
-├── build.bat          # 一键编译 + 自动清理 target
 ├── package.json / vite.config.js / index.html   # 前端（Vite）配置与入口
 ├── web/               # 前端源码（Canvas 火柴人 + UI）
-├── dist/              # 已构建的前端（cargo 直接读取，免 npm 即可编译）
+├── src/               # 前端抽出的模块（fetchWithTimeout / templates）
 └── src-tauri/         # Rust 后端（Cargo.toml / tauri.conf.json / src / icons / capabilities）
 ```
 
-> `dist/` 是故意保留在仓库里的：`cargo build --release` 直接读取 `../dist`，别人 clone 下来不必先跑 npm。改完前端请重新 `npm run build`。
+> **预编译 exe 不在仓库里**：为避免二进制污染 git 历史，exe 作为 [GitHub Releases](https://github.com/zhang6-maker/xiaohuo/releases) 附件发布，去那里下载即可。从源码构建时，`cargo build --release` 会读取仓库根目录的 `../dist`（前端构建产物，需先 `npm run build` 生成）——改完前端请先 `npm run build` 再 `cargo build --release`，否则会嵌进旧前端。
 
 ---
 
