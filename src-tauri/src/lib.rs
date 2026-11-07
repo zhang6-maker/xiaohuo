@@ -47,26 +47,24 @@ pub fn run() {
                 // 真穿透：默认 ignore=true，透明窗不挡桌面点击
                 let _ = w.set_ignore_cursor_events(true);
 
-                // 放到屏幕左下角（避让右下角的寻慧桌面宠物），并留任务栏余量。
-                // 用 LogicalPosition + mon.scale_factor() 取真实 dpr，Tauri 自动把逻辑坐标转物理像素，
-                // 避免手算物理坐标（上一版把 物理宽/窗宽 当 dpr，高 DPI 下算出负坐标把窗口推出屏外 → 看不见）。
+                // 默认全屏透明层：铺满主屏，宠物可在整屏漫游。
+                // 穿透默认开启（下方 set_ignore_cursor_events(true)），只有悬停宠物时才接收点击，不挡桌面。
                 if let Ok(Some(mon)) = w.current_monitor() {
-                    let sf = mon.scale_factor();                  // 真实 dpr（如 1.5）
-                    let logical_h = mon.size().height as f64 / sf; // 物理高 / dpr = 逻辑高
-                    let x = 24.0;                                  // 距左边 24 逻辑像素
-                    let y = (logical_h - 540.0 - 60.0).max(0.0);  // 底部留 60 逻辑像素（任务栏余量），夹到 0 防极端负
-                    let _ = w.set_position(tauri::LogicalPosition::new(x, y));
-                    // 兜底：setup 阶段 set_position 偶发时机偏早失效，延迟 400ms 再设一次（位置相同，无跳变）
+                    let sf = mon.scale_factor();
+                    let lw = mon.size().width as f64 / sf;        // 物理宽 / dpr = 逻辑宽
+                    let lh = mon.size().height as f64 / sf;       // 物理高 / dpr = 逻辑高
+                    let _ = w.set_size(tauri::LogicalSize::new(lw, lh));
+                    let _ = w.set_position(tauri::LogicalPosition::new(0.0, 0.0));
+                    // 兜底：setup 阶段 set_size/set_position 偶发时机偏早失效，延迟 400ms 再设一次
                     let wb = w.clone();
                     std::thread::spawn(move || {
                         std::thread::sleep(std::time::Duration::from_millis(400));
                         if let Ok(Some(mon2)) = wb.current_monitor() {
                             let sf2 = mon2.scale_factor();
+                            let lw2 = mon2.size().width as f64 / sf2;
                             let lh2 = mon2.size().height as f64 / sf2;
-                            let _ = wb.set_position(tauri::LogicalPosition::new(
-                                24.0,
-                                (lh2 - 540.0 - 60.0).max(0.0),
-                            ));
+                            let _ = wb.set_size(tauri::LogicalSize::new(lw2, lh2));
+                            let _ = wb.set_position(tauri::LogicalPosition::new(0.0, 0.0));
                         }
                     });
                 }
@@ -110,6 +108,8 @@ pub fn run() {
                     let mut lx = pt.x;
                     let mut ly = pt.y;
                     let mut sf = 1.0_f64;
+                    // 窗口矩形（设备像素），用于 inside 判定与鼠标相对坐标；hwnd 取不到时退回旧尺寸兜底
+                    let (mut wr_l, mut wr_t, mut wr_r, mut wr_b) = (0i32, 0i32, 0i32, 0i32);
                     if let Some(w) = handle_poll.get_webview_window("main") {
                         if let Ok(h) = w.hwnd() {
                             let mut r = RECT::default();
@@ -118,6 +118,7 @@ pub fn run() {
                             }
                             lx -= r.left;
                             ly -= r.top;
+                            wr_l = r.left; wr_t = r.top; wr_r = r.right; wr_b = r.bottom;
                         }
                         if let Ok(s) = w.scale_factor() {
                             sf = s;
@@ -128,17 +129,24 @@ pub fn run() {
                     let _ = handle_poll.emit("mouse-move", [lx, ly]);
 
                     // 悬停判定（全部在设备像素下做，与 lx/ly 同源）：
-                    // 在宠物包围盒 或 顶部按钮栏(窗口内 y<95 逻辑)内 → 关穿透(可交互)；否则穿透(不挡桌面)
-                    let r = *rect_poll.lock().unwrap_or_else(|_| rect_poll.lock().unwrap());
+                    // 在宠物包围盒内 → 关穿透(可交互)；否则穿透(不挡桌面)
+                    let pr = *rect_poll.lock().unwrap_or_else(|_| rect_poll.lock().unwrap());
+                    // 窗口实际尺寸用 GetWindowRect 取（设备像素），不再写死 480/540，
+                    // 这样全屏铺满或切回小窗时 inside 判定都正确（hwnd 取不到时退回 480×540 兜底）
+                    let (win_w, win_h) = if wr_r > wr_l && wr_b > wr_t {
+                        ((wr_r - wr_l) as f64, (wr_b - wr_t) as f64)
+                    } else {
+                        (480.0 * sf, 540.0 * sf)
+                    };
                     let inside = lx >= 0
-                        && lx <= (480.0 * sf) as i32
+                        && lx <= win_w as i32
                         && ly >= 0
-                        && ly <= (540.0 * sf) as i32;
+                        && ly <= win_h as i32;
                     let over_pet = inside
-                        && lx >= (r[0] as f64 * sf) as i32
-                        && lx <= ((r[0] + r[2]) as f64 * sf) as i32
-                        && ly >= (r[1] as f64 * sf) as i32
-                        && ly <= ((r[1] + r[3]) as f64 * sf) as i32;
+                        && lx >= (pr[0] as f64 * sf) as i32
+                        && lx <= ((pr[0] + pr[2]) as f64 * sf) as i32
+                        && ly >= (pr[1] as f64 * sf) as i32
+                        && ly <= ((pr[1] + pr[3]) as f64 * sf) as i32;
                     // 顶部按钮栏已隐藏（功能收进长按菜单），不再因按钮栏区域关闭穿透，
                     // 否则窗口顶部 95px 会一直挡住桌面点击。
                     let over_bar = false;
@@ -527,26 +535,25 @@ fn toggle_pick(full: bool, app: tauri::AppHandle) {
             // - 本窗配置已 decorations:false、alwaysOnTop:true，再调 set_decorations 会触发
             //   WebView2 重建 → 页面重载 → 框选层刚显示就被重置（黑窗"一闪而过"的真凶）；
             // - set_fullscreen(true) 同理会重建，且 transparent 窗 + 真全屏在 Windows 会闪退。
-            // resizable:false 会让 set_size 撑不动 → 先临时放开。
-            let _ = w.set_resizable(true);
+            // 窗口已配置 resizable:true，故 set_size 直接可生效，无需临时放开。
             let sw = unsafe { GetSystemMetrics(SM_CXSCREEN) } as u32;
             let sh = unsafe { GetSystemMetrics(SM_CYSCREEN) } as u32;
             let sf = w.scale_factor().unwrap_or(1.0);
             let _ = w.set_size(tauri::Size::Physical(tauri::PhysicalSize::new(sw, sh)));
             let _ = w.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(0, 0)));
             let _ = w.set_ignore_cursor_events(false);
-            eprintln!("[pick] 进入全屏框选: {}x{} (dpr {}, 已放开 resizable)", sw, sh, sf);
+            eprintln!("[pick] 进入全屏框选: {}x{} (dpr {})", sw, sh, sf);
         } else {
-            // 还原小窗（含左下角定位）+ 恢复穿透；不改 decorations/alwaysOnTop（配置本就是 false/true）
-            let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize::new(480.0, 540.0)));
+            // 还原全屏透明层（与启动一致）：铺满主屏 + 恢复穿透；不改 decorations/alwaysOnTop（配置本就是 false/true）
             if let Ok(Some(mon)) = w.current_monitor() {
                 let msf = mon.scale_factor();
+                let lw = mon.size().width as f64 / msf;
                 let lh = mon.size().height as f64 / msf;
-                let _ = w.set_position(tauri::LogicalPosition::new(24.0, (lh - 540.0 - 60.0).max(0.0)));
+                let _ = w.set_size(tauri::LogicalSize::new(lw, lh));
+                let _ = w.set_position(tauri::LogicalPosition::new(0.0, 0.0));
             }
-            let _ = w.set_resizable(false);
             let _ = w.set_ignore_cursor_events(true);
-            eprintln!("[pick] 退出框选，还原小窗 480x540");
+            eprintln!("[pick] 退出框选，还原全屏透明层");
         }
     }
     if let Some(st) = app.try_state::<AppState>() {

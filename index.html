@@ -11,7 +11,7 @@
     background: transparent; font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
     overflow: hidden;
   }
-  #stage { background: transparent; display: block; }
+  #stage { background: transparent; display: block; position: fixed; inset: 0; width: 100vw; height: 100vh; }
 
   /* 顶部按钮栏 */
   #bar {
@@ -211,6 +211,8 @@
   <div data-m="tips">💡 提示</div>
   <div data-m="chat">💬 聊天</div>
   <div data-m="about">ℹ️ 关于</div>
+  <div data-m="fullscreen">🖥️ 全屏 / 窗口</div>
+  <div data-m="quit">⏻ 退出</div>
 </div>
 
 <!-- 换颜色面板：右键菜单「🎨 换颜色」唤出，选身体色（含纯黑便于在黑色界面藏起来） -->
@@ -296,11 +298,18 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
   "use strict";
   const canvas = document.getElementById('stage');
   const ctx = canvas.getContext('2d');
-  const W = canvas.width, H = canvas.height;
+  let W = canvas.width, H = canvas.height;   // 画布逻辑尺寸：全屏=整屏，小窗=480×540；随窗口变化更新
+  let FULLSCREEN = true;               // 默认全屏透明层漫游；右键菜单可切回小窗
+  // 让画布铺满窗口（全屏或小窗都 1:1），并把 W/H 同步给 roam 边界
+  function fitStage() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    W = canvas.width; H = canvas.height;
+  }
   const lyricsBox = document.getElementById('lyricsBox');   // 唱歌歌词气泡（模块级，供 startSingLyrics 等引用）
   const DEG = Math.PI / 180;
   const UP = -Math.PI / 2, DOWN = Math.PI / 2;
-  const FIG_SCALE = 0.5;             // 桌面宠物整体缩放（偏小，更贴身）
+  const FIG_SCALE = 0.4;             // 桌面宠物整体缩放（偏小，更贴身；全屏漫游时也更精致）
 
   // ---------- 骨骼参数 ----------
   const S = {
@@ -706,7 +715,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     pressStart = { x: e.clientX, y: e.clientY };
     downAt = performance.now(); downX = e.clientX; downY = e.clientY; downMoved = 0;
     downOnHead = headAt(x, y); rubActive = false;
-    windowDragging = false; bodyDragCandidate = !downOnHead;  // 头=揉头；身体/腿=拖动整个窗口
+    windowDragging = false; bodyDragCandidate = !downOnHead && !FULLSCREEN;  // 头=揉头；身体/腿=拖动整个窗口（全屏下窗口即整屏，禁用拖窗）
     pressTimer = setTimeout(() => {                    // 长按不动 450ms → 唤出菜单
       longPressFired = true; rubActive = false;
       showCtxMenu(x, y);
@@ -792,6 +801,27 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     });
     window.addEventListener('mouseout', () => { mouse.inside = false; });
   }
+
+  // ---------- 全屏 / 窗口 切换 ----------
+  async function toggleFullscreen() {
+    FULLSCREEN = !FULLSCREEN;
+    if (isTauri && appWindow) {
+      try {
+        const { LogicalSize, LogicalPosition } = await import('@tauri-apps/api/window');
+        if (FULLSCREEN) {
+          await appWindow.setSize(new LogicalSize(window.screen.width, window.screen.height));
+          await appWindow.setPosition(new LogicalPosition(0, 0));
+        } else {
+          await appWindow.setSize(new LogicalSize(480, 540));
+          await appWindow.setPosition(new LogicalPosition(24, Math.max(0, window.screen.height - 540 - 60)));
+        }
+      } catch (err) { console.warn('切换全屏失败', err); FULLSCREEN = !FULLSCREEN; }
+    }
+    fitStage();
+  }
+  // 画布铺满窗口（全屏/小窗都 1:1）；窗口尺寸变化时同步
+  fitStage();
+  window.addEventListener('resize', fitStage);
   // 抑制 webview 原生右键菜单（我们的菜单自己画）
   document.addEventListener('contextmenu', e => e.preventDefault());
   // 提示框：菜单「提示」唤出，列出全部玩法
@@ -830,6 +860,8 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     else if (act === 'chat') openChatBox();
     else if (act === 'tips') showTips();
     else if (act === 'about') alert('小火 · 桌面火柴人\n透明 Tauri 窗口：骨骼 / 状态机 / 心情 / 表情 / 嘴型。\n长按我（或右键）唤出菜单：搜一搜 / 看看屏幕 / 🎨 换颜色 / 提示 / 💬聊天 / 关于。在「💬聊天」框里打字：画只猫 / 唱首歌 / 看会儿书 / 随便聊，小火都会回应（回复时嘴会动）。\n👆 单击 = 戳我（会恼会躲，多戳缩角落）；🤚 在头顶按住鼠标来回搓 = 揉头哄我（被戳委屈后搓头也能哄好）；✊ 抓住身体或腿按住拖动 = 把整个窗口拖到屏幕任意位置。\n右键「🎨 换颜色」可改身体色并记住（选纯黑在黑色界面就藏起来了）；「👕 换装」可让过节自动穿衣服（万圣/双十一/圣诞/元旦/春节），也能手动预览，衣服只是叠加层、不影响任何动作；搜一搜、看看屏幕会真截屏后拖框选，交给大模型（智谱 GLM-4V）分析。');
+    else if (act === 'fullscreen') toggleFullscreen();
+    else if (act === 'quit') { if (isTauri && appWindow) appWindow.close(); else window.close(); }
     document.getElementById('ctxMenu').classList.add('hidden');
   });
 
@@ -998,7 +1030,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
   function emitPetRect() {
     if (!emitter) return;
     if (boxOpen) {                // 弹框开着：扩成全窗口，让 Rust 关穿透，框上 ×/按钮才点得到
-      emitter('pet-rect', [0, 0, 480, 540]).catch(() => {});
+      emitter('pet-rect', [0, 0, W, H]).catch(() => {});
       return;
     }
     const key = Math.round(posX) + ',' + Math.round(posY) + ',' + currState;
@@ -1011,7 +1043,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
   function syncBoxOpen() {
     boxOpen = openBoxes.size > 0;
     if (!emitter) return;
-    if (boxOpen) emitter('pet-rect', [0, 0, 480, 540]).catch(() => {});
+    if (boxOpen) emitter('pet-rect', [0, 0, W, H]).catch(() => {});
     else { lastRectKey = ''; emitPetRect(); }
   }
   ['answerBox', 'screenBox', 'tipsBox', 'paintBox', 'ctxMenu', 'chatBox', 'colorBox', 'outfitBox'].forEach(id => {
