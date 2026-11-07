@@ -13,6 +13,7 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, GetSystemMetrics, GetWindowRect, SM_CXSCREEN, SM_CYSCREEN,
 };
+use std::io::Write;
 
 /// 框选态标志：进入"看屏/搜题"全屏框选时置 true，期间窗口必须完全可交互（否则框选点不到）
 /// box_open：任一 HTML 弹框（聊天/看屏/画图/菜单…）可见时为 true，期间强制可交互，
@@ -193,7 +194,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![capture_screen, ask_glm, ask_draw, critique_draw, toggle_pick, set_box_open, ask_reply, drag_start, drag_move, drag_end])
+        .invoke_handler(tauri::generate_handler![capture_screen, ask_glm, ask_draw, critique_draw, toggle_pick, set_box_open, ask_reply, drag_start, drag_move, drag_end, save_memory, list_memories, get_memory, delete_memory, open_memories_folder])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -577,6 +578,139 @@ fn set_box_open(open: bool, app: tauri::AppHandle) {
     if let Some(st) = app.try_state::<AppState>() {
         *st.box_open.lock().unwrap() = open;
     }
+}
+
+// ---------- 记忆本：把「问题 + 截图 + 回答」存到 exe 旁的 memories/ 目录，可随时翻阅 ----------
+fn memories_dir() -> Option<std::path::PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("memories")))
+}
+
+#[tauri::command]
+fn save_memory(question: String, answer: String, image_b64: String) -> Result<String, String> {
+    let dir = memories_dir().ok_or_else(|| "无法确定 exe 所在目录".to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let id = format!("m{}", ts);
+    // dataURL 去掉前缀后解码；空图也能存（仅文字记录）
+    let b64 = image_b64.split(',').nth(1).unwrap_or(&image_b64);
+    if !b64.is_empty() {
+        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64) {
+            let _ = std::fs::write(dir.join(format!("{}.png", id)), &bytes);
+        }
+    }
+    let entry = serde_json::json!({
+        "id": id,
+        "ts": ts,
+        "question": question,
+        "answer": answer,
+        "image": format!("{}.png", id),
+    });
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("memories.jsonl"))
+        .map_err(|e| e.to_string())?;
+    f.write_all(entry.to_string().as_bytes()).map_err(|e| e.to_string())?;
+    f.write_all(b"\n").map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+#[tauri::command]
+fn list_memories() -> Result<Vec<serde_json::Value>, String> {
+    let dir = memories_dir().ok_or_else(|| "无法确定 exe 所在目录".to_string())?;
+    let path = dir.join("memories.jsonl");
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+            out.push(v);
+        }
+    }
+    out.reverse(); // 最新的在前
+    Ok(out)
+}
+
+#[tauri::command]
+fn get_memory(id: String) -> Result<serde_json::Value, String> {
+    let dir = memories_dir().ok_or_else(|| "无法确定 exe 所在目录".to_string())?;
+    let path = dir.join("memories.jsonl");
+    let mut entry: Option<serde_json::Value> = None;
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+                if v.get("id").and_then(|x| x.as_str()) == Some(id.as_str()) {
+                    entry = Some(v);
+                    break;
+                }
+            }
+        }
+    }
+    let mut e = entry.ok_or_else(|| "未找到该记录".to_string())?;
+    if let Some(img) = e.get("image").and_then(|x| x.as_str()) {
+        let ip = dir.join(img);
+        if let Ok(bytes) = std::fs::read(&ip) {
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            if let Some(obj) = e.as_object_mut() {
+                obj.insert(
+                    "image_data".to_string(),
+                    serde_json::Value::String(format!("data:image/png;base64,{}", b64)),
+                );
+            }
+        }
+    }
+    Ok(e)
+}
+
+#[tauri::command]
+fn delete_memory(id: String) -> Result<(), String> {
+    let dir = memories_dir().ok_or_else(|| "无法确定 exe 所在目录".to_string())?;
+    let path = dir.join("memories.jsonl");
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let mut kept: Vec<String> = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+            if v.get("id").and_then(|x| x.as_str()) == Some(id.as_str()) {
+                if let Some(img) = v.get("image").and_then(|x| x.as_str()) {
+                    let _ = std::fs::remove_file(dir.join(img));
+                }
+            } else {
+                kept.push(line.to_string());
+            }
+        } else {
+            kept.push(line.to_string());
+        }
+    }
+    std::fs::write(&path, kept.join("\n") + if kept.is_empty() { "" } else { "\n" })
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn open_memories_folder() -> Result<(), String> {
+    let dir = memories_dir().ok_or_else(|| "无法确定 exe 所在目录".to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let _ = std::process::Command::new("explorer").arg(dir).spawn();
+    Ok(())
 }
 
 // 拖拽整窗：前端抓住宠物身体后，由 Rust 搬窗口。

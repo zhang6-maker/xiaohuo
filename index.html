@@ -182,12 +182,14 @@
 <div id="answerBox" class="box hidden">
   <button class="close">×</button>
   <div id="answerText"></div>
+  <div class="actions" style="margin-top:8px;"><button id="answerRecord" title="把本题截图和解答存进「我的记录」">📝 记忆</button></div>
 </div>
 
 <!-- 看屏结果框 -->
 <div id="screenBox" class="box hidden" style="top:12px;max-height:82%;overflow-y:auto;">
   <button class="close">×</button>
   <div id="screenText"></div>
+  <div class="actions" style="margin-top:8px;"><button id="screenRecord" title="把当前截图和回答存进「我的记录」">📝 记忆</button></div>
   <div id="screenAskWrap" class="hidden" style="margin-top:8px;">
     <input id="screenAsk" type="text" placeholder="想问他点啥？比如「我该怎么做」「这报错咋修」（留空就直接看截图）" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:6px;font-size:13px;" />
     <div class="actions">
@@ -210,6 +212,7 @@
   <div data-m="outfit">👕 换装</div>
   <div data-m="tips">💡 提示</div>
   <div data-m="chat">💬 聊天</div>
+  <div data-m="mem">📖 记录本</div>
   <div data-m="about">ℹ️ 关于</div>
   <div data-m="fullscreen">🖥️ 全屏 / 窗口</div>
   <div data-m="quit">⏻ 退出</div>
@@ -284,11 +287,25 @@
   <div style="font-size:13px;color:#cfd2d8;margin:2px 0 8px;">💬 和小火聊天</div>
   <div id="chatLog" style="max-height:200px;overflow-y:auto;margin-bottom:8px;"></div>
   <input id="chatInput" type="text" placeholder="画只猫 / 唱首歌 / 看会儿书 / 或随便聊" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:6px;font-size:13px;" />
-  <div class="actions"><button id="chatSend">发送</button></div>
+  <div class="actions"><button id="chatSend">发送</button><button id="chatRecord" title="把当前对话和截图存进「我的记录」">📝 记忆</button></div>
 </div>
 
 <!-- 唱歌歌词气泡：sing 状态显示，跟随头顶，原创短词循环 -->
 <div id="lyricsBox" class="box hidden"></div>
+
+<!-- 记忆本：浏览/查看已记录的「问题 + 截图 + 回答」 -->
+<div id="memBox" class="box hidden" style="width:92%;max-width:540px;max-height:86%;overflow:auto;">
+  <button class="close">×</button>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 8px;">
+    <span style="font-size:14px;color:#cfd2d8;">📖 我的记录</span>
+    <button id="memOpenFolder" style="font-size:12px;padding:2px 8px;">📂 打开文件夹</button>
+  </div>
+  <div id="memList"></div>
+  <div id="memDetail" class="hidden"></div>
+</div>
+
+<!-- 轻提示 -->
+<div id="toast" style="position:fixed;left:50%;bottom:64px;transform:translateX(-50%) translateY(20px);z-index:70;background:#2b2b30;color:#f3f3f5;padding:8px 14px;border-radius:10px;font-size:13px;border:1px solid #4a4a52;opacity:0;transition:opacity .2s, transform .2s;pointer-events:none;max-width:80%;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,.4);"></div>
 
 <script type="module">
 import { invoke } from '@tauri-apps/api/core';
@@ -873,6 +890,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     else if (act === 'color') openColorBox();
     else if (act === 'outfit') openOutfitBox();
     else if (act === 'chat') openChatBox();
+    else if (act === 'mem') openMemories();
     else if (act === 'tips') showTips();
     else if (act === 'about') alert('小火 · 桌面火柴人\n透明 Tauri 窗口：骨骼 / 状态机 / 心情 / 表情 / 嘴型。\n长按我（或右键）唤出菜单：搜一搜 / 看看屏幕 / 🎨 换颜色 / 提示 / 💬聊天 / 关于。在「💬聊天」框里打字：画只猫 / 唱首歌 / 看会儿书 / 随便聊，小火都会回应（回复时嘴会动）。\n👆 单击 = 戳我（会恼会躲，多戳缩角落）；🤚 在头顶按住鼠标来回搓 = 揉头哄我（被戳委屈后搓头也能哄好）；✊ 抓住身体或腿按住拖动 = 把整个窗口拖到屏幕任意位置。\n右键「🎨 换颜色」可改身体色并记住（选纯黑在黑色界面就藏起来了）；「👕 换装」可让过节自动穿衣服（万圣/双十一/圣诞/元旦/春节），也能手动预览，衣服只是叠加层、不影响任何动作；搜一搜、看看屏幕会真截屏后拖框选，交给大模型（智谱 GLM-4V）分析。');
     else if (act === 'fullscreen') toggleFullscreen();
@@ -3303,6 +3321,151 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
   screenBox.querySelector('.close').addEventListener('click', () => screenBox.classList.add('hidden'));
   // 在提问框按回车 = 问问他（问题留空则为直接看）；中文输入法组词中的回车不触发
   screenAsk.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) runGlm('screen', lastRegionB64, screenAsk.value); });
+
+  // ---------- 记忆本：记录「问题 + 截图 + 回答」，随时翻阅 ----------
+  const memBox = document.getElementById('memBox');
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+  function fmtTs(ts) {
+    const d = new Date(Number(ts));
+    if (isNaN(d.getTime())) return '';
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  let toastTimer = null;
+  function toast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.style.opacity = '1';
+    t.style.transform = 'translateX(-50%) translateY(0)';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      t.style.opacity = '0';
+      t.style.transform = 'translateX(-50%) translateY(20px)';
+    }, 1900);
+  }
+  // 隐藏所有弹框后截屏，得到干净的环境截图（不含小火的弹框遮罩）
+  async function captureClean() {
+    const hides = [];
+    ['chatBox', 'answerBox', 'screenBox', 'memBox', 'ctxMenu', 'tipsBox', 'paintBox', 'colorBox', 'outfitBox'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el && !el.classList.contains('hidden')) { el.classList.add('hidden'); hides.push(el); }
+    });
+    await new Promise(r => setTimeout(r, 90)); // 等合成器把弹框隐去的帧画完
+    let url = '';
+    try { url = await invoke('capture_screen'); } catch (e) { url = ''; }
+    hides.forEach(el => el.classList.remove('hidden'));
+    return url;
+  }
+  async function recordMemory(question, answer) {
+    if (!isTauri) { toast('记录功能需要桌面版（能截屏）'); return; }
+    toast('正在保存截图…');
+    const img = await captureClean();
+    try {
+      await invoke('save_memory', { question: question || '', answer: answer || '', image_b64: img || '' });
+      toast('✅ 已记录到「我的记录」');
+    } catch (e) {
+      toast('记录失败：' + apiErrText(e));
+    }
+  }
+  function lastChatQ() {
+    for (let i = chatHistory.length - 1; i >= 0; i--) if (chatHistory[i].role === 'user') return chatHistory[i].content;
+    return '';
+  }
+  function lastChatA() {
+    for (let i = chatHistory.length - 1; i >= 0; i--) if (chatHistory[i].role === 'assistant') return chatHistory[i].content;
+    return '';
+  }
+  async function listMemoriesSafe() {
+    try { return await invoke('list_memories'); } catch (e) { toast('读取记录失败'); return []; }
+  }
+  function renderMemList(items) {
+    const list = document.getElementById('memList');
+    list.innerHTML = '';
+    list.classList.remove('hidden');
+    document.getElementById('memDetail').classList.add('hidden');
+    if (!items || !items.length) {
+      list.innerHTML = '<div style="color:#9aa0a6;font-size:13px;padding:12px;">还没有记录。在「💬聊天 / 搜一搜 / 看看屏幕」里点「📝 记忆」，即可把当前问题、截图和回答存下来。</div>';
+      return;
+    }
+    items.forEach(it => {
+      const q = esc(it.question || '');
+      const a = esc(it.answer || '');
+      const ts = fmtTs(it.ts);
+      const row = document.createElement('div');
+      row.style.cssText = 'border:1px solid #3a3a42;border-radius:8px;padding:8px 10px;margin-bottom:8px;cursor:pointer;';
+      row.innerHTML =
+        `<div style="font-size:11px;color:#9aa0a6;margin-bottom:2px;">${ts}</div>` +
+        `<div style="font-size:13px;color:#f3f3f5;margin-bottom:2px;max-height:40px;overflow:hidden;">${q || '<span style="color:#9aa0a6;">（截图提问，无文字）</span>'}</div>` +
+        `<div style="font-size:12px;color:#b9bcc4;max-height:36px;overflow:hidden;">${a}</div>`;
+      row.onclick = () => viewMemory(it.id);
+      list.appendChild(row);
+    });
+  }
+  async function viewMemory(id) {
+    let e;
+    try { e = await invoke('get_memory', { id }); } catch (err) { toast('读取失败：' + apiErrText(err)); return; }
+    const list = document.getElementById('memList');
+    const detail = document.getElementById('memDetail');
+    list.classList.add('hidden');
+    detail.classList.remove('hidden');
+    const ts = fmtTs(e.ts);
+    detail.innerHTML =
+      `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">` +
+        `<span style="font-size:11px;color:#9aa0a6;">${ts}</span>` +
+        `<span><button id="memBack" style="font-size:12px;padding:2px 8px;margin-right:6px;">← 返回</button>` +
+        `<button id="memDel" style="font-size:12px;padding:2px 8px;">🗑 删除</button></span>` +
+      `</div>` +
+      `<div style="font-size:12px;color:#9aa0a6;margin-bottom:3px;">问题</div>` +
+      `<div style="font-size:13px;white-space:pre-wrap;margin-bottom:10px;">${esc(e.question || '（截图提问，无文字）')}</div>` +
+      `<div style="font-size:12px;color:#9aa0a6;margin-bottom:3px;">回答</div>` +
+      `<div style="font-size:13px;white-space:pre-wrap;margin-bottom:10px;">${esc(e.answer || '')}</div>` +
+      (e.image_data ? `<div style="font-size:12px;color:#9aa0a6;margin-bottom:3px;">截图</div><img src="${e.image_data}" style="max-width:100%;border-radius:8px;border:1px solid #3a3a42;"/>` : '');
+    detail.querySelector('#memBack').onclick = () => { detail.classList.add('hidden'); list.classList.remove('hidden'); };
+    detail.querySelector('#memDel').onclick = () => delMemory(id);
+  }
+  async function delMemory(id) {
+    try { await invoke('delete_memory', { id }); toast('已删除'); } catch (e) { toast('删除失败'); return; }
+    const items = await listMemoriesSafe();
+    renderMemList(items);
+  }
+  async function openMemories() {
+    document.getElementById('ctxMenu').classList.add('hidden');
+    memBox.classList.remove('hidden');
+    renderMemList(await listMemoriesSafe());
+  }
+  // 各弹框的记忆按钮
+  document.getElementById('chatRecord').addEventListener('click', () => {
+    const q = lastChatQ(), a = lastChatA();
+    if (!q && !a) { toast('还没有对话可记录'); return; }
+    recordMemory(q, a);
+  });
+  document.getElementById('answerRecord').addEventListener('click', () => recordMemory('', document.getElementById('answerText').innerText));
+  document.getElementById('screenRecord').addEventListener('click', () => recordMemory(document.getElementById('screenAsk').value, document.getElementById('screenText').innerText));
+  document.getElementById('memOpenFolder').addEventListener('click', () => { if (isTauri) invoke('open_memories_folder').catch(() => toast('打开失败')); });
+  memBox.querySelector('.close').addEventListener('click', () => memBox.classList.add('hidden'));
+
+  // ---------- 关闭健壮性：Esc 关掉所有弹框；点弹框外部即关闭（菜单单独处理） ----------
+  window.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      ['chatBox', 'answerBox', 'screenBox', 'memBox', 'tipsBox', 'paintBox', 'colorBox', 'outfitBox'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && !el.classList.contains('hidden')) el.classList.add('hidden');
+      });
+      document.getElementById('ctxMenu').classList.add('hidden');
+    }
+  });
+  document.addEventListener('mousedown', e => {
+    if (picking) return; // 框选中时不处理
+    const t = e.target;
+    ['chatBox', 'answerBox', 'screenBox', 'memBox', 'tipsBox', 'paintBox', 'colorBox', 'outfitBox'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el && !el.classList.contains('hidden') && !el.contains(t)) el.classList.add('hidden');
+    });
+    const cm = document.getElementById('ctxMenu');
+    if (cm && !cm.classList.contains('hidden') && !cm.contains(t)) cm.classList.add('hidden');
+  });
 
   // 念念有词已并入聊天框：在聊天框里打字，小火用 ask_reply 回复，口型随 speakingUntil 自动跟随
 })();
