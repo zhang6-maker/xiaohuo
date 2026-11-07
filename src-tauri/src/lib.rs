@@ -195,7 +195,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![capture_screen, ask_glm, ask_draw, critique_draw, toggle_pick, set_box_open, ask_reply, drag_start, drag_move, drag_end, save_memory, list_memories, get_memory, delete_memory, open_memories_folder])
+        .invoke_handler(tauri::generate_handler![capture_screen, ask_glm, ask_draw, critique_draw, toggle_pick, set_box_open, ask_reply, drag_start, drag_move, drag_end, save_memory, list_memories, get_memory, delete_memory, open_memories_folder, web_lookup])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -586,6 +586,114 @@ fn set_box_open(open: bool, app: tauri::AppHandle) {
             let _ = w.set_focus();
         }
     }
+}
+
+// ---------- 词条搜索：聊天里输入「搜索 XXX / 查一下 XXX」时，先联网查资料再让小火解释 ----------
+// 优先维基百科（中→英），查不到再用 DuckDuckGo HTML 抓首条摘要兜底；都查不到返回空串，前端交给 LLM 诚实回答。
+fn pct(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            _ => { out.push('%'); out.push_str(&format!("{:02X}", b)); }
+        }
+    }
+    out
+}
+
+async fn fetch_text(client: &reqwest::Client, url: &str) -> Result<String, reqwest::Error> {
+    client
+        .get(url)
+        .header("Accept-Encoding", "identity")
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+        .send()
+        .await?
+        .text()
+        .await
+}
+
+fn strip_html(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut in_tag = false;
+    let mut in_ent = false;
+    let mut ent = String::new();
+    for c in html.chars() {
+        if in_ent {
+            if c == ';' {
+                let e = ent.as_str();
+                let r = match e {
+                    "amp" => '&', "lt" => '<', "gt" => '>', "quot" => '"', "apos" => '\'', "nbsp" => ' ',
+                    _ => if let Some(code) = e.strip_prefix('#') {
+                        code.parse::<u32>().ok().and_then(std::char::from_u32).unwrap_or(' ')
+                    } else { ' ' }
+                };
+                out.push(r);
+                in_ent = false; ent.clear();
+            } else { ent.push(c); }
+            continue;
+        }
+        if c == '<' { in_tag = true; continue; }
+        if in_tag { if c == '>' { in_tag = false; } continue; }
+        if c == '&' { in_ent = true; ent.clear(); continue; }
+        out.push(c);
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+// DuckDuckGo 结果摘要包在 class="result__snippet" 的 <a> 里，取首条文本
+fn extract_ddg_snippet(html: &str) -> Option<String> {
+    let marker = "result__snippet";
+    let idx = html.find(marker)?;
+    let after = &html[idx..];
+    let open = after.find('>')?;
+    let body = &after[open + 1..];
+    let end = body.find("</a>")?;
+    let text = strip_html(&body[..end]);
+    if text.trim().is_empty() { None } else { Some(text) }
+}
+
+#[tauri::command]
+async fn web_lookup(query: String) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let q = query.trim();
+    if q.is_empty() { return Ok(String::new()); }
+
+    // 1) 维基百科（中文）
+    let zh = format!("https://zh.wikipedia.org/api/rest_v1/page/summary/{}", pct(q));
+    if let Ok(t) = fetch_text(&client, &zh).await {
+        if let Ok(j) = serde_json::from_str::<serde_json::Value>(&t) {
+            if let Some(extract) = j.get("extract").and_then(|v| v.as_str()) {
+                let ty = j.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                if !extract.is_empty() && ty != "disambiguation" {
+                    let title = j.get("title").and_then(|v| v.as_str()).unwrap_or(q);
+                    return Ok(format!("[维基百科·{}] {}", title, extract));
+                }
+            }
+        }
+    }
+    // 2) 维基百科（英文）
+    let en = format!("https://en.wikipedia.org/api/rest_v1/page/summary/{}", pct(q));
+    if let Ok(t) = fetch_text(&client, &en).await {
+        if let Ok(j) = serde_json::from_str::<serde_json::Value>(&t) {
+            if let Some(extract) = j.get("extract").and_then(|v| v.as_str()) {
+                if !extract.is_empty() {
+                    let title = j.get("title").and_then(|v| v.as_str()).unwrap_or(q);
+                    return Ok(format!("[Wikipedia·{}] {}", title, extract));
+                }
+            }
+        }
+    }
+    // 3) DuckDuckGo HTML 兜底（抓首条结果摘要）
+    let ddg = format!("https://html.duckduckgo.com/html/?q={}", pct(q));
+    if let Ok(html) = fetch_text(&client, &ddg).await {
+        if let Some(snippet) = extract_ddg_snippet(&html) {
+            return Ok(format!("[网络搜索·{}] {}", q, snippet));
+        }
+    }
+    Ok(String::new())
 }
 
 // ---------- 记忆本：把「问题 + 截图 + 回答」存到 exe 旁的 memories/ 目录，可随时翻阅 ----------

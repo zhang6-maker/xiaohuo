@@ -288,7 +288,7 @@
   <button class="close">×</button>
   <div style="font-size:13px;color:#cfd2d8;margin:2px 0 8px;">💬 和小火聊天</div>
   <div id="chatLog" style="max-height:200px;overflow-y:auto;margin-bottom:8px;"></div>
-  <input id="chatInput" type="text" placeholder="画只猫 / 唱首歌 / 看会儿书 / 或随便聊" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:6px;font-size:13px;" />
+  <input id="chatInput" type="text" placeholder="画只猫 / 唱首歌 / 搜索 XXX / 或随便聊" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:6px;font-size:13px;" />
   <div class="actions"><button id="chatSend">发送</button><button id="chatRecord" title="把当前对话和截图存进「我的记录」">📝 记忆</button></div>
 </div>
 
@@ -2969,6 +2969,39 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
       addChat('sys', '📖 小火坐下来看书～');
       setState('read', autoDuration('read'));
       return;
+    }
+    // 词条搜索：以「搜索/搜一下/查一下/查一查/词条/search/lookup」开头 → 联网查资料后让小火傲娇解释
+    const SEARCH_RE = /^(搜索|搜一下|查一下|查一查|词条|search|lookup)\s*(.+)$/i;
+    const sm = v.match(SEARCH_RE);
+    if (sm) {
+      const term = sm[2].trim();
+      if (term) {
+        let snippetCache = '';
+        const lastPet = addChat('pet', '🔍 小火正在查「' + term + '」…');
+        chatHistory.push({ role: 'user', content: v });
+        const hist = chatHistory.slice(-6);
+        invoke('web_lookup', { query: term })
+          .then(snippet => {
+            snippetCache = (typeof snippet === 'string') ? snippet : '';
+            const prompt = snippetCache.trim()
+              ? '【联网查到的资料】' + snippetCache + '\n【主人问】"' + term + '" 是什么？请用你（小火）的傲娇口吻，用 1-2 句话简短给主人解释一下，不超过 30 字。'
+              : '主人问 "' + term + '" 是什么，但你没联网查到资料。如果你也不确定，就老实说不知道，别瞎编；知道的就用傲娇口吻简短说说。';
+            return invoke('ask_reply', { text: prompt, history: hist });
+          })
+          .then(res => {
+            const text = (typeof res === 'string') ? res : (res && res.reply) || '（小火走神了）';
+            lastPet.textContent = text;
+            speakingUntil = performance.now() + Math.min(6000, Math.max(2000, text.length * 60));
+            positionChatBox();
+            chatHistory.push({ role: 'assistant', content: text });
+            if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
+          })
+          .catch(err => {
+            // LLM 限流(429)等失败：若有检索片段就直接展示，否则给人话报错
+            lastPet.textContent = snippetCache.trim() ? '🔎 ' + snippetCache : apiErrText(err);
+          });
+        return;
+      }
     }
     if (/看屏幕|截图|搜一搜|搜题|screen|search/.test(tl)) {
       startPick('screen');
