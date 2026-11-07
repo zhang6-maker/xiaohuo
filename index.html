@@ -3174,8 +3174,8 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
       return;
     }
     pickHint.textContent = act === 'search'
-      ? '拖拽框选题目/问题区域，松手即解题'
-      : '拖拽框选你看的屏幕区域，松手即描述';
+      ? '拖拽框选题目/问题区域，松手即解题（点空白处或按 Esc 取消）'
+      : '拖拽框选你看的屏幕区域，松手即描述（点空白处或按 Esc 取消）';
     // 先截屏（截的是当前桌面）；等图片离屏加载完再全屏显示，避免黑屏一闪
     Promise.resolve(invoke('capture_screen'))
       .then(dataUrl => new Promise((res, rej) => {    // 先把图加载进 <img>（此时图层还藏着，离屏加载）
@@ -3217,7 +3217,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     const sx0 = pickStart.x, sy0 = pickStart.y;
     const w = Math.abs(e.clientX - sx0), h = Math.abs(e.clientY - sy0);
     pickStart = null;
-    if (w < 12 || h < 12) return;                  // 太小：不当作选择，保持框选态让用户重拖（不再误关）
+    if (w < 12 || h < 12) { closeAllPick(); return; }   // 太小：取消框选并退出黑屏，避免卡在框选层里关不掉（Esc 也可取消）
     picking = false;
     pickLayer.classList.add('hidden'); pickRect.style.display = 'none';
     // 把框选区域从截屏裁出 → 缩到 ≤1024 → 转 JPG，发给智谱
