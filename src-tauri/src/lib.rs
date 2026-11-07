@@ -15,9 +15,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 /// 框选态标志：进入"看屏/搜题"全屏框选时置 true，期间窗口必须完全可交互（否则框选点不到）
+/// box_open：任一 HTML 弹框（聊天/看屏/画图/菜单…）可见时为 true，期间强制可交互，
+///   保证弹框上的 × / 按钮一定点得到；关掉后恢复穿透。直接由前端 set_box_open 通知，
+///   不依赖 pet-rect 整窗广播（那条链路在全屏/看屏时序下会竞态导致"框开着窗口却穿透、×点不到"）。
 struct AppState {
     picking: Arc<Mutex<bool>>,
     dragging: Arc<Mutex<bool>>,
+    box_open: Arc<Mutex<bool>>,
     drag_start: Arc<Mutex<Option<tauri::PhysicalPosition<f64>>>>,
 }
 
@@ -27,6 +31,7 @@ pub fn run() {
         .manage(AppState {
             picking: Arc::new(Mutex::new(false)),
             dragging: Arc::new(Mutex::new(false)),
+            box_open: Arc::new(Mutex::new(false)),
             drag_start: Arc::new(Mutex::new(None)),
         })
         .setup(|app| {
@@ -73,6 +78,7 @@ pub fn run() {
             // 框选态标志，供轮询线程读取
             let picking = app.state::<AppState>().picking.clone();
             let dragging = app.state::<AppState>().dragging.clone();
+            let box_open = app.state::<AppState>().box_open.clone();
 
             // 前端每帧把宠物包围盒(窗口内逻辑坐标 [x,y,w,h])经 event 发过来
             let rect = Arc::new(Mutex::new([250i32, 170i32, 300i32, 230i32]));
@@ -155,7 +161,9 @@ pub fn run() {
                     // 拖拽态：也强制完全可交互，免得拖快了光标离开宠物包围盒后穿透被打开、丢鼠标事件导致拖拽卡死
                     let picking_now = *picking.lock().unwrap_or_else(|_| picking.lock().unwrap());
                     let dragging_now = *dragging.lock().unwrap_or_else(|_| dragging.lock().unwrap());
-                    let want_ignore = if picking_now || dragging_now {
+                    let box_open_now = *box_open.lock().unwrap_or_else(|_| box_open.lock().unwrap());
+                    // box_open 为 true（任一弹框可见）→ 强制可交互，确保 × / 按钮一定点得到
+                    let want_ignore = if picking_now || dragging_now || box_open_now {
                         false
                     } else {
                         !(over_pet || over_bar)
@@ -185,7 +193,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![capture_screen, ask_glm, ask_draw, critique_draw, toggle_pick, ask_reply, drag_start, drag_move, drag_end])
+        .invoke_handler(tauri::generate_handler![capture_screen, ask_glm, ask_draw, critique_draw, toggle_pick, set_box_open, ask_reply, drag_start, drag_move, drag_end])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -558,6 +566,16 @@ fn toggle_pick(full: bool, app: tauri::AppHandle) {
     }
     if let Some(st) = app.try_state::<AppState>() {
         *st.picking.lock().unwrap() = full;
+    }
+}
+
+/// 前端通知 Rust：当前是否有 HTML 弹框（聊天/看屏/画图/菜单…）可见。
+/// 弹框可见时强制窗口可交互（关掉点击穿透），保证弹框上的 × / 按钮一定点得到；
+/// 全部关闭后恢复穿透（不挡桌面）。直接信号、不依赖 pet-rect 广播，避免全屏/看屏时序竞态。
+#[tauri::command]
+fn set_box_open(open: bool, app: tauri::AppHandle) {
+    if let Some(st) = app.try_state::<AppState>() {
+        *st.box_open.lock().unwrap() = open;
     }
 }
 

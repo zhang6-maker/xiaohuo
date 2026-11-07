@@ -646,6 +646,21 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
   // 浏览器直接预览时退回 webview 事件。这是修复"穿透后收不到 mousemove"的关键。
   const dpr = window.devicePixelRatio || 1;
   const isTauri = typeof window.__TAURI_INTERNALS__ !== 'undefined';
+  // 把智谱调用失败的统一Error/字符串转成"人话"：重点识别 429 限流（最常见），
+  // 否则按 未配置 key / 网络 / 其他 给不同提示，避免把一整串英文 JSON 塞给用户。
+  function apiErrText(err) {
+    const s = (err && err.message) ? String(err.message) : String(err || '');
+    if (/429|Too Many|rate.?limit|frequency|请求过于频繁|限流|额度|quota/i.test(s)) {
+      return '😵 智谱接口被限流了（429：调用太频繁，或免费额度用完）。稍等一会儿再试；若常用可考虑去智谱控制台升个套餐～';
+    }
+    if (/ZHIPU_API_KEY|未配置|API_KEY|api key/i.test(s)) {
+      return '😵 没配置 ZHIPU_API_KEY：把 key 写进 exe 同目录的 .env（ZHIPU_API_KEY=xxx）再重启小火～';
+    }
+    if (/网络|timeout|超时|拦截|连接|ECONN|fetch|ENOTFOUND|refused/i.test(s)) {
+      return '😵 网络不通（可能被 360 拦了，或没联网）：放小火联网后再试～';
+    }
+    return '😵 调用出错：' + s.slice(0, 200);
+  }
   let interactMode = false;            // 当前是否处于"可交互"态（悬停宠物/按钮时为真），仅用于状态栏显示
   function setMouse(x, y) {
     mouse.x = x; mouse.y = y;
@@ -1039,9 +1054,12 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     // 包围盒略放大以包容走路摆动(±~140px)；高度覆盖头到脚
     emitter('pet-rect', [Math.round(posX - 150), Math.round(posY - 190), 300, 230]).catch(() => {});
   }
-  // 弹框穿透修复：侦听三个弹框的显示/隐藏，任一可见即让 Rust 关穿透（否则框上 ×/按钮点不到）
+  // 弹框穿透修复：侦听弹框的显示/隐藏，任一可见即让 Rust 关穿透（否则框上 ×/按钮点不到）
   function syncBoxOpen() {
     boxOpen = openBoxes.size > 0;
+    // 直接、可靠地通知 Rust 是否有框开着：框开着→强制可交互(×才点得到)，关掉→恢复穿透。
+    // 不再只靠 pet-rect 整窗广播（那条链路在全屏/看屏时序下会竞态，导致"框开着窗口却穿透、×点不到"）。
+    if (isTauri) invoke('set_box_open', { open: boxOpen }).catch(() => {});
     if (!emitter) return;
     if (boxOpen) emitter('pet-rect', [0, 0, W, H]).catch(() => {});
     else { lastRectKey = ''; emitPetRect(); }
@@ -2846,7 +2864,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
           })
           .catch(err => {
             if (attempt < 2) return tryDraw(attempt + 1);
-            fail('😵 思考出错，随便画了点～', '[paint] ask_draw 调用失败：' + (err && err.message ? err.message : err));
+            fail(apiErrText(err), '[paint] ask_draw 调用失败：' + (err && err.message ? err.message : err));
           });
       };
       tryDraw(1);
@@ -2951,7 +2969,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
         if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
       })
       .catch(err => {
-        lastPet.textContent = '😵 小火没接住（检查 ZHIPU_API_KEY 或网络）：' + (err && err.message ? err.message : String(err));
+        lastPet.textContent = apiErrText(err);
       });
   }
   chatBox.querySelector('.close').addEventListener('click', () => chatBox.classList.add('hidden'));
@@ -3234,7 +3252,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
           screenResultActions.classList.remove('hidden');
         }
       })
-      .catch(err => { txt.innerHTML = '调用失败：' + (err && err.message ? err.message : err); });
+      .catch(err => { txt.innerHTML = apiErrText(err).replace(/\n/g, '<br>'); });
   }
 
   // 看屏截图后：先给用户输入问题（也可留空直接看），再发问
