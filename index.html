@@ -170,6 +170,8 @@
 <div id="status">状态：idle · 心情：0</div>
 <div class="hint">👆 <b>单击</b>小火 = 戳他（欺负，连戳缩角落）· 🤚 在头顶<b>按住鼠标左键来回搓</b> = 揉头哄他（被戳委屈后搓头也能哄好）· 长按 / 右键小火唤出菜单，选「💬聊天」打字让小火唱歌 / 看书 / 画画 / 念念有词 · 点「睡觉」约 3 秒翻倒躺平深度睡眠 · 移开恢复穿透不挡桌面</div>
 <div id="dbg" style="position:fixed;left:8px;bottom:34px;z-index:60;color:#c33;font-size:11px;font-family:monospace;background:rgba(255,255,255,.7);padding:2px 6px;border-radius:4px;">调试：等待 Rust 数据…</div>
+<!-- 诊断面板：Ctrl+Shift+D 开关，排查"弹窗关不掉"时看窗口是否真的处于可交互态 -->
+<div id="diagHud" style="position:fixed;left:8px;top:8px;z-index:80;display:none;color:#0a0;font-size:12px;font-family:monospace;background:rgba(0,0,0,.8);padding:8px 10px;border-radius:6px;line-height:1.6;white-space:pre;pointer-events:none;">诊断面板（Ctrl+Shift+D 关）</div>
 
 <!-- 全屏框选层（看屏/搜题）：截屏后铺满全屏让你框选 -->
 <div id="pickLayer" class="hidden">
@@ -804,16 +806,18 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
   let appWindow = null;        // Tauri 窗口对象（拖动整窗用 startDragging）
   let rustIgnore = true;               // Rust 回传的真实穿透状态（比前端自算准）
   let dbgRX = 0;                       // 收到 dbg 的次数，用来确认 Rust→前端链路是通的
+  let lastDbg = [0, 0, 0, 0, 1, 100, 0];  // 最近一次 dbg 全量：[lx,ly,inside,overPet,wantIgnore,sf*100,box_open]
   const dbgEl = document.getElementById('dbg');
   if (isTauri) {
     import('@tauri-apps/api/event').then(({ listen, emit }) => {
       emitter = emit;
       listen('mouse-move', (e) => setMouse(e.payload[0] / dpr, e.payload[1] / dpr));
       listen('dbg', (e) => {
-        const p = e.payload;           // [lx, ly, inside, over_pet, want_ignore, sf*100]
+        const p = e.payload;           // [lx, ly, inside, over_pet, want_ignore, sf*100, box_open]
+        lastDbg = p;
         dbgRX++;
         rustIgnore = p[4] === 1;
-        dbgEl.textContent = `调试 RX:${dbgRX} 鼠标:${p[0]},${p[1]} 窗内:${p[2]} 悬停宠物:${p[3]} 穿透:${p[4]} dpr:${(p[5]/100).toFixed(2)}`;
+        dbgEl.textContent = `调试 RX:${dbgRX} 鼠标:${p[0]},${p[1]} 窗内:${p[2]} 悬停宠物:${p[3]} 穿透:${p[4]} box_open:${p[6]} dpr:${(p[5]/100).toFixed(2)}`;
       });
     }).catch((err) => {
       // 关键修复：之前用经典 <script> 写 dynamic import，Vite 不会改写裸模块路径，
@@ -1082,7 +1086,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     if (boxOpen) emitter('pet-rect', [0, 0, W, H]).catch(() => {});
     else { lastRectKey = ''; emitPetRect(); }
   }
-  ['answerBox', 'screenBox', 'tipsBox', 'paintBox', 'ctxMenu', 'chatBox', 'colorBox', 'outfitBox'].forEach(id => {
+  ['answerBox', 'screenBox', 'tipsBox', 'paintBox', 'ctxMenu', 'chatBox', 'colorBox', 'outfitBox', 'memBox'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     new MutationObserver(() => {
@@ -3466,6 +3470,27 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     const cm = document.getElementById('ctxMenu');
     if (cm && !cm.classList.contains('hidden') && !cm.contains(t)) cm.classList.add('hidden');
   });
+
+  // 诊断面板：Ctrl+Shift+D 开关。把"前端 boxOpen"与"Rust 实际 want_ignore(穿透?)/box_open"并排显示，
+  // 排查"弹窗关不掉"时一眼看出：box 开着但 want_ignore=1（窗口仍在穿透）→ 就是穿透没关，× 点不到。
+  const diagHud = document.getElementById('diagHud');
+  window.addEventListener('keydown', e => {
+    if (e.ctrlKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+      e.preventDefault();
+      diagHud.style.display = diagHud.style.display === 'none' ? 'block' : 'none';
+    }
+  });
+  setInterval(() => {
+    if (diagHud.style.display === 'none') return;
+    const [lx, ly, inside, overPet, wantIgnore, sf, boxOpenRust] = lastDbg;
+    diagHud.textContent =
+      '── 诊断 ──\n' +
+      '前端 boxOpen : ' + boxOpen + '\n' +
+      'Rust box_open: ' + boxOpenRust + '\n' +
+      'Rust 穿透态  : ' + (wantIgnore ? '穿透(点不到)' : '可交互(可点)') + '\n' +
+      '鼠标 in窗口  : ' + inside + '  over宠物:' + overPet + '\n' +
+      '鼠标 rel    : ' + lx + ',' + ly + '  dpr:' + (sf / 100);
+  }, 200);
 
   // 念念有词已并入聊天框：在聊天框里打字，小火用 ask_reply 回复，口型随 speakingUntil 自动跟随
 })();

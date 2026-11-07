@@ -187,6 +187,7 @@ pub fn run() {
                                 if over_pet { 1 } else { 0 },
                                 if want_ignore { 1 } else { 0 },
                                 (sf * 100.0) as i32,
+                                if box_open_now { 1 } else { 0 },
                             ],
                         );
                     }
@@ -573,10 +574,17 @@ fn toggle_pick(full: bool, app: tauri::AppHandle) {
 /// 前端通知 Rust：当前是否有 HTML 弹框（聊天/看屏/画图/菜单…）可见。
 /// 弹框可见时强制窗口可交互（关掉点击穿透），保证弹框上的 × / 按钮一定点得到；
 /// 全部关闭后恢复穿透（不挡桌面）。直接信号、不依赖 pet-rect 广播，避免全屏/看屏时序竞态。
+/// 任一弹框打开时除了置 box_open（轮询据此关穿透），还主动把主窗 set_focus()——
+/// 否则全屏透明窗在 click-through 下没拿过焦点，首次点 × 会被 Windows 拿去"聚焦窗口"而非命中按钮，表现就是"关不掉"。
 #[tauri::command]
 fn set_box_open(open: bool, app: tauri::AppHandle) {
     if let Some(st) = app.try_state::<AppState>() {
         *st.box_open.lock().unwrap() = open;
+    }
+    if open {
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.set_focus();
+        }
     }
 }
 
