@@ -3419,12 +3419,37 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
       syncBoxOpen();
     }
   }
+  // 整屏 PNG 的 base64 可达数 MB：既拖慢 IPC、又让每条记录占几 MB。
+  // 缩到 ≤1280 再存（仍是 PNG，与 Rust 存 .png 的后缀一致，不用改后端）。
+  async function shrinkForMemory(dataUrl) {
+    if (!dataUrl) return '';
+    return await new Promise(res => {
+      const im = new Image();
+      im.onload = () => {
+        try {
+          const max = 1280;
+          const k = Math.min(1, max / Math.max(im.naturalWidth, im.naturalHeight));
+          const c = document.createElement('canvas');
+          c.width = Math.max(1, Math.round(im.naturalWidth * k));
+          c.height = Math.max(1, Math.round(im.naturalHeight * k));
+          c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+          res(c.toDataURL('image/png'));
+        } catch (e) { res(dataUrl); }   // 缩放失败就退回原图，别把记录弄丢
+      };
+      im.onerror = () => res(dataUrl);
+      im.src = dataUrl;
+    });
+  }
   async function recordMemory(question, answer) {
     if (!isTauri) { toast('记录功能需要桌面版（能截屏）'); return; }
     toast('正在保存截图…');
-    const img = await captureClean();
     try {
-      await invoke('save_memory', { question: question || '', answer: answer || '', image_b64: img || '' });
+      const raw = await captureClean();
+      const img = await shrinkForMemory(raw);
+      // 参数故意用单词 image：Tauri v2 会按 camelCase 重命名多词参数，
+      // 旧代码传 image_b64(snake_case) 在参数校验阶段就被拒，Rust 函数根本没进 → memories/ 从不生成。
+      // 单词参数不受命名转换影响，前后端都写 image 最稳。
+      await invoke('save_memory', { question: question || '', answer: answer || '', image: img || '' });
       toast('✅ 已记录到「我的记录」');
     } catch (e) {
       toast('记录失败：' + apiErrText(e));

@@ -781,7 +781,7 @@ fn memories_dir() -> Option<std::path::PathBuf> {
 }
 
 #[tauri::command]
-fn save_memory(question: String, answer: String, image_b64: String) -> Result<String, String> {
+fn save_memory(question: String, answer: String, image: String) -> Result<String, String> {
     let dir = memories_dir().ok_or_else(|| "无法确定 exe 所在目录".to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let ts = std::time::SystemTime::now()
@@ -790,7 +790,8 @@ fn save_memory(question: String, answer: String, image_b64: String) -> Result<St
         .unwrap_or(0);
     let id = format!("m{}", ts);
     // dataURL 去掉前缀后解码；空图也能存（仅文字记录）
-    let b64 = image_b64.split(',').nth(1).unwrap_or(&image_b64);
+    // 参数名用单词 image：与前端 invoke({ image }) 完全一致，避开 Tauri v2 的 camelCase 重命名。
+    let b64 = image.split(',').nth(1).unwrap_or(&image);
     if !b64.is_empty() {
         if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64) {
             let _ = std::fs::write(dir.join(format!("{}.png", id)), &bytes);
