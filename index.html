@@ -1064,6 +1064,28 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
   let lastRectKey = '';
   let boxOpen = false;            // 任一弹框可见时为 true，emitPetRect 据此把矩形扩成全窗口
   const openBoxes = new Set();
+  // ---------- 弹框单一清单：所有「可关闭浮层」只在这里登记一次 ----------
+  // MutationObserver / captureClean / Esc 关闭 / 点外关闭 四处全部引用本数组，不再各抄一份。
+  // 历史教训：memBox 曾漏进 observer 列表，导致单独开记录本时窗口仍是穿透态、× 点不到（2dac058）。
+  // 新增弹框只需改这一处；ctxMenu 虽不是 .box，但同样是「开着的浮层」，一并登记。
+  const BOX_IDS = [
+    'chatBox', 'answerBox', 'screenBox', 'memBox', 'tipsBox',
+    'paintBox', 'colorBox', 'outfitBox', 'ctxMenu',
+  ];
+  // 启动自检：DOM 里带 × 的 .box 都应已登记。漏了就直接报警，
+  // 别等某天出现「Esc 关不掉新弹框 / 穿透不恢复 / 截图带着弹框」再回头找。
+  // lyricsBox 是 .box 但没有 .close（歌词气泡，非交互弹框），会自动排除，无需维护排除清单。
+  (function checkBoxIds() {
+    try {
+      const domClosables = [...document.querySelectorAll('.box[id]')]
+        .filter(el => el.querySelector('.close'))
+        .map(el => el.id);
+      const missing = domClosables.filter(id => !BOX_IDS.includes(id));
+      const dangling = BOX_IDS.filter(id => !document.getElementById(id));
+      if (missing.length) console.warn('[BOX_IDS] 可关闭弹框未登记（Esc/点外关闭/穿透会失效）:', missing);
+      if (dangling.length) console.warn('[BOX_IDS] 清单里有 DOM 中不存在的 id:', dangling);
+    } catch (_) {}
+  })();
   // 截图(captureClean)会临时隐藏弹框，若此时让 observer 上报 false，窗口会瞬间进入穿透态；
   // 这期间强制保持"有框→可交互"，杜绝 false→true 的 IPC 抖动把窗口永久卡在穿透态。
   let suppressBoxSync = false;
@@ -1091,7 +1113,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     if (boxOpen) emitter('pet-rect', [0, 0, W, H]).catch(() => {});
     else { lastRectKey = ''; emitPetRect(); }
   }
-  ['answerBox', 'screenBox', 'tipsBox', 'paintBox', 'ctxMenu', 'chatBox', 'colorBox', 'outfitBox', 'memBox'].forEach(id => {
+  BOX_IDS.forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     new MutationObserver(() => {
@@ -3403,7 +3425,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     if (isTauri) invoke('set_box_open', { open: true }).catch(() => {});
     const hides = [];
     try {
-      ['chatBox', 'answerBox', 'screenBox', 'memBox', 'ctxMenu', 'tipsBox', 'paintBox', 'colorBox', 'outfitBox'].forEach(id => {
+      BOX_IDS.forEach(id => {
         const el = document.getElementById(id);
         if (el && !el.classList.contains('hidden')) { el.classList.add('hidden'); hides.push(el); }
       });
@@ -3532,25 +3554,23 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
   document.getElementById('memOpenFolder').addEventListener('click', () => { if (isTauri) invoke('open_memories_folder').catch(() => toast('打开失败')); });
   memBox.querySelector('.close').addEventListener('click', () => memBox.classList.add('hidden'));
 
-  // ---------- 关闭健壮性：Esc 关掉所有弹框；点弹框外部即关闭（菜单单独处理） ----------
+  // ---------- 关闭健壮性：Esc 关掉所有弹框；点弹框外部即关闭（清单统一用 BOX_IDS） ----------
+  // ctxMenu 已并入 BOX_IDS，不再单独处理：点外关闭的 !el.contains(t) 判断对菜单同样成立。
   window.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
-      ['chatBox', 'answerBox', 'screenBox', 'memBox', 'tipsBox', 'paintBox', 'colorBox', 'outfitBox'].forEach(id => {
+      BOX_IDS.forEach(id => {
         const el = document.getElementById(id);
         if (el && !el.classList.contains('hidden')) el.classList.add('hidden');
       });
-      document.getElementById('ctxMenu').classList.add('hidden');
     }
   });
   document.addEventListener('mousedown', e => {
     if (picking) return; // 框选中时不处理
     const t = e.target;
-    ['chatBox', 'answerBox', 'screenBox', 'memBox', 'tipsBox', 'paintBox', 'colorBox', 'outfitBox'].forEach(id => {
+    BOX_IDS.forEach(id => {
       const el = document.getElementById(id);
       if (el && !el.classList.contains('hidden') && !el.contains(t)) el.classList.add('hidden');
     });
-    const cm = document.getElementById('ctxMenu');
-    if (cm && !cm.classList.contains('hidden') && !cm.contains(t)) cm.classList.add('hidden');
   });
 
   // 诊断面板：Ctrl+Shift+D 开关。把"前端 boxOpen"与"Rust 实际 want_ignore(穿透?)/box_open"并排显示，
