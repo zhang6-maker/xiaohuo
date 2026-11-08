@@ -3556,6 +3556,16 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
   // 诊断面板：Ctrl+Shift+D 开关。把"前端 boxOpen"与"Rust 实际 want_ignore(穿透?)/box_open"并排显示，
   // 排查"弹窗关不掉"时一眼看出：box 开着但 want_ignore=1（窗口仍在穿透）→ 就是穿透没关，× 点不到。
   const diagHud = document.getElementById('diagHud');
+  // 从已加载的资源 URL 里自省出本次前端构建哈希：一眼确认"我跑的到底是不是最新版"，
+  // 不用硬编码、改一次构建自动变。排查"修了怎么还不行"时先核这个。
+  const buildTag = (() => {
+    try {
+      const hit = (performance.getEntriesByType('resource') || [])
+        .map(r => r.name).find(n => /\/assets\/index-[^/]+\.js/.test(n));
+      const m = hit && hit.match(/index-([^/]+)\.js/);
+      return m ? m[1] : 'dev';
+    } catch (_) { return '?'; }
+  })();
   window.addEventListener('keydown', e => {
     if (e.ctrlKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
       e.preventDefault();
@@ -3571,7 +3581,8 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
       'Rust box_open: ' + boxOpenRust + '\n' +
       'Rust 穿透态  : ' + (wantIgnore ? '穿透(点不到)' : '可交互(可点)') + '\n' +
       '鼠标 in窗口  : ' + inside + '  over宠物:' + overPet + '\n' +
-      '鼠标 rel    : ' + lx + ',' + ly + '  dpr:' + (sf / 100);
+      '鼠标 rel    : ' + lx + ',' + ly + '  dpr:' + (sf / 100) + '\n' +
+      '本次构建    : ' + buildTag;
   }, 200);
 
   // 念念有词已并入聊天框：在聊天框里打字，小火用 ask_reply 回复，口型随 speakingUntil 自动跟随

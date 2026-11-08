@@ -634,8 +634,17 @@ fn toggle_pick(full: bool, app: tauri::AppHandle) {
                 let _ = w.set_size(tauri::LogicalSize::new(lw, lh));
                 let _ = w.set_position(tauri::LogicalPosition::new(0.0, 0.0));
             }
-            let _ = w.set_ignore_cursor_events(true);
-            eprintln!("[pick] 退出框选，还原全屏透明层");
+            // 只有"没有任何弹框"时才恢复穿透。搜一搜/看屏退出后紧接着要显示结果框，
+            // 若这里无条件开穿透，结果框上的 × / 📝记忆 会点不到，且轮询的 last_ignore
+            // 缓存会因此失同步、永不纠正。有框时保持可交互，交给轮询/自愈统一决定。
+            let has_box = app
+                .try_state::<AppState>()
+                .map(|st| *st.box_open.lock().unwrap_or_else(|e| e.into_inner()))
+                .unwrap_or(false);
+            if !has_box {
+                let _ = w.set_ignore_cursor_events(true);
+            }
+            eprintln!("[pick] 退出框选，还原全屏透明层（has_box={}）", has_box);
         }
     }
     if let Some(st) = app.try_state::<AppState>() {
@@ -655,6 +664,16 @@ fn set_box_open(open: bool, app: tauri::AppHandle) {
         let mut b = st.box_open.lock().unwrap_or_else(|e| e.into_inner());
         if !*b && open { rising = true; }
         *b = open;
+    }
+    // 【关键】直接纠正窗口的实际穿透态，而不只是改一个 bool 标志。
+    // toggle_pick(false) 等处会绕过轮询直接 set_ignore_cursor_events(true)，
+    // 轮询里的局部缓存 last_ignore 因此失同步、"值没变"就永不下发 → 窗口永久穿透，
+    // 弹框里的 × / 📝记忆 / 发送 全部点不到（时好时坏、修了又坏的根因）。
+    // 每次 open=true（含前端每 400ms 的自愈调用）都强制一次，把实际状态拉回可交互。
+    if open {
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.set_ignore_cursor_events(false);
+        }
     }
     // 只在 false→true 的上升沿抢焦点。前端每 400ms 会周期性重申"有框开着"做自愈，
     // 若每次都 set_focus()，用户打字时焦点会被反复抢走。
