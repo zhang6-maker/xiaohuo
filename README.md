@@ -3,7 +3,8 @@
 > 一只住在桌面最上层的透明火柴人。它平时**不挡事**——鼠标可以直接穿过它去点桌面；需要它干活时，它会"看"你的屏幕：圈一块区域，让它讲题、解释、画张简笔画，或者点评你的涂鸦。
 
 基于 **Tauri v2 + Rust**，AI 能力调用 **智谱 GLM-4V** 多模态模型。
-提供 **预编译 exe（约 4MB）** 作为 [GitHub Releases](https://github.com/zhang6-maker/xiaohuo/releases) 附件，下载后填入你自己的 API Key 就能直接启动——**不需要装 Rust / Node**。
+[GitHub Releases](https://github.com/zhang6-maker/xiaohuo/releases) 提供**预编译便携包（约 8MB）**：解压 → 填入**你自己的**智谱 API Key → 双击即可，**不需要装 Rust / Node**。
+仓库、exe、便携包**均不含任何真实 API Key**（详见[关于隐私](#关于隐私)）。
 
 ---
 
@@ -27,6 +28,7 @@
 - AI 请求由 **Rust 端直连智谱官方接口** `open.bigmodel.cn`，**不经过本项目作者的任何服务器**。
 - API Key 只存在你本地的 `.env` 里，**不会被打包进 exe**，也不写入任何远程存储。
 - 被上传的**只有你主动框选的那块画面**。不框选就没有任何上传行为。
+- 「📝 记忆」功能把问题 / 回答 / 截图**只存在 exe 同级的 `memories/` 目录**，纯本地、不上传。换机器或删除程序前请自行备份该目录；**发布包里绝不会带上它**。
 
 ---
 
@@ -40,16 +42,22 @@
 
 ## 快速开始（推荐，无需编译）
 
-1. 把仓库根目录的 `.env.example` **复制一份，改名为 `.env`**，放在 `xiaohuo.exe` **同目录**下。
-2. 打开 `.env`，填进你的 key：
+1. 到 [GitHub Releases](https://github.com/zhang6-maker/xiaohuo/releases) 下载 **`xiaohuo-portable.zip`**（或单独下 `xiaohuo.exe`），解压到任意文件夹。
+2. 把包里的 `.env.example` **改名为 `.env`**，用记事本打开，填进你自己的 key：
 
    ```
    ZHIPU_API_KEY=你的key
    ```
 
-3. **双击 `xiaohuo.exe`**。桌面上出现透明火柴人即成功。
+   - `.env` 必须和 `xiaohuo.exe` **在同一个目录**；改完要**重启程序**（配置只在启动时读一次）。
+   - key 在 https://bigmodel.cn/console/apikeys **免费领取**。本项目**不附带任何 key**，也不会把 key 内置进 exe。
+   - 包里其余两项 `ZHIPU_VISION_MODEL` / `ZHIPU_DRAW_MODEL` 是可选的，留空即用免费默认模型。
 
-鼠标移到它身上会变得可交互；**长按**唤出功能菜单，里面才是框选 / 提问 / 画图这些入口。
+3. **双击 `xiaohuo.exe`**。桌面上出现透明火柴人即成功。
+   - 首次运行可能弹出 Windows SmartScreen「已保护你的电脑」→ 点「**详细信息 → 仍要运行**」（个人项目未买代码签名证书，属正常，不是病毒告警）。
+   - 若窗口空白 / 打不开 → 安装 [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)（Win10/11 通常已自带）。
+
+鼠标移到它身上会变得可交互；**长按**唤出功能菜单，里面才是框选 / 提问 / 画图这些入口。想退出：右键 →「⏻ 退出」。
 
 ### `.env` 配置说明
 
@@ -67,22 +75,19 @@
 
 前提：安装 [Rust](https://rustup.rs)（stable MSVC）与 [Node.js](https://nodejs.org)。
 
-**双击根目录的 `build.bat`**，它会自动完成：
-
-1. 定位 `cargo`（不在 PATH 时自动尝试 `%USERPROFILE%\.cargo\bin`）；
-2. 若尚无 `dist/`，先用 npm 构建前端；
-3. `cargo build --release` 编译出 exe；
-4. 把 exe 拷回仓库根目录；
-5. **自动删除 `src-tauri/target/`**——那是编译产生的几百 MB 中间文件，**只保留 exe**，目录保持干净。
-
-> `cargo build --release` 只产出 exe，不会打包 MSI / NSIS 安装器，所以删掉 `target/` 完全不影响运行。
-
-如果你想亲手敲命令：
+仓库里**没有 `build.bat`**（早期版本有过，为避免二进制/脚本污染 git 历史已移除）。请按两步手动构建：
 
 ```bash
+npm install
+npm run build                # 生成 dist/（vite 会自动把 qd 兜底数据回填进 dist/qd）
 cd src-tauri
-cargo build --release     # 产物：src-tauri/target/release/xiaohuo.exe
+cargo build --release        # 产物：src-tauri/target/release/xiaohuo.exe
 ```
+
+> Windows 上 `cargo` 若不在 PATH，用 `%USERPROFILE%\.cargo\bin\cargo.exe`。
+> `cargo build --release` 只产出**裸 exe**（不生成 MSI / NSIS 安装器）；前端资产靠 `custom-protocol` 已压进 exe，**运行时不需要 dist/**。
+> **前端改过必须先 `npm run build` 再 `cargo build --release`**，否则嵌进的是旧前端。
+> 验证是否嵌对：搜 exe 字节里 `/assets/index-<hash>.js` 的 hash 是否与本次构建一致。
 
 ---
 
@@ -90,6 +95,12 @@ cargo build --release     # 产物：src-tauri/target/release/xiaohuo.exe
 
 **双击 exe 没反应 / 窗口看不见？**
 窗口是透明的，内容由 WebView2 渲染。若完全空白，多半是缺 WebView2 运行时，装上再试。
+
+**弹出「Windows 已保护你的电脑」？**
+未签名的个人项目会触发 SmartScreen。点「**详细信息 → 仍要运行**」即可，这是签名提示而非病毒告警。
+
+**AI 一直返回 429？**
+智谱免费模型有调用频率/额度限制，稍等一会儿再试，或去控制台升级套餐。这不代表 key 泄露。
 
 **提示「未配置 ZHIPU_API_KEY」？**
 `.env` 必须和 `xiaohuo.exe` **在同一个目录**里，且变量名是 `ZHIPU_API_KEY`（别带空格或引号）。改完要**重启程序**，`dotenv` 只在启动时读一次。
