@@ -24,7 +24,9 @@ name = "xiaohuo_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [profile.release]
-panic = "abort"
+# 桌面宠物是长驻程序：绝不能用 panic="abort"（任何一处 panic 会让整个进程静默消失，
+# 且 catch_unwind 在 abort 模式下完全无效）。改 unwind 后崩溃可被拦截/记录，不会突然退出。
+panic = "unwind"
 opt-level = "s"
 lto = true
 strip = true

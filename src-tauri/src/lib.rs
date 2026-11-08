@@ -26,8 +26,39 @@ struct AppState {
     drag_start: Arc<Mutex<Option<tauri::PhysicalPosition<f64>>>>,
 }
 
+/// 崩溃留痕：GUI 程序没有控制台，eprintln! 用户根本看不到；
+/// 把 panic 写进 exe 旁的 xiaohuo-crash.log，下次"自动退出"就能直接查到原因。
+fn install_crash_log() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default_hook(info);
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let loc = info.location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "未知位置".into());
+        let msg = format!(
+            "[unix {}] panic @ {} : {}\n{}\n---\n",
+            ts, loc, info, std::backtrace::Backtrace::capture()
+        );
+        if let Some(dir) = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        {
+            let _ = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(dir.join("xiaohuo-crash.log"))
+                .and_then(|mut f| f.write_all(msg.as_bytes()));
+        }
+    }));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    install_crash_log();
     tauri::Builder::default()
         .manage(AppState {
             picking: Arc::new(Mutex::new(false)),
@@ -137,7 +168,7 @@ pub fn run() {
 
                     // 悬停判定（全部在设备像素下做，与 lx/ly 同源）：
                     // 在宠物包围盒内 → 关穿透(可交互)；否则穿透(不挡桌面)
-                    let pr = *rect_poll.lock().unwrap_or_else(|_| rect_poll.lock().unwrap());
+                    let pr = *rect_poll.lock().unwrap_or_else(|e| e.into_inner());
                     // 窗口实际尺寸用 GetWindowRect 取（设备像素），不再写死 480/540，
                     // 这样全屏铺满或切回小窗时 inside 判定都正确（hwnd 取不到时退回 480×540 兜底）
                     let (win_w, win_h) = if wr_r > wr_l && wr_b > wr_t {
@@ -160,9 +191,9 @@ pub fn run() {
 
                     // 框选态：强制完全可交互（否则全屏下框选点不到）
                     // 拖拽态：也强制完全可交互，免得拖快了光标离开宠物包围盒后穿透被打开、丢鼠标事件导致拖拽卡死
-                    let picking_now = *picking.lock().unwrap_or_else(|_| picking.lock().unwrap());
-                    let dragging_now = *dragging.lock().unwrap_or_else(|_| dragging.lock().unwrap());
-                    let box_open_now = *box_open.lock().unwrap_or_else(|_| box_open.lock().unwrap());
+                    let picking_now = *picking.lock().unwrap_or_else(|e| e.into_inner());
+                    let dragging_now = *dragging.lock().unwrap_or_else(|e| e.into_inner());
+                    let box_open_now = *box_open.lock().unwrap_or_else(|e| e.into_inner());
                     // box_open 为 true（任一弹框可见）→ 强制可交互，确保 × / 按钮一定点得到
                     let want_ignore = if picking_now || dragging_now || box_open_now {
                         false
@@ -203,15 +234,44 @@ pub fn run() {
 /// 截全屏 → 编码 PNG → 返回 data URL。框选前抓一次，保证框选看到的是"点击前"的真实屏幕。
 #[tauri::command]
 fn capture_screen() -> Result<String, String> {
+    // 兜底：panic=unwind 后，任何残留 panic 都在这里被抓住并转成普通错误，
+    // 绝不让"截个图"把整个桌宠进程带走（旧版 abort 模式下表现就是突然消失）。
+    match std::panic::catch_unwind(capture_screen_inner) {
+        Ok(r) => r,
+        Err(_) => Err(
+            "截屏内部异常，已被拦截（程序没有退出）。详情见 exe 同目录 xiaohuo-crash.log；稍后重试即可，反复出现多为远程桌面/锁屏/显卡驱动所致。".into(),
+        ),
+    }
+}
+
+fn capture_screen_inner() -> Result<String, String> {
     unsafe {
         let screen: HDC = GetDC(None); // None = 整个桌面
         let sw = GetSystemMetrics(SM_CXSCREEN);
         let sh = GetSystemMetrics(SM_CYSCREEN);
         eprintln!("[capture] 开始截屏: {}x{}", sw, sh);
+        // 尺寸校验：0 / 负值 / 异常大值会让 vec! 分配 0 字节或天文数字 → OOM 直接 abort。
+        // 远程桌面断开、锁屏、屏幕关闭时 GetSystemMetrics 常返回 0。
+        if sw <= 0 || sh <= 0 || sw > 16384 || sh > 16384 {
+            let _ = ReleaseDC(None, screen);
+            return Err(format!(
+                "截屏失败：读到的屏幕尺寸异常（{}×{}）。常见于远程桌面断开、锁屏或屏幕关闭，回到桌面后重试即可。",
+                sw, sh
+            ));
+        }
+        let px = (sw as usize)
+            .checked_mul(sh as usize)
+            .and_then(|n| n.checked_mul(4))
+            .ok_or_else(|| "截屏失败：图像尺寸溢出".to_string())?;
+        if px > 512 * 1024 * 1024 {
+            let _ = ReleaseDC(None, screen);
+            return Err("截屏失败：屏幕太大（超过 512MB 缓冲上限）".into());
+        }
+
         let mem: HDC = CreateCompatibleDC(Some(screen));
         let bmp: HBITMAP = CreateCompatibleBitmap(screen, sw, sh);
         let old: HGDIOBJ = SelectObject(mem, HGDIOBJ(bmp.0));
-        let _ = BitBlt(mem, 0, 0, sw, sh, Some(screen), 0,0, SRCCOPY);
+        let _ = BitBlt(mem, 0, 0, sw, sh, Some(screen), 0, 0, SRCCOPY);
 
         let mut bmi: BITMAPINFO = std::mem::zeroed();
         bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
@@ -221,7 +281,7 @@ fn capture_screen() -> Result<String, String> {
         bmi.bmiHeader.biBitCount = 32u16;
         bmi.bmiHeader.biCompression = 0u32; // BI_RGB = 0
 
-        let mut buf = vec![0u8; (sw as i64 * sh as i64 * 4) as usize];
+        let mut buf = vec![0u8; px];
         let lines = GetDIBits(
             mem,
             bmp,
@@ -235,15 +295,23 @@ fn capture_screen() -> Result<String, String> {
         let _ = DeleteObject(HGDIOBJ(bmp.0));
         let _ = DeleteDC(mem);
         let _ = ReleaseDC(None, screen);
-        if lines == 0 {
-            eprintln!("[capture] 失败: GetDIBits 返回 0 行（权限/DWM 合成问题）");
-            return Err("截屏失败（GetDIBits 返回 0）".into());
+        // 少于请求行数 = 拿到的是半张黑图，别把"看起来没内容"的图丢给模型
+        if lines != sh {
+            eprintln!("[capture] 失败: GetDIBits 只读到 {}/{} 行", lines, sh);
+            return Err(format!(
+                "截屏失败：像素读取不完整（{}/{} 行）。多为远程桌面、锁屏或 DWM 合成限制，回到桌面后重试即可。",
+                lines, sh
+            ));
         }
 
         // BGRA → RGBA（忽略 alpha）
         let mut rgba = Vec::with_capacity(buf.len());
         for c in buf.chunks_exact(4) {
             rgba.extend_from_slice(&[c[2], c[1], c[0], 255]);
+        }
+        // png crate 遇到数据长度不匹配会 panic，先自查，别把进程交出去
+        if rgba.len() != (sw as usize) * (sh as usize) * 4 {
+            return Err("截屏失败：像素数据长度异常".into());
         }
 
         let mut png_data = Vec::new();
@@ -567,7 +635,7 @@ fn toggle_pick(full: bool, app: tauri::AppHandle) {
         }
     }
     if let Some(st) = app.try_state::<AppState>() {
-        *st.picking.lock().unwrap() = full;
+        *st.picking.lock().unwrap_or_else(|e| e.into_inner()) = full;
     }
 }
 
@@ -579,7 +647,7 @@ fn toggle_pick(full: bool, app: tauri::AppHandle) {
 #[tauri::command]
 fn set_box_open(open: bool, app: tauri::AppHandle) {
     if let Some(st) = app.try_state::<AppState>() {
-        *st.box_open.lock().unwrap() = open;
+        *st.box_open.lock().unwrap_or_else(|e| e.into_inner()) = open;
     }
     if open {
         if let Some(w) = app.get_webview_window("main") {
@@ -835,18 +903,18 @@ fn open_memories_folder() -> Result<(), String> {
 fn drag_start(app: tauri::AppHandle, state: tauri::State<AppState>) {
     if let Some(w) = app.get_webview_window("main") {
         if let Ok(p) = w.outer_position() {
-            *state.drag_start.lock().unwrap() =
+            *state.drag_start.lock().unwrap_or_else(|e| e.into_inner()) =
                 Some(tauri::PhysicalPosition::new(p.x as f64, p.y as f64));
         }
     }
-    *state.dragging.lock().unwrap() = true;
+    *state.dragging.lock().unwrap_or_else(|e| e.into_inner()) = true;
 }
 
 #[tauri::command]
 fn drag_move(dx: f64, dy: f64, app: tauri::AppHandle, state: tauri::State<AppState>) {
     if let Some(w) = app.get_webview_window("main") {
         let sf = w.scale_factor().unwrap_or(1.0);
-        if let Some(start) = *state.drag_start.lock().unwrap() {
+        if let Some(start) = *state.drag_start.lock().unwrap_or_else(|e| e.into_inner()) {
             let nx = start.x + dx * sf;
             let ny = start.y + dy * sf;
             let _ = w.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(nx as i32, ny as i32)));
@@ -856,6 +924,6 @@ fn drag_move(dx: f64, dy: f64, app: tauri::AppHandle, state: tauri::State<AppSta
 
 #[tauri::command]
 fn drag_end(state: tauri::State<AppState>) {
-    *state.dragging.lock().unwrap() = false;
-    *state.drag_start.lock().unwrap() = None;
+    *state.dragging.lock().unwrap_or_else(|e| e.into_inner()) = false;
+    *state.drag_start.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
