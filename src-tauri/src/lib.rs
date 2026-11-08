@@ -650,10 +650,15 @@ fn toggle_pick(full: bool, app: tauri::AppHandle) {
 /// 否则全屏透明窗在 click-through 下没拿过焦点，首次点 × 会被 Windows 拿去"聚焦窗口"而非命中按钮，表现就是"关不掉"。
 #[tauri::command]
 fn set_box_open(open: bool, app: tauri::AppHandle) {
+    let mut rising = false;
     if let Some(st) = app.try_state::<AppState>() {
-        *st.box_open.lock().unwrap_or_else(|e| e.into_inner()) = open;
+        let mut b = st.box_open.lock().unwrap_or_else(|e| e.into_inner());
+        if !*b && open { rising = true; }
+        *b = open;
     }
-    if open {
+    // 只在 false→true 的上升沿抢焦点。前端每 400ms 会周期性重申"有框开着"做自愈，
+    // 若每次都 set_focus()，用户打字时焦点会被反复抢走。
+    if rising {
         if let Some(w) = app.get_webview_window("main") {
             let _ = w.set_focus();
         }

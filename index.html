@@ -1064,6 +1064,9 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
   let lastRectKey = '';
   let boxOpen = false;            // 任一弹框可见时为 true，emitPetRect 据此把矩形扩成全窗口
   const openBoxes = new Set();
+  // 截图(captureClean)会临时隐藏弹框，若此时让 observer 上报 false，窗口会瞬间进入穿透态；
+  // 这期间强制保持"有框→可交互"，杜绝 false→true 的 IPC 抖动把窗口永久卡在穿透态。
+  let suppressBoxSync = false;
   function emitPetRect() {
     if (!emitter) return;
     if (boxOpen) {                // 弹框开着：扩成全窗口，让 Rust 关穿透，框上 ×/按钮才点得到
@@ -1081,7 +1084,9 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     boxOpen = openBoxes.size > 0;
     // 直接、可靠地通知 Rust 是否有框开着：框开着→强制可交互(×才点得到)，关掉→恢复穿透。
     // 不再只靠 pet-rect 整窗广播（那条链路在全屏/看屏时序下会竞态，导致"框开着窗口却穿透、×点不到"）。
-    if (isTauri) invoke('set_box_open', { open: boxOpen }).catch(() => {});
+    // 截图隐藏弹框期间(suppressBoxSync)强制上报 true，避免窗口掉进穿透态。
+    const reported = suppressBoxSync ? true : boxOpen;
+    if (isTauri) invoke('set_box_open', { open: reported }).catch(() => {});
     if (!emitter) return;
     if (boxOpen) emitter('pet-rect', [0, 0, W, H]).catch(() => {});
     else { lastRectKey = ''; emitPetRect(); }
@@ -1095,6 +1100,13 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
       syncBoxOpen();
     }).observe(el, { attributes: true, attributeFilter: ['class'] });
   });
+  // 自愈：只要还有弹框可见，就周期性重申"强制可交互"。
+  // 即使某次 set_box_open IPC 丢失/乱序（截图时快速隐藏恢复弹框尤其容易），
+  // 窗口也不会永久卡在穿透态、导致框里的 × / 📝记忆 / 发送 全部点不到。
+  // Rust 侧只在 false→true 上升沿 set_focus，重复上报不会反复抢焦点。
+  setInterval(() => {
+    if (isTauri && openBoxes.size > 0) invoke('set_box_open', { open: true }).catch(() => {});
+  }, 400);
 
   // ---------- 构建火柴人 ----------
   function buildFigure(pose, t) {
@@ -3384,16 +3396,28 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
   }
   // 隐藏所有弹框后截屏，得到干净的环境截图（不含小火的弹框遮罩）
   async function captureClean() {
+    // 全程保持"有框→可交互"：隐藏弹框只为得到干净截图，绝不能让窗口掉进穿透态。
+    // 否则 observer 会发 set_box_open(false)，截图这几百毫秒里窗口穿透，
+    // 后续 true 若丢失/乱序，窗口就永久穿透 —— 框内按钮（含 📝记忆）全部点不到。
+    suppressBoxSync = true;
+    if (isTauri) invoke('set_box_open', { open: true }).catch(() => {});
     const hides = [];
-    ['chatBox', 'answerBox', 'screenBox', 'memBox', 'ctxMenu', 'tipsBox', 'paintBox', 'colorBox', 'outfitBox'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el && !el.classList.contains('hidden')) { el.classList.add('hidden'); hides.push(el); }
-    });
-    await new Promise(r => setTimeout(r, 90)); // 等合成器把弹框隐去的帧画完
-    let url = '';
-    try { url = await invoke('capture_screen'); } catch (e) { url = ''; }
-    hides.forEach(el => el.classList.remove('hidden'));
-    return url;
+    try {
+      ['chatBox', 'answerBox', 'screenBox', 'memBox', 'ctxMenu', 'tipsBox', 'paintBox', 'colorBox', 'outfitBox'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && !el.classList.contains('hidden')) { el.classList.add('hidden'); hides.push(el); }
+      });
+      await new Promise(r => setTimeout(r, 90)); // 等合成器把弹框隐去的帧画完
+      try { return await invoke('capture_screen'); } catch (e) { return ''; }
+    } finally {
+      // 无论成功/异常都必须复位，否则 suppressBoxSync 卡在 true 会让窗口永远不恢复穿透（挡桌面）。
+      hides.forEach(el => el.classList.remove('hidden'));
+      // 按真实 DOM 立即重算集合：observer 的回调是 microtask、此刻还没跑，
+      // 若直接 syncBoxOpen() 会误算成"没有框"又发一次 false。重算后只会发 true。
+      hides.forEach(el => { if (!el.classList.contains('hidden')) openBoxes.add(el.id); });
+      suppressBoxSync = false;
+      syncBoxOpen();
+    }
   }
   async function recordMemory(question, answer) {
     if (!isTauri) { toast('记录功能需要桌面版（能截屏）'); return; }
