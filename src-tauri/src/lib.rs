@@ -282,6 +282,11 @@ fn capture_screen_inner() -> Result<String, String> {
         bmi.bmiHeader.biCompression = 0u32; // BI_RGB = 0
 
         let mut buf = vec![0u8; px];
+        // 【关键修复】MSDN 明确要求：传给 GetDIBits 的 hbmp 不能正被选入任何 DC。
+        // 旧代码在 SelectObject 选入状态下直接调用 → 未定义行为，Windows 事件日志记录为
+        // 0xc0000005 访问冲突 / 0xc000041d 致命回调异常，表现就是"截图失败 + 桌宠突然退出"。
+        // 必须先换出位图，再读像素。
+        let _ = SelectObject(mem, old);
         let lines = GetDIBits(
             mem,
             bmp,
@@ -291,7 +296,6 @@ fn capture_screen_inner() -> Result<String, String> {
             &mut bmi,
             DIB_RGB_COLORS,
         );
-        let _ = SelectObject(mem, old);
         let _ = DeleteObject(HGDIOBJ(bmp.0));
         let _ = DeleteDC(mem);
         let _ = ReleaseDC(None, screen);
