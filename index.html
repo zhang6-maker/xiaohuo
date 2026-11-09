@@ -2121,6 +2121,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
       this.drawDur = 2600;         // 逐笔画出耗时（小火一笔笔画）
       this.life = 11000;           // 总寿命：画完展示约 8.4s 后消散
       this.color = '#2b2b2f';
+      this.lw = 3;                 // 线宽：写字会单独改细，其余画作沿用 3
     }
   }
   // 真·粒子烟花：升空 → 爆开 → 重力下落 → 渐隐（取代原来的静态放射线，看着才像烟花）
@@ -2477,7 +2478,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
       const p = clamp(age / art.drawDur, 0, 1); const n = art.strokes.length;
       const doneUpTo = p * n;     // 已画到第几笔（含局部进度）
       ctx.save();
-      ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.lineWidth = art.lw || 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
       ctx.globalAlpha = age > art.life - 1500 ? clamp((art.life - age) / 1500, 0, 1) : 1;  // 末段渐隐消散
       for (let s = 0; s < n; s++) {
         const st = art.strokes[s]; const local = clamp(doneUpTo - s, 0, 1);
@@ -2912,10 +2913,11 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     artworkPool.push(art); activeArt = art;
     setState('paint', 12000);
   }
-  // 屏幕写字：把文字栅格化后用"扫描线"转成一组可逐笔播放的笔画（零依赖，任意中英文/表情都支持）。
-  // color 用 '__body__' 哨兵：渲染时取当前人物色 S.color，实现"字迹与人物同色、随心情变化"。
+  // 屏幕写字：先把文字栅格化，再用 Moore-neighbor 轮廓追踪把每个字部件描成一条有序轮廓线，
+  // 渲染时沿点序逐段写出 → 视觉上像"一笔一划勾边"。color 用 '__body__' 哨兵，取当前人物色 S.color。
+  // 零依赖：任意中英文/表情都支持；线宽由 startWrite 单独设细，避免之前扫描线又粗又不像手写的问题。
   function textToStrokes(text) {
-    const fontSize = clamp(Math.round(46 - text.length * 1.2), 26, 52);
+    const fontSize = clamp(Math.round(50 - text.length * 1.0), 28, 56);
     const font = `bold ${fontSize}px "Microsoft YaHei","PingFang SC","Hiragino Sans GB","Source Han Sans SC","Noto Sans CJK SC",sans-serif`;
     const meas = document.createElement('canvas').getContext('2d');
     meas.font = font;
@@ -2928,46 +2930,91 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     g.font = font; g.textBaseline = 'middle'; g.textAlign = 'left';
     g.fillStyle = '#fff'; g.fillText(text, pad, ch / 2);
     const data = g.getImageData(0, 0, cw, ch).data;
-    const ink = (x, y) => data[(y * cw + x) * 4 + 3] > 90;
-    const strokes = [];
-    const step = Math.max(1, Math.round(fontSize / 26));   // 行采样步长：字号越大行距越大，避免笔画过碎
-    for (let y = 0; y < ch; y += step) {
-      let x = 0;
-      while (x < cw) {
-        if (ink(x, y)) {
-          let x2 = x;
-          while (x2 < cw && ink(x2, y)) x2++;
-          strokes.push({ color: '__body__', prim: 'line', a: [x - pad, y - pad, x2 - 1 - pad, y - pad] });
-          x = x2;
-        } else x++;
-      }
+    const mask = new Uint8Array(cw * ch);
+    for (let i = 0; i < cw * ch; i++) mask[i] = data[i * 4 + 3] > 90 ? 1 : 0;
+    // ---- 轮廓追踪（Moore-neighbor, 8 邻域顺时针）----
+    const TR8 = [[-1, 0], [-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1]];
+    const dirIdx = (dx, dy) => { for (let i = 0; i < 8; i++) if (TR8[i][0] === dx && TR8[i][1] === dy) return i; return 0; };
+    const vis = new Uint8Array(cw * ch);
+    function flood(x, y) {                       // 4 邻填充整连通分量，避免同一部件被重复追踪
+      const st = [[x, y]];
+      while (st.length) { const p = st.pop(); const px = p[0], py = p[1];
+        if (px < 0 || py < 0 || px >= cw || py >= ch) continue;
+        const ii = py * cw + px; if (mask[ii] && !vis[ii]) { vis[ii] = 1; st.push([px + 1, py], [px - 1, py], [px, py + 1], [px, py - 1]); } }
     }
-    return { strokes, w: tw, h: th };
+    function traceOne(sx, sy) {                  // 从边界像素 (sx,sy) 顺时针绕一圈回到起点
+      let cx = sx, cy = sy, bIdx = 0; const cont = [[cx, cy]]; vis[cy * cw + cx] = 1;
+      let steps = 0; const MAX = cw * ch * 8; const stx = cx, sty = cy;
+      while (steps++ < MAX) {
+        let found = false;
+        for (let k = 1; k <= 8; k++) {
+          const d = TR8[(bIdx + k) % 8]; const nx = cx + d[0], ny = cy + d[1];
+          if (nx < 0 || ny < 0 || nx >= cw || ny >= ch) continue;
+          if (mask[ny * cw + nx]) { bIdx = dirIdx(cx - nx, cy - ny); cx = nx; cy = ny; cont.push([cx, cy]); vis[cy * cw + cx] = 1; found = true; break; }
+        }
+        if (!found) break;
+        if (cx === stx && cy === sty) break;
+      }
+      return cont;
+    }
+    const contours = [];
+    for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+      const i = y * cw + x;
+      if (mask[i] && !vis[i]) { flood(x, y); const c2 = traceOne(x, y); if (c2 && c2.length >= 4) contours.push(c2); }
+    }
+    const strokes = [];
+    for (const ct of contours) {
+      const thin = []; for (let i = 0; i < ct.length; i += 2) thin.push(ct[i]);   // 隔点抽稀，减少段数
+      if (thin.length < 3) continue;
+      const flat = []; for (const p of thin) flat.push(p[0] - pad, p[1] - pad);
+      strokes.push({ color: '__body__', prim: 'poly', a: flat });
+    }
+    // 按轮廓左边界排，写出来大致从左到右（适合左右结构的汉字）
+    strokes.sort((s1, s2) => {
+      const minx = (a) => { let m = 1e9; for (let i = 0; i < a.length; i += 2) m = Math.min(m, a[i]); return m; };
+      return minx(s1.a) - minx(s2.a);
+    });
+    return { strokes, w: tw, h: th, fontSize };
   }
-  function startWrite(text) {
+  function startWrite(text, customMs) {
     text = (text || '').trim();
     if (!text) { addChat('sys', '✍️ 写点啥？'); return; }
     if (text.length > 30) text = text.slice(0, 30);
-    const { strokes, w, h } = textToStrokes(text);
+    const r = textToStrokes(text);
+    const strokes = r.strokes;
     if (!strokes.length) { addChat('sys', '✍️ 这个我写不出来…'); return; }
     // 落点：屏幕中上方居中（"在屏幕上面写"），不挡火柴人主体
     const ax = W / 2, ay = clamp(H * 0.26, 80, H * 0.5);
-    const offX = ax - w / 2, offY = ay - h / 2;
-    for (const s of strokes) s.a = [s.a[0] + offX, s.a[1] + offY, s.a[2] + offX, s.a[3] + offY];
+    const offX = ax - r.w / 2, offY = ay - r.h / 2;
+    for (const s of strokes) {                              // poly 的 a 是扁平 [x0,y0,x1,y1,...]，整体平移
+      const na = []; for (let i = 0; i < s.a.length; i += 2) na.push(s.a[i] + offX, s.a[i + 1] + offY);
+      s.a = na;
+    }
     const art = new Drawing('write', ax, ay, strokes);
-    art.drawDur = clamp(text.length * 320, 1400, 3800);   // 写出耗时随字数（一笔笔浮现）
-    art.life = 600000;                                     // 10 分钟后自动消失
+    art.drawDur = clamp(strokes.length * 420, 1600, 4200);   // 每部件一笔，逐笔写出
+    art.life = (customMs && customMs > 0) ? customMs : 60000; // 默认 1 分钟；特意说"停留X"则尊重
+    art.lw = clamp(r.fontSize * 0.04, 1.4, 2.2);             // 细线，像手写勾边（不再又粗又糊）
     artworkPool.push(art); activeArt = art;
-    setState('paint', art.drawDur + 800);                  // 小火举笔写几秒，之后字继续留屏
+    setState('paint', art.drawDur + 800);                    // 小火举笔写几秒，之后字继续留屏
     addChat('pet', '✍️ 我来写～');
   }
-  // 从"在屏幕上写X / 写『X』"里抽出要写的文字；避开"写首诗"等让 AI 生成内容的聊天意图
+  // 从"在屏幕上写X / 写『X』"里抽出要写的文字，同时解析可选的"停留X分钟/秒"；
+  // 避开"写首诗"等让 AI 生成内容的聊天意图。返回 { text, ms } 或 null。
   function extractWriteText(tl) {
+    let text = null;
     const m = tl.match(/(?:在|到|于|往)?\s*(?:屏幕|桌面|屏|墙上|黑板|白板|这[儿里]|那[儿里])\s*[^写题留签]{0,6}?\s*(?:写|题|留|签)\s*[:：]?\s*["'『「]?\s*(.{1,30}?)\s*["'』」]?\s*$/);
-    if (m && m[1]) return m[1].trim();
-    const m2 = tl.match(/(?:写|题|留|签)\s*[:：]?\s*["'『「](.{1,30})["'』」]/);
-    if (m2) return m2[1].trim();
-    return null;
+    if (m && m[1]) text = m[1].trim();
+    else { const m2 = tl.match(/(?:写|题|留|签)\s*[:：]?\s*["'『「](.{1,30})["'』」]/); if (m2) text = m2[1].trim(); }
+    if (!text) return null;
+    // 解析"停留/停/保留 X 分钟|秒|小时"，无单位默认按分钟；未指定则 ms=null（用默认 1 分钟）
+    let ms = null;
+    const cn = { '一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10 };
+    const dm = tl.match(/(?:停留|留|停|保留)\s*([0-9]+|[一二两三四五六七八九十])\s*(分钟|分|秒钟|秒|小时|时)?/);
+    if (dm) {
+      let num = parseInt(dm[1], 10); if (isNaN(num)) num = cn[dm[1]] || null;
+      if (num) { const u = dm[2] || '分钟'; let f = 60000; if (/秒/.test(u)) f = 1000; else if (/小时|时/.test(u)) f = 3600000; ms = clamp(num * f, 10000, 7200000); }
+    }
+    return { text, ms };
   }
   // 画之前先联网查一下这东西长啥样（维基百科摘要），给"思考"提供真实形状参考，
   // 避免 LLM 在抽象坐标里瞎编。查不到/超时也不影响，照常画。
@@ -3178,7 +3225,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     const wt = extractWriteText(tl);
     if (wt) {
       addChat('sys', '✍️ 小火开始写…');
-      startWrite(wt);
+      startWrite(wt.text, wt.ms);
       return;
     }
     if (/唱|歌|sing|换一首|再来一首|下一首|点歌|换歌/.test(tl)) {
