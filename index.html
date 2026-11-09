@@ -3023,9 +3023,10 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
       setState('read', autoDuration('read'));
       return;
     }
-    // 词条搜索：前缀触发，或直接输入词表里收录的名词（鸡 / 猴子 / 房子…）也自动解释。
-    // 外网（维基 / DuckDuckGo）在本机常不可达，所以查不到时改让模型用自身知识答，
-    // 并备一份本地词典兜住「外网挂 + 429 + 没配 Key」三种情况。
+    // 词条理解：支持「搜索 X」「什么是 X」「X 是什么」「X 是什么意思」「解释一下 X」，以及直接打名词。
+    // 【顺序很重要】本地词典第一优先、命中即答。
+    // 外网(维基/DuckDuckGo)常不可达；而 ask_reply 的系统提示词强约束"1-2 句 30 字傲娇闲聊"，
+    // 问句若走那条链只会得到一句寒暄、根本不解释 —— 上一版把词典放在最后兜底是错的。
     const LOCAL_GLOSSARY = {
       '鸡': '鸡是人工驯养的家禽，由野生原鸡驯化而来；公鸡打鸣、母鸡下蛋，肉和蛋都是常见食物。',
       '猴子': '猴子是灵长类动物的俗称，聪明好动、手指灵活、善于攀爬，大多群居，喜欢吃水果和昆虫。',
@@ -3037,21 +3038,69 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
       '兔': '兔子是小型草食哺乳动物，长耳朵、短尾巴，善跳跃、繁殖快。',
       '鱼': '鱼是用鳃呼吸、靠鳍游泳的水生脊椎动物，种类极多。',
       '鸟': '鸟是长羽毛、前肢变成翅膀的卵生脊椎动物，多数会飞。',
+      '猪': '猪是常见家畜，杂食、长得快，肉和皮革都有用途。',
+      '鸭': '鸭是水禽，嘴扁、脚有蹼，善游泳，常成群在水边活动。',
+      '马': '马是善奔跑的大型家畜，过去用来拉车、骑乘，草食、群居。',
+      '老虎': '老虎是大型猫科猛兽，身上有黑色条纹，独居、善捕猎。',
+      '狮子': '狮子是群居的大型猫科动物，雄狮有鬃毛，多生活在草原。',
+      '熊': '熊是体型粗壮的杂食哺乳动物，力大、会爬树，冬天常冬眠。',
+      '熊猫': '大熊猫是中国的珍稀动物，黑白毛色，主要吃竹子。',
+      '大象': '大象是陆地上最大的哺乳动物，长鼻子、大耳朵，群居、记性好。',
+      '长颈鹿': '长颈鹿是世界上最高的陆生动物，脖子长，爱吃高处树叶。',
+      '蛇': '蛇是没有四肢的爬行动物，靠身体蜿蜒移动，多数靠吞食猎物。',
+      '青蛙': '青蛙是两栖动物，幼体是蝌蚪，长大后会跳、善捕虫。',
+      '蝴蝶': '蝴蝶是有鳞翅的昆虫，由毛毛虫变态而来，常吸食花蜜。',
+      '蜜蜂': '蜜蜂是群居昆虫，采花蜜、酿蜜，还能帮开花植物传粉。',
       '树': '树是有明显木质树干的高大植物，靠根吸水、叶进行光合作用。',
       '花': '花是种子植物的繁殖器官，常有花瓣和香味，用来吸引昆虫传粉。',
       '太阳': '太阳是离地球最近的恒星，给地球提供光和热，也是昼夜四季的根源。',
+      '月亮': '月亮是地球唯一的天然卫星，本身不发光，靠反射太阳光才被看见。',
+      '星星': '星星通常指夜空里可见的恒星，它们像太阳一样自己发光，只是离我们极远。',
+      '云': '云是空中由无数小水滴或小冰晶聚成的可见团块，水汽凝结就形成云。',
+      '雨': '雨是云里的小水滴变大后落到地面的降水，是水循环的重要一环。',
+      '雪': '雪是高空水汽直接凝成冰晶、飘落到地面的固态降水。',
+      '山': '山是地面明显高起、有一定坡度的地貌，常由地壳抬升或火山活动形成。',
+      '海': '海是大陆边缘的大片咸水水域，与大洋相连，占地球表面大部分。',
       '火箭': '火箭是靠向后高速喷气产生推力、能把载荷送进太空的飞行器。',
       '车': '车是带轮子、用来载人或运货的交通工具。',
+      '船': '船是水上航行的交通工具，靠浮力浮在水面，用桨、帆或发动机前进。',
+      '飞机': '飞机是有固定机翼、靠发动机推力与机翼升力在空中飞行的交通工具。',
+      '电脑': '电脑是能按程序存储、处理数据的电子设备，由硬件和软件组成。',
+      '手机': '手机是可随身带的无线通信设备，如今多是能装应用的智能手机。',
       '书': '书是把文字或图画装订成册的载体，用来记录与传播知识。',
+      '苹果': '苹果是常见水果，也是蔷薇科苹果树的果实，脆甜多汁、可生食。',
+      '蛋糕': '蛋糕是用面粉、蛋、糖等烤制的甜点，常在上面抹奶油做装饰。',
     };
-    const SEARCH_RE = /^(搜索|搜一下|查一下|查一查|词条|search|lookup)\s*(.+)$/i;
-    const sm = v.match(SEARCH_RE);
-    // 纯名词兜底：只认 ZH_EN / 本地模板里确实收录的词，避免把「你好」「嗯」这类闲聊误当词条
+    // 从各种问句里抽出真正的词条（纯字符串处理，不依赖网络/模型，可离线测试）
+    function extractTerm(raw) {
+      let t = String(raw || '').trim();
+      t = t.replace(/^(搜索|搜一下|查一下|查一查|词条|search|lookup)\s*/i, '').trim();
+      t = t.replace(/^(什么是|啥是|什么叫|解释一下|解释下|介绍一下|介绍下|说说|讲讲|告诉我|科普一下|查查|问问)\s*/i, '').trim();
+      t = t.replace(/(是什么|是什么意思|是啥意思|是啥|是什么东西|啥意思|怎么理解|的定义)\s*$/i, '').trim();
+      t = t.replace(/^(这|那|一个|一只|个|只)\s*/, '').trim();
+      t = t.replace(/[？?。!！~,，、\s]+/g, '').trim();
+      return t;
+    }
+    const isAsk = /什么是|是什么|是啥|什么意思|啥意思|解释|介绍|说说|讲讲|告诉我|科普|搜索|查一下|查查|词条|^\s*search\b|^\s*lookup\b/i.test(v);
     const plain = v.trim();
-    const nounTerm = (!sm && /^[\u4e00-\u9fa5A-Za-z]{1,6}$/.test(plain)
-      && (ZH_EN[plain] || knownTemplate(plain))) ? plain : '';
-    const term = sm ? sm[2].trim() : nounTerm;
+    const rawTerm = extractTerm(v);
+    const isPlainNoun = /^[\u4e00-\u9fa5A-Za-z]{1,8}$/.test(plain)
+      && !!(ZH_EN[plain] || knownTemplate(plain) || LOCAL_GLOSSARY[plain]);
+    const knownTerm = !!(LOCAL_GLOSSARY[rawTerm] || ZH_EN[rawTerm] || knownTemplate(rawTerm));
+    const term = (knownTerm || isPlainNoun || (isAsk && rawTerm.length >= 2)) ? rawTerm : '';
     if (term) {
+      // ① 本地词典命中 → 立刻直接答，完全不经过外网 / LLM / 30 字人设约束
+      if (LOCAL_GLOSSARY[term]) {
+        const text = '📖 ' + LOCAL_GLOSSARY[term];
+        addChat('pet', text);
+        chatHistory.push({ role: 'user', content: v });
+        speakingUntil = performance.now() + Math.min(6000, Math.max(2000, text.length * 60));
+        positionChatBox();
+        chatHistory.push({ role: 'assistant', content: text });
+        if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
+        return;
+      }
+      // ② 词典没收录 → 才联网查 + 模型解释（本地词典仍作兜底）
       let snippetCache = '';
       const lastPet = addChat('pet', '🔍 小火正在查「' + term + '」…');
       chatHistory.push({ role: 'user', content: v });
