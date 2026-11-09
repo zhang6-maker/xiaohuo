@@ -2482,7 +2482,8 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
       for (let s = 0; s < n; s++) {
         const st = art.strokes[s]; const local = clamp(doneUpTo - s, 0, 1);
         if (local <= 0) continue;
-        ctx.strokeStyle = st.color; ctx.fillStyle = st.color;
+        const sc = (st.color === '__body__') ? S.color : st.color;   // 写字：字色实时跟随人物色（心情/换装变字也变）
+        ctx.strokeStyle = sc; ctx.fillStyle = sc;
         if (st.prim === 'line') primLine(ctx, st.a, local);
         else if (st.prim === 'circle') primCircle(ctx, st.a, local);
         else if (st.prim === 'wave') primWave(ctx, st.a, local);
@@ -2911,6 +2912,63 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     artworkPool.push(art); activeArt = art;
     setState('paint', 12000);
   }
+  // 屏幕写字：把文字栅格化后用"扫描线"转成一组可逐笔播放的笔画（零依赖，任意中英文/表情都支持）。
+  // color 用 '__body__' 哨兵：渲染时取当前人物色 S.color，实现"字迹与人物同色、随心情变化"。
+  function textToStrokes(text) {
+    const fontSize = clamp(Math.round(46 - text.length * 1.2), 26, 52);
+    const font = `bold ${fontSize}px "Microsoft YaHei","PingFang SC","Hiragino Sans GB","Source Han Sans SC","Noto Sans CJK SC",sans-serif`;
+    const meas = document.createElement('canvas').getContext('2d');
+    meas.font = font;
+    const tw = Math.max(1, Math.ceil(meas.measureText(text).width));
+    const th = Math.ceil(fontSize * 1.3);
+    const pad = Math.ceil(fontSize * 0.35);
+    const cw = tw + pad * 2, ch = th + pad * 2;
+    const c = document.createElement('canvas'); c.width = cw; c.height = ch;
+    const g = c.getContext('2d');
+    g.font = font; g.textBaseline = 'middle'; g.textAlign = 'left';
+    g.fillStyle = '#fff'; g.fillText(text, pad, ch / 2);
+    const data = g.getImageData(0, 0, cw, ch).data;
+    const ink = (x, y) => data[(y * cw + x) * 4 + 3] > 90;
+    const strokes = [];
+    const step = Math.max(1, Math.round(fontSize / 26));   // 行采样步长：字号越大行距越大，避免笔画过碎
+    for (let y = 0; y < ch; y += step) {
+      let x = 0;
+      while (x < cw) {
+        if (ink(x, y)) {
+          let x2 = x;
+          while (x2 < cw && ink(x2, y)) x2++;
+          strokes.push({ color: '__body__', prim: 'line', a: [x - pad, y - pad, x2 - 1 - pad, y - pad] });
+          x = x2;
+        } else x++;
+      }
+    }
+    return { strokes, w: tw, h: th };
+  }
+  function startWrite(text) {
+    text = (text || '').trim();
+    if (!text) { addChat('sys', '✍️ 写点啥？'); return; }
+    if (text.length > 30) text = text.slice(0, 30);
+    const { strokes, w, h } = textToStrokes(text);
+    if (!strokes.length) { addChat('sys', '✍️ 这个我写不出来…'); return; }
+    // 落点：屏幕中上方居中（"在屏幕上面写"），不挡火柴人主体
+    const ax = W / 2, ay = clamp(H * 0.26, 80, H * 0.5);
+    const offX = ax - w / 2, offY = ay - h / 2;
+    for (const s of strokes) s.a = [s.a[0] + offX, s.a[1] + offY, s.a[2] + offX, s.a[3] + offY];
+    const art = new Drawing('write', ax, ay, strokes);
+    art.drawDur = clamp(text.length * 320, 1400, 3800);   // 写出耗时随字数（一笔笔浮现）
+    art.life = 600000;                                     // 10 分钟后自动消失
+    artworkPool.push(art); activeArt = art;
+    setState('paint', art.drawDur + 800);                  // 小火举笔写几秒，之后字继续留屏
+    addChat('pet', '✍️ 我来写～');
+  }
+  // 从"在屏幕上写X / 写『X』"里抽出要写的文字；避开"写首诗"等让 AI 生成内容的聊天意图
+  function extractWriteText(tl) {
+    const m = tl.match(/(?:在|到|于|往)?\s*(?:屏幕|桌面|屏|墙上|黑板|白板|这[儿里]|那[儿里])\s*[^写题留签]{0,6}?\s*(?:写|题|留|签)\s*[:：]?\s*["'『「]?\s*(.{1,30}?)\s*["'』」]?\s*$/);
+    if (m && m[1]) return m[1].trim();
+    const m2 = tl.match(/(?:写|题|留|签)\s*[:：]?\s*["'『「](.{1,30})["'』」]/);
+    if (m2) return m2[1].trim();
+    return null;
+  }
   // 画之前先联网查一下这东西长啥样（维基百科摘要），给"思考"提供真实形状参考，
   // 避免 LLM 在抽象坐标里瞎编。查不到/超时也不影响，照常画。
   async function describeConcept(term) {
@@ -3114,6 +3172,13 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
       addChat('sys', '🎨 小火开始画…');
       const pt = document.getElementById('paintText'); if (pt) pt.value = v;
       submitPaint();
+      return;
+    }
+    // 屏幕写字：在屏幕/桌面/墙上题字（"在屏幕上写X""写『X』"），与"写首诗"等让 AI 生成内容的聊天区分
+    const wt = extractWriteText(tl);
+    if (wt) {
+      addChat('sys', '✍️ 小火开始写…');
+      startWrite(wt);
       return;
     }
     if (/唱|歌|sing|换一首|再来一首|下一首|点歌|换歌/.test(tl)) {
@@ -3379,7 +3444,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
 
     if (currState === 'paint') {
       if (activeArt && activeArt.isFx) S.color = activeArt.glowColor || S.color;        // 粒子烟花：身体跟随最近一次爆炸/升空的颜色
-      else if (activeArt && activeArt.strokes) S.color = paintColorAt(activeArt, now);   // 普通画作：跟随当前笔画颜色
+      else if (activeArt && activeArt.strokes && activeArt.type !== 'write') S.color = paintColorAt(activeArt, now);   // 普通画作：跟随当前笔画颜色；写字类型字色随人物色，身体色保持
     }
     const _bodyColor = S.color;
     if (now < angryUntil) S.color = ANGRY_COLOR;   // 愤怒：身体（火柴人线条）变红几秒
