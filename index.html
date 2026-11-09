@@ -552,7 +552,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
       case 'sleep': return rand(20 * 60000, 40 * 60000);   // 长时间睡眠：20–40 分钟，少而久
       case 'idle':  return rand(2000, 8000);
       case 'read':  return rand(20 * 60000, 30 * 60000);   // 长时间阅读：20–30 分钟，少而久
-      case 'sing':  return rand(3000, 7000);
+      case 'sing':  return rand(9000, 12500);  // 歌名 1.4s + 6 句×1.4s≈9.8s，够唱完整首；原来 3–7s 只唱 2–5 句就切走，才显得总在重复开头
       case 'paint': return 12000;       // 画画：画 2.6s + 展示约 8.4s 后消散
       default:      return rand(1500, 6000);
     }
@@ -577,16 +577,80 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
   }
 
   // ---------- 唱歌歌词（原创短词，避开版权）----------
-  const SONG = [
-    '夜太黑 我就燃起一簇火苗',
-    '烧穿屏幕 把黑夜点亮',
-    '别看我小 这点火也能燎原',
-    '风越大 我越旺 你别眨眼',
-    '键盘敲到底 火星溅成线',
-    '把孤单点着 飘成一缕烟',
-    '陪你熬过 每一个不眠夜',
-    '小火不灭 就等你到天亮',
+  // 歌单：每首 6 句，每次开唱随机抽一首且不与上一首重复，避免"总是一首来回唱"。
+  // 全部原创短句、避开版权；长度与气泡 max-width:280px 对齐。
+  const SONGS = [
+    { title: '小火不灭', lines: [
+      '夜太黑 我就燃起一簇火苗',
+      '烧穿屏幕 把黑夜点亮',
+      '别看我小 这点火也能燎原',
+      '风越大 我越旺 你别眨眼',
+      '陪你熬过 每一个不眠夜',
+      '小火不灭 就等你到天亮',
+    ] },
+    { title: '满屏溜达', lines: [
+      '桌面宽 够我走两圈',
+      '从左到右 谁也管不着',
+      '图标排排站 我绕着跑',
+      '鼠标追来 我轻轻一跳',
+      '透明身子 不挡你一秒',
+      '溜达到天亮 也不觉得无聊',
+    ] },
+    { title: '键盘上的火星', lines: [
+      '回车键 敲出一颗星',
+      '删删改改 又到夜深',
+      '代码堆成山 我蹲着听',
+      '你把 bug 赶走 我给你照明',
+      '火星溅在 键盘的缝隙',
+      '陪你把这行 写到天明',
+    ] },
+    { title: '别戳我', lines: [
+      '又戳我 是不是手痒',
+      '我缩角落 假装很受伤',
+      '搓搓头 就当没发生',
+      '傲娇归傲娇 我还在这',
+      '你忙你的 我不出声',
+      '我一直都在 只是嘴硬得很',
+    ] },
+    { title: '熬夜搭子', lines: [
+      '凌晨两点 还亮着屏',
+      '全世界睡了 就咱俩醒',
+      '你不说话 我也不吵',
+      '困了就靠 一会儿就行',
+      '熬夜这事 我比你在行',
+      '一簇小火 撑到太阳升起',
+    ] },
+    { title: '风越大越旺', lines: [
+      '谁说火苗 撑不过风',
+      '吹得越狠 我越往上冲',
+      '熄了一次 就再点一次',
+      '灰里还藏 一点红',
+      '雨天也照样 亮给你看',
+      '烧到最后一秒 才叫完整',
+    ] },
+    { title: '透明也没关系', lines: [
+      '我透明 不代表不在',
+      '你点桌面 从我身上穿过来',
+      '不抢焦点 不占一块',
+      '安静待着 也算陪伴',
+      '反正你一回头 我就在',
+      '能照亮一点 就够我得意半天',
+    ] },
+    { title: '天亮之前', lines: [
+      '天快亮 火色变浅',
+      '屏幕泛白 我也该收敛',
+      '把没说完的 收进明天',
+      '不用道别 不用留恋',
+      '夜再来时 我自动出现',
+      '只挑你 还醒着的那一面',
+    ] },
   ];
+  // 节日专属歌词在对应节日自动替换，歌名同步显示（地图键 = 节日 key）
+  const FEST_SONG_TITLES = {
+    spring: '新春小调', lantern: '元宵小调', qingming: '踏青小调', labor: '劳动小调',
+    qixi: '七夕小调', midautumn: '中秋小调', national: '国庆小调', halloween: '万圣小调',
+    double11: '双十一小调', christmas: '圣诞小调', newyear: '元旦小调',
+  };
   // 节日专属歌词：在对应节日唱歌时自动替换（地图键 = 节日 key）
   const SONG_BY_FESTIVAL = {
     spring:    ['红红火火 又一年', '烟花炸开 满天星', '红包拿来 笑开颜', '小火给您 拜个年', '辞旧迎新 好运连', '福字贴上 门两边', '炮竹声声 岁更迭', '新春快乐 共团圆'],
@@ -601,20 +665,36 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     christmas: ['铃儿响 叮当叮', '雪花落 轻轻扬', '圣诞树 闪星光', '小火送 你吉祥', '袜子里 藏愿望', '炉火暖 驱风霜', '平安夜 钟声长', 'merry chr istmas 唱'],
     newyear:   ['钟声敲 零点整', '旧年翻 篇随风', '新年立 新愿望', '小火陪 你闯荡', '烟花漫 天际红', '辞别昨 拥抱明', '一岁首 万事兴', '元旦乐 共前程'],
   };
-  let lyricTimer = null, lyricIdx = 0;
-  function startSingLyrics() {
-    if (lyricTimer) return;                       // 已在唱，不重复起
-    const cur = resolveOutfit().key;
-    const list = SONG_BY_FESTIVAL[cur] || SONG;   // 节日里唱专属词，平时唱小火原词
-    lyricIdx = 0;
-    lyricsBox.textContent = list[0];
+  let lyricTimer = null, lyricIdx = 0, lastSongIdx = -1, curSongTitle = '';
+  function pickSong(skipFestival) {
+    const festKey = resolveOutfit().key;
+    // 「换一首」要能换掉节日固定曲，否则节日期间点换歌会一直卡在同一首
+    const festLines = skipFestival ? null : SONG_BY_FESTIVAL[festKey];
+    if (festLines) return { title: FEST_SONG_TITLES[festKey] || '节日小调', lines: festLines };
+    let i = Math.floor(Math.random() * SONGS.length);
+    if (SONGS.length > 1 && i === lastSongIdx) i = (i + 1) % SONGS.length;  // 不连唱同一首
+    lastSongIdx = i;
+    return SONGS[i];
+  }
+  // forceNext=true：正在唱也立刻换一首（聊天框说「换一首」时）
+  function startSingLyrics(forceNext) {
+    if (lyricTimer) {
+      if (!forceNext) return curSongTitle;       // 已在唱，不重复起
+      clearInterval(lyricTimer); lyricTimer = null;
+    }
+    const song = pickSong(!!forceNext);
+    const list = song.lines;
+    curSongTitle = song.title;
+    lyricIdx = -1;                              // 首帧先亮歌名，让"换歌了"看得见
+    lyricsBox.textContent = '🎵《' + song.title + '》';
     lyricsBox.classList.remove('hidden');
     positionLyrics();
     lyricTimer = setInterval(() => {
-      lyricIdx = (lyricIdx + 1) % list.length;
+      lyricIdx = (lyricIdx + 1) % list.length;  // -1 → 0：从第一句开始唱完整首
       lyricsBox.textContent = list[lyricIdx];
       positionLyrics();
     }, 1400);
+    return curSongTitle;
   }
   function stopSingLyrics() {
     if (lyricTimer) { clearInterval(lyricTimer); lyricTimer = null; }
@@ -870,7 +950,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
       '👆 单击小火 → 戳一下，它会恼、会躲，多戳几下缩角落含泪',
       '🤚 揉头哄好 = 在小火头顶<b>按住鼠标左键、来回搓动</b>（不是悬停、不是单击），他就会笑眼眯眼舒服地眯眼；被戳委屈缩角落后，按住头顶搓也能把他哄出来',
       '💬 「💬聊天」框里打字「看会儿书」→ 坐地捧书低头安静阅读，很专注',
-      '💬 「💬聊天」框里打字「唱首歌」→ 站着闭眼陶醉、举臂打拍子、张嘴哼唱，头顶飘音符',
+      '🎵 「💬聊天」框里打字「唱首歌」→ 闭眼陶醉、举臂打拍子、头顶飘歌词；8 首原创短歌每次随机换，说「换一首」立刻换一首',
       '😴 「睡觉」后约 3 秒会翻倒躺平进入深度睡眠，醒来会伸展一下',
       '📸 搜一搜 / 👀 看看屏幕 → 真截屏后拖框选，交给大模型分析',
       '🎨 「💬聊天」框里打字「画只猫」→ 小火按你的文字指令画画',
@@ -3013,9 +3093,18 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
       submitPaint();
       return;
     }
-    if (/唱|歌|sing/.test(tl)) {
-      addChat('sys', '🎵 小火开始唱歌～');
-      setState('sing', autoDuration('sing'));
+    if (/唱|歌|sing|换一首|再来一首|下一首|点歌|换歌/.test(tl)) {
+      const again = /换一首|再来一首|下一首|点歌|换歌|别唱这首/.test(tl);
+      if (again && currState === 'sing') {
+        startSingLyrics(true);                       // 立刻换一首，不重复上一首
+        nextSwitchAt = performance.now() + autoDuration('sing');
+        addChat('sys', '🎵 换一首！《' + curSongTitle + '》～');
+      } else if (currState === 'sing') {
+        addChat('sys', '🎵 正唱着《' + curSongTitle + '》呢，想听别的就说「换一首」～');
+      } else {
+        setState('sing', autoDuration('sing'));      // setState 内会起歌词并选好歌
+        addChat('sys', '🎵 小火唱起《' + curSongTitle + '》～');
+      }
       return;
     }
     if (/看书|读书|阅读|看会书|看会儿书|book|read a book|read/.test(tl)) {
