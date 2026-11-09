@@ -2564,12 +2564,30 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     for (const k of keys) if (t2 && t2.includes(k)) return ZH_EN[k].slice();
     return [];                                                         // 中文且不认识 → 交给 LLM
   }
-  function pickIcon(icons) {
+  function pickIcon(icons, query) {
     if (!icons || !icons.length) return null;
     const usable = icons.filter(ic => !ICON_EXCLUDE.includes(ic.split(':')[0]));
     if (!usable.length) return null;
-    for (const set of PREF_ICON_SETS) { const hit = usable.find(ic => ic.split(':')[0] === set); if (hit) return hit; }
-    return usable[0];
+    const q = String(query || '').toLowerCase().trim();
+    const iconName = ic => (ic.split(':')[1] || '').toLowerCase();
+    // ① 图标名与查询词完全一致 = 语义最贴切，优先于任何「线稿质量白名单」。
+    //    旧版只按 PREF_ICON_SETS 挑，会把 Iconify 相关性最高的新集合图标筛掉，
+    //    反而命中子串误匹配的 mdi:monkey-wrench（活动扳手）→ 「猴子」画成扳手。
+    if (q) {
+      const exact = usable.find(ic => iconName(ic) === q);
+      if (exact) return exact;
+      // ② 名字以「查询词-」开头（chicken-line / house-outline），仍是同一个物体
+      const prefixed = usable.find(ic => iconName(ic).startsWith(q + '-'));
+      if (prefixed) return prefixed;
+    }
+    // ③ 以上都没有，再按线稿质量优选集合 —— 但图标名必须含查询词，
+    //    否则会画出 kitchen(查 hen) / monkey-wrench(查 monkey) 这类子串误命中的无关物体
+    for (const set of PREF_ICON_SETS) {
+      const hit = usable.find(ic => ic.split(':')[0] === set && (!q || iconName(ic).includes(q)));
+      if (hit) return hit;
+    }
+    // ④ 兜底同理：只取名字里含查询词的；一个都没有就返回 null，让上层降级到 QD/LLM，别乱画
+    return usable.find(ic => !q || iconName(ic).includes(q)) || null;
   }
   // 从图标 body(可能含多条 path) 提取所有 d 路径，确保多路径图标(如动物轮廓+眼睛)完整临摹，而非只画第一条
   function iconPaths(body) {
@@ -2636,7 +2654,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
         const sr = await fetchWithTimeout('https://api.iconify.design/search?query=' + encodeURIComponent(q) + '&limit=48', { timeout: 5000, mode: 'cors' });
         if (!sr.ok) continue;
         const sj = await sr.json();
-        const icon = pickIcon(sj.icons || []);
+        const icon = pickIcon(sj.icons || [], q);
         if (!icon) continue;
         // 用权威批量接口取图标数据（单图标接口 mdi:snake.json 已全局 404 失效）
         const parts = icon.split(':'); const ip = parts[0]; const iname = parts[1] || parts[0];
@@ -2840,7 +2858,8 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
         normalizeArtworkCoords(copy, S / 2, S / 2, S * 0.78);   // 先居中，模型才看得清主体
         const b64 = renderStrokesToDataURL(copy, S).split(',')[1];
         if (!b64) break;
-        const fixed = await invoke('critique_draw', { prompt: v, image_b64: b64, prev_json: JSON.stringify(cur) });
+        // Tauri v2 多词参数按 camelCase 重命名：写 snake_case 会在参数校验阶段被拒（Rust 函数根本没进）
+        const fixed = await invoke('critique_draw', { prompt: v, imageB64: b64, prevJson: JSON.stringify(cur) });
         const parsed = llmToStrokes(fixed, ax, ay);
         if (!parsed || !parsed.length) break;
         cur = parsed;
@@ -2898,7 +2917,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
       // 生成 → 视觉筛选 → 通过则精炼上屏；不通过重试一次；两次都不通过则展示最后一版（不空手而归）
       const tryDraw = (attempt) => {
         if (hint) hint.textContent = '🤔 小火想怎么画「' + v + '」…';
-        invoke('ask_draw', { prompt: v, ref_desc: refText || null })
+        invoke('ask_draw', { prompt: v, refDesc: refText || null })   // camelCase，见上：snake_case 会被 Tauri 拒绝
           .then(res => {
             const strokes = llmToStrokes(res, ax, ay);
             if (!strokes) {
@@ -3004,38 +3023,65 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
       setState('read', autoDuration('read'));
       return;
     }
-    // 词条搜索：以「搜索/搜一下/查一下/查一查/词条/search/lookup」开头 → 联网查资料后让小火傲娇解释
+    // 词条搜索：前缀触发，或直接输入词表里收录的名词（鸡 / 猴子 / 房子…）也自动解释。
+    // 外网（维基 / DuckDuckGo）在本机常不可达，所以查不到时改让模型用自身知识答，
+    // 并备一份本地词典兜住「外网挂 + 429 + 没配 Key」三种情况。
+    const LOCAL_GLOSSARY = {
+      '鸡': '鸡是人工驯养的家禽，由野生原鸡驯化而来；公鸡打鸣、母鸡下蛋，肉和蛋都是常见食物。',
+      '猴子': '猴子是灵长类动物的俗称，聪明好动、手指灵活、善于攀爬，大多群居，喜欢吃水果和昆虫。',
+      '房子': '房子是供人居住或使用的建筑物，一般有墙、屋顶、门和窗，用来遮风挡雨、存放物品。',
+      '猫': '猫是常见家养小动物，爱干净、会捕鼠，性格独立又亲人。',
+      '狗': '狗是最早被人类驯化的动物之一，嗅觉灵敏、忠诚，常用来看家或作伴侣。',
+      '牛': '牛是大型家畜，草食、反刍，能产奶、耕地，皮肉也有用途。',
+      '羊': '羊是草食家畜，身上长羊毛，肉和奶都可食用，常成群放牧。',
+      '兔': '兔子是小型草食哺乳动物，长耳朵、短尾巴，善跳跃、繁殖快。',
+      '鱼': '鱼是用鳃呼吸、靠鳍游泳的水生脊椎动物，种类极多。',
+      '鸟': '鸟是长羽毛、前肢变成翅膀的卵生脊椎动物，多数会飞。',
+      '树': '树是有明显木质树干的高大植物，靠根吸水、叶进行光合作用。',
+      '花': '花是种子植物的繁殖器官，常有花瓣和香味，用来吸引昆虫传粉。',
+      '太阳': '太阳是离地球最近的恒星，给地球提供光和热，也是昼夜四季的根源。',
+      '火箭': '火箭是靠向后高速喷气产生推力、能把载荷送进太空的飞行器。',
+      '车': '车是带轮子、用来载人或运货的交通工具。',
+      '书': '书是把文字或图画装订成册的载体，用来记录与传播知识。',
+    };
     const SEARCH_RE = /^(搜索|搜一下|查一下|查一查|词条|search|lookup)\s*(.+)$/i;
     const sm = v.match(SEARCH_RE);
-    if (sm) {
-      const term = sm[2].trim();
-      if (term) {
-        let snippetCache = '';
-        const lastPet = addChat('pet', '🔍 小火正在查「' + term + '」…');
-        chatHistory.push({ role: 'user', content: v });
-        const hist = chatHistory.slice(-6);
-        invoke('web_lookup', { query: term })
-          .then(snippet => {
-            snippetCache = (typeof snippet === 'string') ? snippet : '';
-            const prompt = snippetCache.trim()
-              ? '【联网查到的资料】' + snippetCache + '\n【主人问】"' + term + '" 是什么？请用你（小火）的傲娇口吻，用 1-2 句话简短给主人解释一下，不超过 30 字。'
-              : '主人问 "' + term + '" 是什么，但你没联网查到资料。如果你也不确定，就老实说不知道，别瞎编；知道的就用傲娇口吻简短说说。';
-            return invoke('ask_reply', { text: prompt, history: hist });
-          })
-          .then(res => {
-            const text = (typeof res === 'string') ? res : (res && res.reply) || '（小火走神了）';
-            lastPet.textContent = text;
-            speakingUntil = performance.now() + Math.min(6000, Math.max(2000, text.length * 60));
-            positionChatBox();
-            chatHistory.push({ role: 'assistant', content: text });
-            if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
-          })
-          .catch(err => {
-            // LLM 限流(429)等失败：若有检索片段就直接展示，否则给人话报错
-            lastPet.textContent = snippetCache.trim() ? '🔎 ' + snippetCache : apiErrText(err);
-          });
-        return;
-      }
+    // 纯名词兜底：只认 ZH_EN / 本地模板里确实收录的词，避免把「你好」「嗯」这类闲聊误当词条
+    const plain = v.trim();
+    const nounTerm = (!sm && /^[\u4e00-\u9fa5A-Za-z]{1,6}$/.test(plain)
+      && (ZH_EN[plain] || knownTemplate(plain))) ? plain : '';
+    const term = sm ? sm[2].trim() : nounTerm;
+    if (term) {
+      let snippetCache = '';
+      const lastPet = addChat('pet', '🔍 小火正在查「' + term + '」…');
+      chatHistory.push({ role: 'user', content: v });
+      const hist = chatHistory.slice(-6);
+      invoke('web_lookup', { query: term })
+        .then(snippet => {
+          snippetCache = (typeof snippet === 'string') ? snippet : '';
+          const prompt = snippetCache.trim()
+            ? '【联网查到的资料】' + snippetCache + '\n【主人问】"' + term + '" 是什么？请用你（小火）的傲娇口吻，用 1-2 句话简短给主人解释一下，不超过 30 字。'
+            : '主人问「' + term + '」是什么。请用你自己知道的知识，用傲娇口吻 1-2 句话解释它是什么；不要说"不知道"，也不要瞎编，不超过 40 字。';
+          return invoke('ask_reply', { text: prompt, history: hist });
+        })
+        .then(res => {
+          let text = (typeof res === 'string') ? res : (res && res.reply) || '（小火走神了）';
+          // 模型仍推说不知道 → 本地词典补上，别让主人对着「不知道」发呆
+          if (/不知道|不清楚|不了解|无法回答/.test(text) && LOCAL_GLOSSARY[term]) text = '📖 ' + LOCAL_GLOSSARY[term];
+          lastPet.textContent = text;
+          speakingUntil = performance.now() + Math.min(6000, Math.max(2000, text.length * 60));
+          positionChatBox();
+          chatHistory.push({ role: 'assistant', content: text });
+          if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
+        })
+        .catch(err => {
+          // 429 / 没配 Key / 外网不通：优先展示检索片段，其次本地词典，最后才报错
+          const local = LOCAL_GLOSSARY[term] || '';
+          lastPet.textContent = snippetCache.trim() ? '🔎 ' + snippetCache
+            : local ? '📖 ' + local
+            : apiErrText(err);
+        });
+      return;
     }
     if (/看屏幕|截图|搜一搜|搜题|screen|search/.test(tl)) {
       startPick('screen');
