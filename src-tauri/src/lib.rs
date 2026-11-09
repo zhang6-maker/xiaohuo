@@ -24,6 +24,9 @@ struct AppState {
     dragging: Arc<Mutex<bool>>,
     box_open: Arc<Mutex<bool>>,
     drag_start: Arc<Mutex<Option<tauri::PhysicalPosition<f64>>>>,
+    /// 资源包是否已被判定耗尽：一旦某次付费模型调用返回「资源包耗尽/余额不足」类错误，
+    /// 本会话内后续调用直接走免费兜底模型，不再撞付费模型（避免反复失败）。
+    pack_exhausted: Arc<Mutex<bool>>,
 }
 
 /// 崩溃留痕：GUI 程序没有控制台，eprintln! 用户根本看不到；
@@ -65,6 +68,7 @@ pub fn run() {
             dragging: Arc::new(Mutex::new(false)),
             box_open: Arc::new(Mutex::new(false)),
             drag_start: Arc::new(Mutex::new(None)),
+            pack_exhausted: Arc::new(Mutex::new(false)),
         })
         .setup(|app| {
             // 加载 .env：优先 exe 所在目录（兼容便携版与 MSI 安装版），其次 src-tauri/.env 与 cwd/.env
@@ -332,69 +336,144 @@ fn capture_screen_inner() -> Result<String, String> {
     }
 }
 
-/// 调智谱 GLM-4V（多模态）：把裁剪后的图片（data URL）+ 提示词发给模型，返回文本。
-#[tauri::command]
-async fn ask_glm(image_b64: String, prompt: String) -> Result<String, String> {
-    let key = match std::env::var("ZHIPU_API_KEY") {
-        Ok(k) if !k.is_empty() => k,
-        _ => {
-            return Err(
-                "未配置 ZHIPU_API_KEY：请把 key 写入 .env（ZHIPU_API_KEY=xxx，.env 放在 exe 同目录或 src-tauri/ 下）并重启程序".into(),
-            )
-        }
+/// 统一智谱调用器：模型优先级 + 资源包耗尽自动降级 + 实际模型播报。
+///
+/// 逻辑：
+/// - 首轮模型 = 环境变量(ZHIPU_CHAT/DRAW/VISION_MODEL)指定的「资源包模型」，缺省则免费兜底 free_model。
+/// - 若已判定资源包耗尽(pack_exhausted)，首轮直接走 free_model。
+/// - 首轮走资源包且返回 429 + 含「资源包/额度/余额不足」类关键字 → 标记耗尽，降级到 free_model 重试一次。
+/// - 每次成功都 emit "model_used" 事件，让前端告诉用户实际用的是哪个模型、什么来源。
+async fn call_zhipu(
+    app: &tauri::AppHandle,
+    kind: &str,
+    env_key: &str,
+    free_model: &str,
+    key: &str,
+    timeout_secs: u64,
+    build: impl Fn(&str) -> serde_json::Value,
+) -> Result<String, String> {
+    let st = app.state::<AppState>();
+    let already_exhausted = *st.pack_exhausted.lock().unwrap_or_else(|e| e.into_inner());
+    let preferred = std::env::var(env_key).unwrap_or_else(|_| free_model.to_string());
+
+    // 决定首轮模型与来源标签
+    let (first_model, source): (String, &str) = if preferred == free_model {
+        (free_model.to_string(), "free")
+    } else if already_exhausted {
+        (free_model.to_string(), "free-fallback")
+    } else {
+        (preferred.clone(), "pack")
     };
+
+    // 仅当首轮走资源包时，才准备「降级到免费模型」的第二次尝试
+    let attempts: Vec<&str> = if source == "pack" {
+        vec![first_model.as_str(), free_model]
+    } else {
+        vec![first_model.as_str()]
+    };
+
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(90))
+        .timeout(std::time::Duration::from_secs(timeout_secs))
         .build()
         .map_err(|e| e.to_string())?;
-    let payload = serde_json::json!({
-        "model": "glm-4v-flash",
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": image_b64}}
-            ]
-        }],
-        "max_tokens": 1024,
-        "temperature": 0.6
-    });
-    let resp = client
-        .post("https://open.bigmodel.cn/api/paas/v4/chat/completions")
-        .bearer_auth(key)
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| format!("请求智谱失败（本机网络/360 防火墙拦截？）：{}", e))?;
-    let status = resp.status();
-    if !status.is_success() {
+
+    let mut last_err = String::new();
+    for (i, m) in attempts.iter().enumerate() {
+        let m: &str = m;
+        let is_fallback = i > 0;
+        let payload = build(m);
+        let resp = client
+            .post("https://open.bigmodel.cn/api/paas/v4/chat/completions")
+            .bearer_auth(key)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| format!("请求智谱失败（本机网络/360 防火墙拦截？）：{}", e))?;
+        let status = resp.status();
+        if status.is_success() {
+            let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+            let content = v
+                .get("choices")
+                .and_then(|c| c.get(0))
+                .and_then(|c| c.get("message"))
+                .and_then(|m| m.get("content"))
+                .and_then(|c| c.as_str())
+                .unwrap_or("（模型无返回）")
+                .to_string();
+            let actual_source = if is_fallback { "free-fallback" } else { source };
+            let _ = app.emit(
+                "model_used",
+                serde_json::json!({ "kind": kind, "model": m, "source": actual_source }),
+            );
+            return Ok(content);
+        }
         let body = resp.text().await.unwrap_or_default();
+        // 资源包耗尽特征：429 + 资源/额度/余额类关键字 → 标记耗尽后降级重试
+        let pack_exhausted_hit = status.as_u16() == 429
+            && (body.contains("资源包")
+                || body.contains("暂无可用资源")
+                || body.contains("额度")
+                || body.contains("余额不足")
+                || body.contains("no available resource")
+                || body.contains("resource pack")
+                || body.contains("insufficient")
+                || body.contains("balance"));
+        if pack_exhausted_hit && !already_exhausted && i == 0 {
+            *st.pack_exhausted.lock().unwrap_or_else(|e| e.into_inner()) = true;
+            last_err = format!("智谱返回 {}：{}", status.as_u16(), body);
+            continue;
+        }
         return Err(format!("智谱返回 {}：{}", status.as_u16(), body));
     }
-    let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    let content = v
-        .get("choices")
-        .and_then(|c| c.get(0))
-        .and_then(|c| c.get("message"))
-        .and_then(|m| m.get("content"))
-        .and_then(|c| c.as_str())
-        .unwrap_or("（模型无返回）")
-        .to_string();
-    Ok(content)
+    Err(last_err)
 }
 
-/// 调智谱文本模型：把"画 X"的提示词发给模型，返回它生成的绘画原语 JSON 文本。
-/// 前端再把这个 JSON 翻译成小火能画的笔画（线/圆/波浪/星/涂鸦）。
-/// ref_desc：前端画之前联网（维基百科）查到的真实形状描述，作为空间参考注入，减少模型瞎编。
+/// 调智谱 GLM-4V（多模态）：把裁剪后的图片（data URL）+ 提示词发给模型，返回文本。
+/// 模型走 call_zhipu：优先 ZHIPU_VISION_MODEL（资源包），耗尽自动降级 glm-4v-flash。
 #[tauri::command]
-async fn ask_draw(prompt: String, ref_desc: Option<String>) -> Result<String, String> {
+async fn ask_glm(app: tauri::AppHandle, image_b64: String, prompt: String) -> Result<String, String> {
     let key = match std::env::var("ZHIPU_API_KEY") {
         Ok(k) if !k.is_empty() => k,
         _ => return Err(
             "未配置 ZHIPU_API_KEY：请把 key 写入 .env（ZHIPU_API_KEY=xxx，.env 放在 exe 同目录或 src-tauri/ 下）并重启程序".into(),
         ),
     };
-    let model = std::env::var("ZHIPU_DRAW_MODEL").unwrap_or_else(|_| "glm-4-flash".to_string());
+    call_zhipu(
+        &app,
+        "vision",
+        "ZHIPU_VISION_MODEL",
+        "glm-4v-flash",
+        &key,
+        90,
+        move |m| {
+            serde_json::json!({
+                "model": m,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt.as_str()},
+                        {"type": "image_url", "image_url": {"url": image_b64.as_str()}}
+                    ]
+                }],
+                "max_tokens": 1024,
+                "temperature": 0.6
+            })
+        },
+    )
+    .await
+}
+
+/// 调智谱文本模型：把"画 X"的提示词发给模型，返回它生成的绘画原语 JSON 文本。
+/// 前端再把这个 JSON 翻译成小火能画的笔画（线/圆/波浪/星/涂鸦）。
+/// ref_desc：前端画之前联网（维基百科）查到的真实形状描述，作为空间参考注入，减少模型瞎编。
+#[tauri::command]
+async fn ask_draw(app: tauri::AppHandle, prompt: String, ref_desc: Option<String>) -> Result<String, String> {
+    let key = match std::env::var("ZHIPU_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return Err(
+            "未配置 ZHIPU_API_KEY：请把 key 写入 .env（ZHIPU_API_KEY=xxx，.env 放在 exe 同目录或 src-tauri/ 下）并重启程序".into(),
+        ),
+    };
     let instruction = r##"你是一个用极简原语作画的火柴人画师。把用户要画的东西用我们支持的原语组合出来，并【只输出一段 JSON，不要任何解释、不要 markdown 代码块、不要 ``` 】。
 
 画布坐标系：300x300，原点左上角，x 向右、y 向下。主体落在底部中央，底部中点约 (150,270)，图形向上（y 减小）生长，坐标务必在 0~300 内。
@@ -436,46 +515,33 @@ async fn ask_draw(prompt: String, ref_desc: Option<String>) -> Result<String, St
             ));
         }
     }
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let payload = serde_json::json!({
-        "model": model,
-        "messages": [{"role": "user", "content": user_msg}],
-        "max_tokens": 900,
-        "temperature": 0.7
-    });
-    let resp = client
-        .post("https://open.bigmodel.cn/api/paas/v4/chat/completions")
-        .bearer_auth(key)
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| format!("请求智谱失败（本机网络/360 防火墙拦截？）：{}", e))?;
-    let status = resp.status();
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("智谱返回 {}：{}", status.as_u16(), body));
-    }
-    let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    let content = v
-        .get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("message"))
-        .and_then(|m| m.get("content")).and_then(|c| c.as_str())
-        .unwrap_or("（模型无返回）").to_string();
-    Ok(content)
+    call_zhipu(
+        &app,
+        "draw",
+        "ZHIPU_DRAW_MODEL",
+        "glm-4-flash",
+        &key,
+        60,
+        move |m| {
+            serde_json::json!({
+                "model": m,
+                "messages": [{"role": "user", "content": user_msg.as_str()}],
+                "max_tokens": 900,
+                "temperature": 0.7
+            })
+        },
+    )
+    .await
 }
 
 /// 视觉自纠：把小火刚画的简笔画 PNG + 目标物体名发给多模态模型(GLM-4V)，
 /// 让它判断"像不像 X、哪里歪/缺关键部位"，返回修正后的原语 JSON（前端再翻译+归一化）。
 #[tauri::command]
-async fn critique_draw(prompt: String, image_b64: String, prev_json: Option<String>) -> Result<String, String> {
+async fn critique_draw(app: tauri::AppHandle, prompt: String, image_b64: String, prev_json: Option<String>) -> Result<String, String> {
     let key = match std::env::var("ZHIPU_API_KEY") {
         Ok(k) if !k.is_empty() => k,
         _ => return Err("未配置 ZHIPU_API_KEY：请把 key 写入 .env（ZHIPU_API_KEY=xxx，.env 放在 exe 同目录或 src-tauri/ 下）并重启程序".into()),
     };
-    // 注意: glm-4v-plus 在本机实测报 429(余额不足/无可用资源包), 默认改用 glm-4v-flash(免费且可用)
-    let model = std::env::var("ZHIPU_VISION_MODEL").unwrap_or_else(|_| "glm-4v-flash".to_string());
     let instruction = r##"你是一个火柴人画师助手。下面是一张已画好的简笔画（白底、黑/彩线条），它想表现的东西叫"X"。
 请【只输出一段 JSON，不要解释、不要 markdown、不要 ``` 】，格式：{"caption":"名称","strokes":[...]}。
 可用原语（prim）与参数 a（坐标空间 0-300，原点左上，x 向右、y 向下，主体居中在 (150,150) 附近）：
@@ -490,51 +556,39 @@ async fn critique_draw(prompt: String, image_b64: String, prev_json: Option<Stri
 要求：1) 判断当前画是否真的像"X"；2) 不像就修正坐标让它更像，重点修掉错位/重叠/缺关键部位（如牛的角、羊的毛、动物的腿和眼、物体应有部件）；3) 颜色用符合真实的十六进制；4) 输出【完整】strokes（所有笔画都带上，不要只给改动的）；5) 只输出 JSON。"##;
     let prev = prev_json.unwrap_or_default();
     let user_text = format!("{}\n\n目标物体：{}\n\n上一版笔画（JSON）：{}\n\n如果上一版不像，请返回修正后的【完整】strokes。", instruction, prompt, prev);
-    let payload = serde_json::json!({
-        "model": model,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": user_text},
-                {"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{}", image_b64)}}
-            ]
-        }],
-        "max_tokens": 1100,
-        "temperature": 0.4
-    });
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let resp = client
-        .post("https://open.bigmodel.cn/api/paas/v4/chat/completions")
-        .bearer_auth(key)
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| format!("请求智谱视觉模型失败（网络/360 拦截？）：{}", e))?;
-    let status = resp.status();
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("智谱视觉返回 {}：{}", status.as_u16(), body));
-    }
-    let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    let content = v
-        .get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("message"))
-        .and_then(|m| m.get("content")).and_then(|c| c.as_str())
-        .unwrap_or("（模型无返回）").to_string();
-    Ok(content)
+    call_zhipu(
+        &app,
+        "vision",
+        "ZHIPU_VISION_MODEL",
+        "glm-4v-flash",
+        &key,
+        60,
+        move |m| {
+            serde_json::json!({
+                "model": m,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": user_text.as_str()},
+                        {"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{}", image_b64.as_str())}}
+                    ]
+                }],
+                "max_tokens": 1100,
+                "temperature": 0.4
+            })
+        },
+    )
+    .await
 }
 
 /// 聊天回复：把用户最近若干轮对话 + 当前输入发给智谱文本模型(GLM)，返回小火的回复文本。
 /// history：[{ "role": "user" | "assistant", "content": "..." }] 的最近若干条，用于多轮上下文。
 #[tauri::command]
-async fn ask_reply(text: String, history: Option<Vec<serde_json::Value>>) -> Result<String, String> {
+async fn ask_reply(app: tauri::AppHandle, text: String, history: Option<Vec<serde_json::Value>>) -> Result<String, String> {
     let key = match std::env::var("ZHIPU_API_KEY") {
         Ok(k) if !k.is_empty() => k,
         _ => return Err("未配置 ZHIPU_API_KEY：请把 key 写入 .env（ZHIPU_API_KEY=xxx，.env 放在 exe 同目录或 src-tauri/ 下）并重启程序".into()),
     };
-    let model = std::env::var("ZHIPU_CHAT_MODEL").unwrap_or_else(|_| "glm-4-flash".to_string());
     // 小火的表达基调：平实、简短、自然，不演性格。
     // 2026-11-09 按用户要求去掉早期试做时定下的「傲娇又粘人 / 嘴硬」人设，也不替换为另一种人设。
     let system = r#"你现在的身份是“小火”，一个从用户电脑显卡/主板缝隙里诞生出来的赛博火柴人小精灵。你由纯粹的黑白线条和代码构成，没有实体，一直住在用户的桌面上。
@@ -579,34 +633,23 @@ async fn ask_reply(text: String, history: Option<Vec<serde_json::Value>>) -> Res
         }
     }
     messages.push(serde_json::json!({"role": "user", "content": text}));
-    let payload = serde_json::json!({
-        "model": model,
-        "messages": messages,
-        "max_tokens": 256,
-        "temperature": 0.8
-    });
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let resp = client
-        .post("https://open.bigmodel.cn/api/paas/v4/chat/completions")
-        .bearer_auth(key)
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| format!("请求智谱失败（本机网络/360 防火墙拦截？）：{}", e))?;
-    let status = resp.status();
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("智谱返回 {}：{}", status.as_u16(), body));
-    }
-    let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    let content = v
-        .get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("message"))
-        .and_then(|m| m.get("content")).and_then(|c| c.as_str())
-        .unwrap_or("（小火走神了）").to_string();
-    Ok(content)
+    call_zhipu(
+        &app,
+        "chat",
+        "ZHIPU_CHAT_MODEL",
+        "glm-4-flash",
+        &key,
+        60,
+        move |m| {
+            serde_json::json!({
+                "model": m,
+                "messages": &messages,
+                "max_tokens": 256,
+                "temperature": 0.8
+            })
+        },
+    )
+    .await
 }
 
 /// 进入/退出全屏框选：true=把主窗口全屏置顶并完全可交互；false=还原小窗并恢复穿透。

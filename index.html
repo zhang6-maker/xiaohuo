@@ -173,6 +173,9 @@
 <!-- 诊断面板：Ctrl+Shift+D 开关，排查"弹窗关不掉"时看窗口是否真的处于可交互态 -->
 <div id="diagHud" style="position:fixed;left:8px;top:8px;z-index:80;display:none;color:#0a0;font-size:12px;font-family:monospace;background:rgba(0,0,0,.8);padding:8px 10px;border-radius:6px;line-height:1.6;white-space:pre;pointer-events:none;">诊断面板（Ctrl+Shift+D 关）</div>
 
+<!-- 模型播报：Rust emit model_used 时显示当前用的模型与来源，几秒后淡出 -->
+<div id="modelTag" class="hidden" style="position:fixed;right:8px;bottom:8px;z-index:70;color:#cde;font-size:11px;font-family:monospace;background:rgba(20,20,28,.82);padding:3px 8px;border-radius:6px;pointer-events:none;max-width:62%;text-align:right;transition:opacity .4s;"></div>
+
 <!-- 全屏框选层（看屏/搜题）：截屏后铺满全屏让你框选 -->
 <div id="pickLayer" class="hidden">
   <img id="pickImg" alt="">
@@ -888,6 +891,24 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
   let dbgRX = 0;                       // 收到 dbg 的次数，用来确认 Rust→前端链路是通的
   let lastDbg = [0, 0, 0, 0, 1, 100, 0];  // 最近一次 dbg 全量：[lx,ly,inside,overPet,wantIgnore,sf*100,box_open]
   const dbgEl = document.getElementById('dbg');
+  const modelTagEl = document.getElementById('modelTag');
+  let modelTagTimer = null;
+  // Rust 每次成功调用模型后 emit "model_used" → 告诉用户当前实际用的是哪个模型、什么来源。
+  function showModelTag(d) {
+    if (!modelTagEl || !d) return;
+    const kindLabel = (d.kind === 'chat') ? '聊天' : (d.kind === 'draw') ? '画画' : (d.kind === 'vision') ? '看图' : 'AI';
+    const srcLabel = (d.source === 'pack') ? '📦 资源包'
+      : (d.source === 'free') ? '🆓 免费版'
+      : (d.source === 'free-fallback') ? '⚠️ 资源包耗尽→免费版' : '';
+    modelTagEl.textContent = `🤖 ${d.model} · ${kindLabel} · ${srcLabel}`;
+    modelTagEl.classList.remove('hidden');
+    modelTagEl.style.opacity = '1';
+    if (modelTagTimer) clearTimeout(modelTagTimer);
+    modelTagTimer = setTimeout(() => {
+      modelTagEl.style.opacity = '0';
+      setTimeout(() => modelTagEl.classList.add('hidden'), 450);
+    }, 4500);
+  }
   if (isTauri) {
     import('@tauri-apps/api/event').then(({ listen, emit }) => {
       emitter = emit;
@@ -899,6 +920,8 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
         rustIgnore = p[4] === 1;
         dbgEl.textContent = `调试 RX:${dbgRX} 鼠标:${p[0]},${p[1]} 窗内:${p[2]} 悬停宠物:${p[3]} 穿透:${p[4]} box_open:${p[6]} dpr:${(p[5]/100).toFixed(2)}`;
       });
+      // 模型播报：Rust 在每次成功调用后推送实际使用的模型与来源
+      listen('model_used', (e) => showModelTag(e.payload));
     }).catch((err) => {
       // 关键修复：之前用经典 <script> 写 dynamic import，Vite 不会改写裸模块路径，
       // 浏览器原生 import('@tauri-apps/api/event') 因无 import map 直接 reject → 报"加载失败"。
