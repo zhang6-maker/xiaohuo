@@ -604,13 +604,13 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
       '火星溅在 键盘的缝隙',
       '陪你把这行 写到天明',
     ] },
-    { title: '别戳我', lines: [
-      '又戳我 是不是手痒',
-      '我缩角落 假装很受伤',
-      '搓搓头 就当没发生',
-      '傲娇归傲娇 我还在这',
+    { title: '安静陪着', lines: [
+      '你敲键盘 我蹲在一旁',
+      '不吵不闹 也不抢地方',
+      '偶尔戳我 我就晃一晃',
       '你忙你的 我不出声',
-      '我一直都在 只是嘴硬得很',
+      '屏幕亮着 我就有地方',
+      '一直都在 这扇窗的边上',
     ] },
     { title: '熬夜搭子', lines: [
       '凌晨两点 还亮着屏',
@@ -634,7 +634,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
       '不抢焦点 不占一块',
       '安静待着 也算陪伴',
       '反正你一回头 我就在',
-      '能照亮一点 就够我得意半天',
+      '能照亮一点 就够我暖上半天',
     ] },
     { title: '天亮之前', lines: [
       '天快亮 火色变浅',
@@ -3114,7 +3114,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     }
     // 词条理解：支持「搜索 X」「什么是 X」「X 是什么」「X 是什么意思」「解释一下 X」，以及直接打名词。
     // 【顺序很重要】本地词典第一优先、命中即答。
-    // 外网(维基/DuckDuckGo)常不可达；而 ask_reply 的系统提示词强约束"1-2 句 30 字傲娇闲聊"，
+    // 外网(维基/DuckDuckGo)常不可达；而 ask_reply 的系统提示词强约束"1-2 句 30 字简短闲聊"，
     // 问句若走那条链只会得到一句寒暄、根本不解释 —— 上一版把词典放在最后兜底是错的。
     const LOCAL_GLOSSARY = {
       '鸡': '鸡是人工驯养的家禽，由野生原鸡驯化而来；公鸡打鸣、母鸡下蛋，肉和蛋都是常见食物。',
@@ -3178,7 +3178,7 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     const knownTerm = !!(LOCAL_GLOSSARY[rawTerm] || ZH_EN[rawTerm] || knownTemplate(rawTerm));
     const term = (knownTerm || isPlainNoun || (isAsk && rawTerm.length >= 2)) ? rawTerm : '';
     if (term) {
-      // ① 本地词典命中 → 立刻直接答，完全不经过外网 / LLM / 30 字人设约束
+      // ① 本地词典命中 → 立刻直接答，完全不经过外网 / LLM / 聊天回复约束
       if (LOCAL_GLOSSARY[term]) {
         const text = '📖 ' + LOCAL_GLOSSARY[term];
         addChat('pet', text);
@@ -3198,8 +3198,8 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
         .then(snippet => {
           snippetCache = (typeof snippet === 'string') ? snippet : '';
           const prompt = snippetCache.trim()
-            ? '【联网查到的资料】' + snippetCache + '\n【主人问】"' + term + '" 是什么？请用你（小火）的傲娇口吻，用 1-2 句话简短给主人解释一下，不超过 30 字。'
-            : '主人问「' + term + '」是什么。请用你自己知道的知识，用傲娇口吻 1-2 句话解释它是什么；不要说"不知道"，也不要瞎编，不超过 40 字。';
+            ? '【联网查到的资料】' + snippetCache + '\n【主人问】"' + term + '" 是什么？请用平实、自然的话，用 1-2 句话简短给它解释一下，不超过 40 字。'
+            : '主人问「' + term + '」是什么。请用你自己知道的知识，平实自然地用 1-2 句话解释它是什么；不要说"不知道"，也不要瞎编，不超过 40 字。';
           return invoke('ask_reply', { text: prompt, history: hist });
         })
         .then(res => {
