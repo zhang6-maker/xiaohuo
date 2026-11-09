@@ -1,9 +1,11 @@
 # 小火 · 桌面火柴人（xiaohuo）
 
-> 一只住在桌面最上层的透明火柴人。它平时**不挡事**——鼠标可以直接穿过它去点桌面；需要它干活时，它会"看"你的屏幕：圈一块区域，让它讲题、解释、画张简笔画，或者点评你的涂鸦。
+> 一只住在桌面最上层的透明火柴人。**双击就能玩，不用注册、不用配 API Key** —— 它会满屏溜达、跟着鼠标转、被戳会生气、会唱歌看书、能换装换发型；平时鼠标能直接穿透它去点桌面，不挡你干活。
+>
+> 想让它更聪明，再**可选**地填一个自己的智谱 API Key，解锁聊天、圈屏幕讲题、看屏理解和查词条。**不配 Key 也能玩大半功能。**
 
-基于 **Tauri v2 + Rust**，AI 能力调用 **智谱 GLM-4V** 多模态模型。
-[GitHub Releases](https://github.com/zhang6-maker/xiaohuo/releases) 提供**预编译便携包（约 8MB）**：解压 → 填入**你自己的**智谱 API Key → 双击即可，**不需要装 Rust / Node**。
+基于 **Tauri v2 + Rust**（AI 能力可选接入智谱 GLM-4V）。
+[GitHub Releases](https://github.com/zhang6-maker/xiaohuo/releases) 提供**预编译便携包（约 8MB）**：解压 → 双击 → 完事，**不需要装 Rust / Node，也不需要账号**。
 仓库、exe、便携包**均不含任何真实 API Key**（详见[关于隐私](#关于隐私)）。
 
 ---
@@ -23,6 +25,16 @@
 
 对应的五个后端命令（`src-tauri/src/lib.rs`）：`toggle_pick`（全屏框选）、`capture_screen`（截屏）、`ask_glm`（看图问答）、`ask_draw`（画简笔画）、`critique_draw`（点评画作）。
 
+### 不配 Key 能玩什么（重点）
+
+| 类型 | 功能 | 说明 |
+| --- | --- | --- |
+| **纯本地，连网都不用** | 全屏漫游、点击穿透、鼠标跟随、戳了会生气、换色 / 换装 / 发型 / 围巾、节日皮肤、唱歌、看书、📝 记忆 + 📖 记录本 | Canvas 手绘 + `localStorage` + 本地文件，零依赖 |
+| **联网，但不用 Key** | 画常见简笔画（本地模板 / Iconify 图标库 / 内置 17 份手绘兜底稿）、聊天框输入「搜索 XXX」查词条 | 词条检索走维基百科 + DuckDuckGo；**没 Key 时直接把查到的资料原文贴出来**，只是没有小火的傲娇口吻 |
+| **需要自己的智谱 Key** | 自由聊天、圈屏幕讲题、看屏理解、生僻词让 AI 现画 | Key 在 https://bigmodel.cn/console/apikeys 免费领取，只存本机 `.env` |
+
+> 画画对常见词（猫 / 狗 / 牛 / 羊 / 烟花 / 火箭…）走本地模板，零配置可用；只有没匹配到任何模板、图标、手绘稿的**生僻词**才去调 AI，此时若没配 Key 会提示「未配置 ZHIPU_API_KEY」（**不会崩**，只是画不出来）。
+
 ### 关于隐私
 
 - AI 请求由 **Rust 端直连智谱官方接口** `open.bigmodel.cn`，**不经过本项目作者的任何服务器**。
@@ -36,34 +48,40 @@
 
 - **Windows 10/11 64 位**（程序使用 Win32 API，**仅 Windows 可编译运行**，暂不支持 macOS / Linux）
 - **WebView2 运行时**：Win10/11 通常已自带；若窗口白屏/打不开，装 [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)
-- 一个**智谱 API Key**：在 https://bigmodel.cn/console/apikeys 免费领取
+- **智谱 API Key（可选）**：只有想用 AI 聊天 / 看屏 / 搜题 / 生僻词画画时才需要，在 https://bigmodel.cn/console/apikeys 免费领取。**不填也能玩上面那一大堆本地功能**
 
 ---
 
 ## 快速开始（推荐，无需编译）
 
+### 只想先看它跑起来（零配置，10 秒）
+
 1. 到 [GitHub Releases](https://github.com/zhang6-maker/xiaohuo/releases) 下载 **`xiaohuo-portable.zip`**（或单独下 `xiaohuo.exe`），解压到任意文件夹。
-2. 把包里的 `.env.example` **改名为 `.env`**，用记事本打开，填进你自己的 key：
+2. **双击 `xiaohuo.exe`**。桌面上出现透明火柴人即成功 —— **不用注册、不用填任何东西**。
+   - 首次运行可能弹出 Windows SmartScreen「已保护你的电脑」→ 点「**详细信息 → 仍要运行**」（个人项目未买代码签名证书，属正常，不是病毒告警）。
+   - 若窗口空白 / 打不开 → 安装 [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)（Win10/11 通常已自带）。
+
+鼠标移到它身上会变得可交互；**长按**唤出功能菜单。想退出：右键 →「⏻ 退出」。
+
+### 想解锁 AI 功能（可选，约 1 分钟）
+
+1. 把包里的 `.env.example` **改名为 `.env`**，用记事本打开，填进你自己的 key：
 
    ```
    ZHIPU_API_KEY=你的key
    ```
 
-   - `.env` 必须和 `xiaohuo.exe` **在同一个目录**；改完要**重启程序**（配置只在启动时读一次）。
+   - `.env` 必须和 `xiaohuo.exe` **在同一个目录**。
    - key 在 https://bigmodel.cn/console/apikeys **免费领取**。本项目**不附带任何 key**，也不会把 key 内置进 exe。
-   - 包里其余两项 `ZHIPU_VISION_MODEL` / `ZHIPU_DRAW_MODEL` 是可选的，留空即用免费默认模型。
-
-3. **双击 `xiaohuo.exe`**。桌面上出现透明火柴人即成功。
-   - 首次运行可能弹出 Windows SmartScreen「已保护你的电脑」→ 点「**详细信息 → 仍要运行**」（个人项目未买代码签名证书，属正常，不是病毒告警）。
-   - 若窗口空白 / 打不开 → 安装 [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)（Win10/11 通常已自带）。
-
-鼠标移到它身上会变得可交互；**长按**唤出功能菜单，里面才是框选 / 提问 / 画图这些入口。想退出：右键 →「⏻ 退出」。
+   - 其余模型项都是可选的，留空即用免费默认模型。
+2. **重新双击 `xiaohuo.exe`** —— 配置只在启动时读一次，改完必须重启。
 
 ### `.env` 配置说明
 
 | 变量 | 必填 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `ZHIPU_API_KEY` | 是 | — | 智谱开放平台 API Key |
+| `ZHIPU_API_KEY` | **仅 AI 功能需要** | — | 智谱开放平台 API Key；不填也能玩本地功能 |
+| `ZHIPU_CHAT_MODEL` | 否 | `glm-4-flash` | 聊天回复模型 |
 | `ZHIPU_VISION_MODEL` | 否 | `glm-4v-flash` | 看图理解 / 搜题用的多模态模型 |
 | `ZHIPU_DRAW_MODEL` | 否 | `glm-4-flash` | 画图模型 |
 
