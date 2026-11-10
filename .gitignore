@@ -26,3 +26,13 @@ src-tauri/gen
 
 # 开发期探测脚本
 /tools/
+
+# 离线笔顺数据（30.8MB，本地构建输入，不入库；用 _prep_data.py 重新生成）
+public/hanzi-data.json
+src/hanzi-data.json
+
+# 开发期辅助脚本 / 日志（不入库）
+/_prep_data.py
+/_release_pkg.py
+/_cargo.log
+_dist_bak_*

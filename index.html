@@ -158,6 +158,16 @@
   /* 界面只留小火本体：隐藏灰色的状态字(#status)、底部提示字(.hint) 与 红色的调试字(#dbg)。
      想恢复调试信息，把这一行注释掉即可。 */
   #status, .hint, #dbg { display: none !important; }
+
+  /* 屏幕写字覆盖层：多条留言向下堆叠、互不重叠，到时淡出 */
+  #writeLayer { position: fixed; inset: 0; z-index: 60; pointer-events: none; }
+  .write-block { position: absolute; display: flex; align-items: flex-end; gap: 14px; transition: opacity .6s ease; }
+  .write-block.write-fade { opacity: 0; }
+  .write-cell { width: 70px; height: 84px; display: flex; align-items: center; justify-content: center; }
+  .write-cell.write-text { font-size: 58px; font-weight: 700; line-height: 1;
+    font-family: "Microsoft YaHei","PingFang SC","Hiragino Sans GB","Noto Sans CJK SC",sans-serif;
+    text-shadow: 0 1px 2px rgba(0,0,0,.25); }
+  .write-cell svg { display: block; }
 </style>
 </head>
 <body>
@@ -175,6 +185,7 @@
 
 <!-- 模型播报：Rust emit model_used 时显示当前用的模型与来源，几秒后淡出 -->
 <div id="modelTag" class="hidden" style="position:fixed;right:8px;bottom:8px;z-index:70;color:#cde;font-size:11px;font-family:monospace;background:rgba(20,20,28,.82);padding:3px 8px;border-radius:6px;pointer-events:none;max-width:62%;text-align:right;transition:opacity .4s;"></div>
+  <div id="writeLayer"></div>
 
 <!-- 全屏框选层（看屏/搜题）：截屏后铺满全屏让你框选 -->
 <div id="pickLayer" class="hidden">
@@ -316,6 +327,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { fetchWithTimeout } from './src/fetchWithTimeout.js';
 import { QD_CLASSES, validateQdManifest } from './src/templates.js';
+import HanziWriter from './src/lib/hanzi-writer.esm.js';
 (() => {
   "use strict";
   const canvas = document.getElementById('stage');
@@ -2913,9 +2925,20 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     artworkPool.push(art); activeArt = art;
     setState('paint', 12000);
   }
-  // 屏幕写字：先把文字栅格化，再用 Moore-neighbor 轮廓追踪把每个字部件描成一条有序轮廓线，
-  // 渲染时沿点序逐段写出 → 视觉上像"一笔一划勾边"。color 用 '__body__' 哨兵，取当前人物色 S.color。
-  // 零依赖：任意中英文/表情都支持；线宽由 startWrite 单独设细，避免之前扫描线又粗又不像手写的问题。
+  // 屏幕写字：用 Hanzi Writer + 离线笔顺库（public/hanzi-data.json，9574 字）做"真·一笔一划"书写。
+  // 每个汉字按真实笔顺逐笔写出；字色 = 当前人物身体色 S.color（心情/换装变，字也变）；
+  // 多条留言向下堆叠、互不重叠，停留到时淡出；英文/数字/表情等无笔顺数据的回退为同色文本。
+  let _hanziData = null;
+  function getHanziData() {
+    if (!_hanziData) _hanziData = fetch('hanzi-data.json').then(r => r.ok ? r.json() : null).catch(() => null);
+    return _hanziData;
+  }
+  const writeLayer = document.getElementById('writeLayer');
+  const WRITES = [];                 // { el, born, life, writers:[] }
+  let writeNextY = 0;
+  const WR_CELL_W = 70, WR_CELL_H = 84, WR_GAP = 14;
+  function isCJK(ch) { return /[\u3400-\u4dbf\u4e00-\u9fff\uF900-\uFAFF]/.test(ch); }
+  function clearOldestWrite() { const o = WRITES.shift(); if (o) { o.el.classList.add('write-fade'); setTimeout(() => o.el.remove(), 700); } }
   function textToStrokes(text) {
     const fontSize = clamp(Math.round(50 - text.length * 1.0), 28, 56);
     const font = `bold ${fontSize}px "Microsoft YaHei","PingFang SC","Hiragino Sans GB","Source Han Sans SC","Noto Sans CJK SC",sans-serif`;
@@ -2976,28 +2999,58 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     });
     return { strokes, w: tw, h: th, fontSize };
   }
-  function startWrite(text, customMs) {
+  async function startWrite(text, customMs) {
     text = (text || '').trim();
     if (!text) { addChat('sys', '✍️ 写点啥？'); return; }
-    if (text.length > 30) text = text.slice(0, 30);
-    const r = textToStrokes(text);
-    const strokes = r.strokes;
-    if (!strokes.length) { addChat('sys', '✍️ 这个我写不出来…'); return; }
-    // 落点：屏幕中上方居中（"在屏幕上面写"），不挡火柴人主体
-    const ax = W / 2, ay = clamp(H * 0.26, 80, H * 0.5);
-    const offX = ax - r.w / 2, offY = ay - r.h / 2;
-    for (const s of strokes) {                              // poly 的 a 是扁平 [x0,y0,x1,y1,...]，整体平移
-      const na = []; for (let i = 0; i < s.a.length; i += 2) na.push(s.a[i] + offX, s.a[i + 1] + offY);
-      s.a = na;
+    if (text.length > 24) text = text.slice(0, 24);
+    const data = await getHanziData();
+    if (!writeNextY) writeNextY = H * 0.14;
+    const chars = Array.from(text);
+    const blockH = WR_CELL_H + 12;
+    // 超出底部或超上限 → 清最旧并回到顶部继续写（互不重叠）
+    if (writeNextY + blockH > H * 0.86) { clearOldestWrite(); writeNextY = H * 0.14; }
+    while (WRITES.length >= 6) clearOldestWrite();
+
+    const block = document.createElement('div');
+    block.className = 'write-block';
+    const blockW = chars.length * WR_CELL_W + (chars.length - 1) * WR_GAP;
+    block.style.left = Math.max(8, W / 2 - blockW / 2) + 'px';
+    block.style.top = writeNextY + 'px';
+
+    const writers = [];
+    for (const ch of chars) {
+      const cell = document.createElement('div'); cell.className = 'write-cell';
+      if (isCJK(ch) && data && data[ch]) {
+        const tgt = document.createElement('div');
+        tgt.style.width = WR_CELL_W + 'px'; tgt.style.height = WR_CELL_H + 'px';
+        cell.appendChild(tgt);
+        try {
+          const w = HanziWriter.create(tgt, ch, {
+            width: WR_CELL_W, height: WR_CELL_H, padding: 8,
+            showCharacter: false, showOutline: false,
+            strokeColor: S.color, radicalColor: S.color,
+            charDataLoader: (c, onComplete) => { onComplete(data[c] || null); }
+          });
+          w.animateCharacter();
+          writers.push(w);
+        } catch (e) { cell.textContent = ch; cell.style.color = S.color; }
+      } else {
+        cell.classList.add('write-text'); cell.textContent = ch; cell.style.color = S.color;
+      }
+      block.appendChild(cell);
     }
-    const art = new Drawing('write', ax, ay, strokes);
-    art.drawDur = clamp(strokes.length * 420, 1600, 4200);   // 每部件一笔，逐笔写出
-    art.life = (customMs && customMs > 0) ? customMs : 60000; // 默认 1 分钟；特意说"停留X"则尊重
-    art.lw = clamp(r.fontSize * 0.04, 1.4, 2.2);             // 细线，像手写勾边（不再又粗又糊）
-    artworkPool.push(art); activeArt = art;
-    setState('paint', art.drawDur + 800);                    // 小火举笔写几秒，之后字继续留屏
+    writeLayer.appendChild(block);
+
+    const life = (customMs && customMs > 0) ? customMs : 60000;   // 默认 1 分钟；可指定停留时长
+    WRITES.push({ el: block, born: performance.now(), life, writers });
+    writeNextY += blockH + WR_GAP;
+
+    const drawDur = clamp(chars.length * 650 + 800, 1500, 6000);
+    setState('paint', drawDur);                  // 小火举笔写几秒，之后字继续留屏
     addChat('pet', '✍️ 我来写～');
   }
+  // 预拉取笔顺库（约 30MB，首次写字前先热身，避免第一句卡顿）
+  setTimeout(() => getHanziData().catch(() => {}), 2500);
   // 从"在屏幕上写X / 写『X』"里抽出要写的文字，同时解析可选的"停留X分钟/秒"；
   // 避开"写首诗"等让 AI 生成内容的聊天意图。返回 { text, ms } 或 null。
   function extractWriteText(tl) {
@@ -3492,6 +3545,19 @@ import { QD_CLASSES, validateQdManifest } from './src/templates.js';
     if (currState === 'paint') {
       if (activeArt && activeArt.isFx) S.color = activeArt.glowColor || S.color;        // 粒子烟花：身体跟随最近一次爆炸/升空的颜色
       else if (activeArt && activeArt.strokes && activeArt.type !== 'write') S.color = paintColorAt(activeArt, now);   // 普通画作：跟随当前笔画颜色；写字类型字色随人物色，身体色保持
+    }
+    // 屏幕写字：到时淡出并清理（互不重叠由 startWrite 的堆叠逻辑保证）
+    if (WRITES.length) {
+      const nowW = performance.now();
+      for (let i = WRITES.length - 1; i >= 0; i--) {
+        const w = WRITES[i];
+        if (nowW - w.born > w.life) {
+          w.el.classList.add('write-fade');
+          const el = w.el;
+          setTimeout(() => { if (el && el.parentNode) el.remove(); }, 700);
+          WRITES.splice(i, 1);
+        }
+      }
     }
     const _bodyColor = S.color;
     if (now < angryUntil) S.color = ANGRY_COLOR;   // 愤怒：身体（火柴人线条）变红几秒
