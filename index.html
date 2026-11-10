@@ -3002,7 +3002,12 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   async function startWrite(text, customMs) {
     text = (text || '').trim();
     if (!text) { addChat('sys', '✍️ 写点啥？'); return; }
-    if (text.length > 24) text = text.slice(0, 24);
+    // 长文本（如整篇《出师表》）直接温柔拒绝，不再静默截断写残缺片段
+    if (Array.from(text).length > 12) {
+      addChat('pet', '✍️ 这么多字小火写不下呀～写个短词（像「我爱你」）我就能一笔一划写给你看');
+      return;
+    }
+    if (text.length > 24) text = text.slice(0, 24);   // 兜底安全上限（正常不会触发）
     const data = await getHanziData();
     if (!writeNextY) writeNextY = H * 0.14;
     const chars = Array.from(text);
