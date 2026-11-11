@@ -1010,6 +1010,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       '📸 搜一搜 / 👀 看看屏幕 → 真截屏后拖框选，交给大模型分析',
       '🎨 「💬聊天」框里打字「画只猫」→ 小火按你的文字指令画画',
       '📐 右键「📐 画草图」或聊天里说「画 y=sin(x) / 画象限 / 向量(3,4)」→ 小火画干净的数学/物理坐标系草图（离线就能画）',
+      '📸 用「搜一搜」框选数学/物理题（函数·向量·受力·几何…）→ 解答出来后小火会顺手把题目草图也画出来',
       '✍️ 「在屏幕上写2026！」→ 汉字 / 数字 / 标点都一笔一划写，手跟着笔尖走',
       '🖍️ 右键「✍️ 字色」选写字颜色（会记住）；或直接说「用红色写生日快乐」',
       '💬 「💬聊天」框里随便打字 → 小火用智谱回复，嘴会跟着动（念念有词）',
@@ -3295,29 +3296,53 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   }
 
   // 模型出 spec（联网分析题），限流/解析失败返回 null（上层优雅降级）
+  // 把模型返回的作图 spec JSON 转成渲染器能用的 spec（文字模型 / 视觉模型两条路共用）
+  function buildSketchSpec(sp) {
+    if (!sp || typeof sp !== 'object') return null;
+    const out = [];
+    for (const it of (Array.isArray(sp.items) ? sp.items : [])) {
+      if (!it || typeof it !== 'object') continue;
+      if (it.type === 'fn' && typeof it.expr === 'string') { const fn = compileExpr(it.expr); if (fn) out.push({ type: 'fn', expr: it.expr, fn, color: it.color || '#6ab0ff' }); }
+      else if (it.type === 'vector') { const x = Number(it.x), y = Number(it.y); if (isFinite(x) && isFinite(y)) out.push({ type: 'vector', x, y, color: it.color || '#ff5b8a', label: typeof it.label === 'string' ? it.label : '' }); }
+      else if (it.type === 'point') { const x = Number(it.x), y = Number(it.y); if (isFinite(x) && isFinite(y)) out.push({ type: 'point', x, y, color: it.color || '#ffd23d', label: typeof it.label === 'string' ? it.label : '' }); }
+      else if (it.type === 'circle') { const cx = Number(it.cx), cy = Number(it.cy), r = Number(it.r); if (isFinite(cx) && isFinite(cy) && isFinite(r)) out.push({ type: 'circle', cx, cy, r, color: it.color || '#4bd07a' }); }
+    }
+    const spec = { title: typeof sp.title === 'string' ? sp.title : '草图', grid: !!sp.grid, quadrants: !!sp.quadrants, items: out };
+    const fr = _autoFrame(out, null);
+    spec.xmin = isFinite(Number(sp.xmin)) ? Number(sp.xmin) : fr.xmin;
+    spec.xmax = isFinite(Number(sp.xmax)) ? Number(sp.xmax) : fr.xmax;
+    spec.ymin = isFinite(Number(sp.ymin)) ? Number(sp.ymin) : fr.ymin;
+    spec.ymax = isFinite(Number(sp.ymax)) ? Number(sp.ymax) : fr.ymax;
+    if (out.some(it => it.type === 'fn' && /(sin|cos|tan)/.test(it.expr)) && !isFinite(Number(sp.xmin))) spec.piTicks = true;
+    return spec;
+  }
+
+  // 文本题 → 文字模型出 spec（聊天/画框里说「画草图/分析这道题」走这条）
   async function askSketchSpec(text) {
     try {
       const raw = await invoke('ask_sketch', { text });
-      const sp = JSON.parse(extractJson(raw));
-      if (!sp || typeof sp !== 'object') return null;
-      const out = [];
-      for (const it of (Array.isArray(sp.items) ? sp.items : [])) {
-        if (!it || typeof it !== 'object') continue;
-        if (it.type === 'fn' && typeof it.expr === 'string') { const fn = compileExpr(it.expr); if (fn) out.push({ type: 'fn', expr: it.expr, fn, color: it.color || '#6ab0ff' }); }
-        else if (it.type === 'vector') { const x = Number(it.x), y = Number(it.y); if (isFinite(x) && isFinite(y)) out.push({ type: 'vector', x, y, color: it.color || '#ff5b8a' }); }
-        else if (it.type === 'point') { const x = Number(it.x), y = Number(it.y); if (isFinite(x) && isFinite(y)) out.push({ type: 'point', x, y, color: it.color || '#ffd23d' }); }
-        else if (it.type === 'circle') { const cx = Number(it.cx), cy = Number(it.cy), r = Number(it.r); if (isFinite(cx) && isFinite(cy) && isFinite(r)) out.push({ type: 'circle', cx, cy, r, color: it.color || '#4bd07a' }); }
-      }
-      const spec = { title: typeof sp.title === 'string' ? sp.title : '草图', grid: !!sp.grid, quadrants: !!sp.quadrants, items: out };
-      const fr = _autoFrame(out, null);
-      spec.xmin = isFinite(Number(sp.xmin)) ? Number(sp.xmin) : fr.xmin;
-      spec.xmax = isFinite(Number(sp.xmax)) ? Number(sp.xmax) : fr.xmax;
-      spec.ymin = isFinite(Number(sp.ymin)) ? Number(sp.ymin) : fr.ymin;
-      spec.ymax = isFinite(Number(sp.ymax)) ? Number(sp.ymax) : fr.ymax;
-      if (out.some(it => it.type === 'fn' && /(sin|cos|tan)/.test(it.expr)) && !isFinite(Number(sp.xmin))) spec.piTicks = true;
-      return spec;
+      return buildSketchSpec(JSON.parse(extractJson(raw)));
     } catch (e) { console.warn('[sketch] ask_sketch 失败：', e); return null; }
   }
+
+  // 搜一搜截图题 → 视觉模型直接看图出 spec（数学/物理题自动画草图）
+  async function askSearchSketch(imgB64) {
+    try {
+      const prompt = '你是绘图助手。请看这张题目截图，判断它是否适合画一张数学/物理草图'
+        + '（如函数图像 y=f(x)、向量、点、圆、坐标系、受力/速度矢量图等）。\n'
+        + '如果适合，只输出如下 JSON（不要任何解释、不要 markdown 代码块标记、不要反引号）：\n'
+        + '{"title":"草图标题","xmin":-10,"xmax":10,"ymin":-10,"ymax":10,"grid":true,"quadrants":true,'
+        + '"items":[{"type":"fn","expr":"sin(x)"},{"type":"vector","x":3,"y":4,"label":"F"},{"type":"point","x":1,"y":2,"label":"A"},{"type":"circle","cx":0,"cy":0,"r":3}]}\n'
+        + 'xmin/xmax/ymin/ymax 按内容取合理范围；不适合画草图（纯文字/代码/生活常识题）则只输出 {"items":[]}。务必且只能输出 JSON。';
+      const raw = await invoke('ask_glm', { imageB64: imgB64, prompt });
+      const sp = JSON.parse(extractJson(raw));
+      const spec = buildSketchSpec(sp);
+      return (spec && spec.items.length) ? spec : null;
+    } catch (e) { console.warn('[sketch] 搜一搜草图失败：', e); return null; }
+  }
+
+  // 搜一搜解答里出现这些词，才值得顺手画张草图（避免对非数学截图做多余视觉调用）
+  const MATHPHYS_RE = /函数|方程|坐标|向量|抛物线|三角|sin|cos|tan|几何|受力|电路|运动|速度|加速度|电场|磁场|电流|电压|斜率|图像|曲线|直线|圆|角度|力|位移|动能|势能|求导|积分|质点|斜面|弹簧|电阻|电容|轨迹|波形/i;
 
   // 入口：聊天/画框里说"画草图 / 画 y=... / 画象限 / 分析这道题"
   function mathSketch(text) {
@@ -4382,6 +4407,15 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         if (useScreen && q) {   // 仅当用户带问题发问才收起提问框并显示「再问一次」；自动看/直接看时保留提问框便于追问
           screenAskWrap.classList.add('hidden');
           screenResultActions.classList.remove('hidden');
+        }
+        // 搜一搜数学/物理题 → 顺手用视觉模型把题目图转成草图 spec 画出来（限流/解析失败静默跳过，绝不乱涂）
+        if (act === 'search' && isTauri && MATHPHYS_RE.test(text)) {
+          setState('think', 60000);
+          toast('📐 小火正在画草图…');
+          askSearchSketch(imgB64).then(sp => {
+            if (sp) { startSketch(sp); addChat('pet', '📐 顺手给你画了张草图～'); }
+            setState('idle');
+          }).catch(() => setState('idle'));
         }
       })
       .catch(err => { txt.innerHTML = esc(apiErrText(err)).replace(/\n/g, '<br>'); });
