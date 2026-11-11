@@ -4013,6 +4013,9 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   // target: 结果落到 'screen'（看屏框）还是 'answer'（答案框）；不传则按 act 默认
   function runGlm(act, imgB64, question, target) {
     const q = (question || '').trim();
+    // 模型回答里常有 < > &（拍代码题尤其多），直接塞 innerHTML 会被当 HTML 标签吞掉，
+    // 表现就是「返回空值 / 内容缺一截」。先转义再换行，保证原文完整显示。
+    const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     let prompt;
     if (act === 'search') {
       prompt = '这是一道题目或问题（可能是文字题、公式、代码或报错截图）。请仔细看图，给出准确的解答步骤和最终答案；若是代码报错，请指出原因并给出修复方案。用中文、条理清晰地回答。';
@@ -4038,13 +4041,18 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     // 所以这里必须写 imageB64（写 image_b64 会报 missing required key imageB64）
     invoke('ask_glm', { imageB64: imgB64, prompt })
       .then(res => {
-        txt.innerHTML = res.replace(/\n/g, '<br>');
+        const text = (typeof res === 'string' ? res : '').trim();
+        if (!text) {   // 后端兜底后一般不会再空，但留一道防线，绝不让结果框显示成一片空白
+          txt.innerHTML = '😵 模型这次没给出答案。建议只框选题目本身、把区域缩小一点再试；若反复为空，看下右下角模型角标是不是切到了免费版。';
+          return;
+        }
+        txt.innerHTML = esc(text).replace(/\n/g, '<br>');
         if (useScreen && q) {   // 仅当用户带问题发问才收起提问框并显示「再问一次」；自动看/直接看时保留提问框便于追问
           screenAskWrap.classList.add('hidden');
           screenResultActions.classList.remove('hidden');
         }
       })
-      .catch(err => { txt.innerHTML = apiErrText(err).replace(/\n/g, '<br>'); });
+      .catch(err => { txt.innerHTML = esc(apiErrText(err)).replace(/\n/g, '<br>'); });
   }
 
   // 看屏截图后：先给用户输入问题（也可留空直接看），再发问

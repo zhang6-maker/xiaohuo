@@ -392,14 +392,32 @@ async fn call_zhipu(
         let status = resp.status();
         if status.is_success() {
             let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-            let content = v
+            let msg = v
                 .get("choices")
                 .and_then(|c| c.get(0))
                 .and_then(|c| c.get("message"))
-                .and_then(|m| m.get("content"))
-                .and_then(|c| c.as_str())
-                .unwrap_or("（模型无返回）")
-                .to_string();
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let mut content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+            // 推理模型（glm-4.6v 等）会把 max_tokens 全花在 reasoning_content 上，
+            // 返回 finish_reason=length + 空 content，前端会显示一片空白。这里必须兜底，
+            // 绝不能把空字符串原样 Ok 出去。
+            if content.trim().is_empty() {
+                let reason = msg
+                    .get("reasoning_content")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                content = if !reason.is_empty() {
+                    format!(
+                        "（模型把输出额度都用在思考上了，没写出正式答案。以下是它的思考过程，仅供参考；建议只框选题目本身、缩小区域后重试）\n\n{}",
+                        reason
+                    )
+                } else {
+                    "（模型这次没返回内容。可能是截图不清晰或题目太长，建议只框选题目本身再试一次）".to_string()
+                };
+            }
             let actual_source = if is_fallback { "free-fallback" } else { source };
             let _ = app.emit(
                 "model_used",
@@ -446,7 +464,7 @@ async fn ask_glm(app: tauri::AppHandle, image_b64: String, prompt: String) -> Re
         &key,
         90,
         move |m| {
-            serde_json::json!({
+            let mut payload = serde_json::json!({
                 "model": m,
                 "messages": [{
                     "role": "user",
@@ -455,9 +473,17 @@ async fn ask_glm(app: tauri::AppHandle, image_b64: String, prompt: String) -> Re
                         {"type": "image_url", "image_url": {"url": image_b64.as_str()}}
                     ]
                 }],
-                "max_tokens": 1024,
+                "max_tokens": 2048,
                 "temperature": 0.6
-            })
+            });
+            // glm-4.6v 等推理模型默认把 max_tokens 花在 reasoning_content（思考）上，
+            // 思考一长就 finish_reason=length 而正式答案 content 为空 → 搜题框一片空白。
+            // 拍题要的是答案不是思考过程，显式关掉思考；实测 14s 出完整解题步骤、finish=stop。
+            // 免费兜底 glm-4v-flash 不是推理模型，不带这个参数（带了大概率被 API 拒绝）。
+            if m.contains("4.5") || m.contains("4.6") || m.contains("4.7") {
+                payload["thinking"] = serde_json::json!({ "type": "disabled" });
+            }
+            payload
         },
     )
     .await
