@@ -1065,8 +1065,10 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     document.getElementById('ctxMenu').classList.add('hidden');
   });
   // 右下角浮层「清除草图」按钮（仅在草图存在时显示；窗口可交互时方可点击，否则用右键菜单清除）
+  // 注：不在初始化阶段调用 syncSketchUI()——它内部访问 artworkPool(let 声明在下方)，
+  // 此处调用会触发 TDZ(暂时性死区) ReferenceError 中断整个初始化、导致透明窗空白。
+  // 初始隐藏状态已由 HTML 的 class="hidden" 保证；运行时画/清草图会正常调用 syncSketchUI()。
   document.getElementById('sketchClearBtn').addEventListener('click', () => clearSketches());
-  syncSketchUI();
 
   // ---------- 换颜色面板 ----------
   const colorBox = document.getElementById('colorBox');
