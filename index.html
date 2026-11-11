@@ -2964,7 +2964,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   // ---------- 写字：火柴人握笔跟随（精准版） ----------
   // 不再用 HanziWriter 的自动动画，改用 medians（每笔中线点）自绘并驱动"笔尖"，
   // 让小火的手精确贴着笔尖运笔、一字一字写；字与手共用同一时间轴 → 完全同步。
-  const WR_WS = WR_CELL_W, WR_WP = 8, WR_GRID = 1024, WR_SPEED = 0.42; // 字画布边长/内边距/笔顺网格/书写速度(px·ms⁻¹)
+  const WR_WS = WR_CELL_W, WR_WP = 8, WR_GRID = 1024, WR_SPEED = 0.30; // 字画布边长/内边距/笔顺网格/书写速度(px·ms⁻¹)，值越小越慢（0.42→0.30：稍放慢）
   let writeTip = null;        // 当前笔尖屏幕坐标 {x,y}；null=当前没在写具体笔画
   let writingTarget = null;   // 写字时小火要走到字旁的位置 {x,y}；null=不强制移动
   const WRITE_ANIMS = [];     // 本批写字动画 {ch,g,sx0,sy0,medians,si,frac,acc,done,_last}
