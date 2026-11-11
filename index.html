@@ -216,14 +216,14 @@
 <div id="answerBox" class="box hidden">
   <button class="close">×</button>
   <div id="answerText"></div>
-  <div class="actions" style="margin-top:8px;"><button id="answerRecord" title="把本题截图和解答存进「我的记录」">📝 记忆</button></div>
+  <div class="actions" style="margin-top:8px;"><button id="answerCopy" title="复制解答文本，可直接粘贴到笔记/文档">📋 复制</button><button id="answerRecord" title="把本题截图和解答存进「我的记录」">📝 记忆</button></div>
 </div>
 
 <!-- 看屏结果框 -->
 <div id="screenBox" class="box hidden" style="top:12px;max-height:82%;overflow-y:auto;">
   <button class="close">×</button>
   <div id="screenText"></div>
-  <div class="actions" style="margin-top:8px;"><button id="screenRecord" title="把当前截图和回答存进「我的记录」">📝 记忆</button></div>
+  <div class="actions" style="margin-top:8px;"><button id="screenCopy" title="复制回答文本，可直接粘贴到笔记/文档">📋 复制</button><button id="screenRecord" title="把当前截图和回答存进「我的记录」">📝 记忆</button></div>
   <div id="screenAskWrap" class="hidden" style="margin-top:8px;">
     <input id="screenAsk" type="text" placeholder="想问他点啥？比如「我该怎么做」「这报错咋修」（留空就直接看截图）" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:6px;font-size:13px;" />
     <div class="actions">
@@ -1030,7 +1030,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       '📸 用「搜一搜」框选数学/物理题（函数·向量·受力·几何…）→ 解答出来后小火会顺手把草图画出来；结果框里也有「📐 画草图」按钮可手动触发',
       '📐 草图会<b>一直显示、不自动消失</b>：想清除时点右下角「🧹 清除草图」按钮，或右键菜单「🧹 清除草图」（你来决定它何时消失）',
       '🖱️ <b>所有弹窗都能自由拖动</b>：聊天/提示/解答/搜一搜/调色/换装/画画/记录本，按住标题区拖到顺手的位置即可',
-      '∑ 数学/物理解题的公式会用<b>教科书样式</b>呈现（分数、根号、上下标、希腊字母、向量等），更直观易读',
+      '∑ 数学/物理解题的公式会用<b>教科书样式</b>呈现（分数、根号、上下标、希腊字母、向量等），并按「解：→ 分步骤 → 答：」的试卷格式书写，更直观易读',
+      '📋 解答框/看屏框右下角都有「📋 复制」按钮，一键复制解答原文，可直接粘贴到笔记/文档/WPS',
       '✍️ 「在屏幕上写2026！」→ 汉字 / 数字 / 标点都一笔一划写，手跟着笔尖走',
       '🖍️ 右键「✍️ 字色」选写字颜色（会记住）；或直接说「用红色写生日快乐」',
       '💬 「💬聊天」框里随便打字 → 小火用智谱回复，嘴会跟着动（念念有词）',
@@ -4537,6 +4538,29 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   }
   // act: 'search'（解题/搜索） | 'screen'（看屏/提问）
   // target: 结果落到 'screen'（看屏框）还是 'answer'（答案框）；不传则按 act 默认
+  // 把解答/回答的原始文本写入剪贴板，便于直接复制粘贴（navigator.clipboard 优先，execCommand 兜底）
+  function copyText(s, label) {
+    label = label || '内容';
+    if (!s) { toast('还没有可复制的' + label); return; }
+    const done = () => toast('已复制' + label + ' ✓ 可直接粘贴');
+    const fail = () => toast('复制失败，请手动选择文字');
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(s).then(done).catch(() => fallbackCopy(s, done, fail));
+      } else { fallbackCopy(s, done, fail); }
+    } catch (e) { fallbackCopy(s, done, fail); }
+  }
+  function fallbackCopy(s, done, fail) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = s; ta.style.position = 'fixed'; ta.style.top = '0'; ta.style.left = '0'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      const ok = document.execCommand && document.execCommand('copy');
+      document.body.removeChild(ta);
+      ok ? done() : fail();
+    } catch (e) { fail(); }
+  }
+
   function runGlm(act, imgB64, question, target) {
     const q = (question || '').trim();
     // 模型回答里常有 < > &（拍代码题尤其多），直接塞 innerHTML 会被当 HTML 标签吞掉，
@@ -4544,9 +4568,9 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     let prompt;
     if (act === 'search') {
-      prompt = '这是一道题目或问题（可能是文字题、公式、代码或报错截图）。请仔细看图，给出准确的解答步骤和最终答案；若是代码报错，请指出原因并给出修复方案。用中文、条理清晰地回答。\n涉及数学/物理公式时，请用 LaTeX 风格并用 $ 包裹单个公式，例如动能写为 $E_k=\\frac{1}{2}mv^2$、角度 $\\theta$、积分 $\\int_a^b f(x)\\,dx$、根号 $\\sqrt{x}$、向量 $\\vec{v}$、求和 $\\sum_{i=1}^n a_i$；这样公式显示更清晰、像教科书。';
+      prompt = '这是一道题目或问题（可能是文字题、公式、代码或报错截图）。请仔细看图，并按「教科书/试卷标准解答」的格式、用中文作答：\n① 第一行以「解：」开头；\n② 分步骤推导，每步一行、用 ① ② ③ 或 (1)(2)(3) 编号，先写所用公式、再代入已知量、最后算出结果，关键步骤之间适当留空行；\n③ 涉及数学/物理公式用 LaTeX 风格并用 $ 包裹（如动能 $E_k=\\frac{1}{2}mv^2$、角度 $\\theta$、积分 $\\int_a^b f(x)\\,dx$、根号 $\\sqrt{x}$、向量 $\\vec{v}$、求和 $\\sum_{i=1}^n a_i$）；\n④ 若有明确数值答案，最后以「答：」收尾写出结论。\n若是代码报错，请指出原因并给出修复方案。要求条理清晰、像试卷参考答案一样规范易读。';
     } else if (q) {
-      prompt = '这是用户截下的屏幕区域。用户对着这张图问你一个问题，请结合图片内容回答。\n用户的问题：' + q + '\n请用中文、条理清晰地回答，必要时给出具体操作步骤。若涉及数学/物理公式，请用 $...$ 包裹（如自由落体位移 $\\frac{1}{2}gt^2$），便于清晰呈现。';
+      prompt = '这是用户截下的屏幕区域。用户对着这张图问你一个问题，请结合图片内容回答。\n用户的问题：' + q + '\n请用中文、条理清晰地回答，必要时给出具体操作步骤。若是在解答数学/物理题目，请按「解：→ 分步骤推导 → 答：」的教科书/试卷格式作答；涉及公式用 LaTeX 风格并用 $ 包裹（如自由落体位移 $\\frac{1}{2}gt^2$、动能 $E_k=\\frac{1}{2}mv^2$），便于清晰呈现。';
     } else {
       prompt = '请看这张屏幕截图，简要描述你看到的内容：用户大概在做什么、界面上有哪些关键信息（文字、报错、数据、窗口标题等）。用中文简要说明。';
     }
@@ -4554,6 +4578,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const useScreen = (target || (act === 'search' ? 'answer' : 'screen')) === 'screen';
     const box = useScreen ? screenBox : answerBox;
     const txt = useScreen ? screenText : answerText;
+    txt._raw = null;   // 供「📋 复制」按钮取原始文本
     if (act === 'search') {
       txt.innerHTML = '🤔 小火在搜…';
     } else {
@@ -4572,6 +4597,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
           txt.innerHTML = '😵 模型这次没给出答案。建议只框选题目本身、把区域缩小一点再试；若反复为空，看下右下角模型角标是不是切到了免费版。';
           return;
         }
+        txt._raw = text;
         txt.innerHTML = renderRich(text);
         lastSearchText = text; lastSearchImgB64 = imgB64;   // 供「📐 画草图」按钮复用
         if (useScreen && q) {   // 仅当用户带问题发问才收起提问框并显示「再问一次」；自动看/直接看时保留提问框便于追问
@@ -4592,7 +4618,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
           }
         }
       })
-      .catch(err => { txt.innerHTML = renderRich(apiErrText(err)); });
+      .catch(err => { const et = apiErrText(err); txt._raw = et; txt.innerHTML = renderRich(et); });
   }
 
   // 看屏截图后：先给用户输入问题（也可留空直接看），再发问
@@ -4805,6 +4831,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   });
   document.getElementById('answerRecord').addEventListener('click', () => recordMemory('', document.getElementById('answerText').innerText));
   document.getElementById('screenRecord').addEventListener('click', () => recordMemory(document.getElementById('screenAsk').value, document.getElementById('screenText').innerText));
+  document.getElementById('answerCopy').addEventListener('click', () => copyText(answerText._raw, '解答'));
+  document.getElementById('screenCopy').addEventListener('click', () => copyText(screenText._raw, '回答'));
   document.getElementById('memOpenFolder').addEventListener('click', () => { if (isTauri) invoke('open_memories_folder').catch(() => toast('打开失败')); });
   memBox.querySelector('.close').addEventListener('click', () => memBox.classList.add('hidden'));
 
