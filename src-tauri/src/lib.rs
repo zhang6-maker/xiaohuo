@@ -526,8 +526,8 @@ async fn ask_draw(app: tauri::AppHandle, prompt: String, ref_desc: Option<String
             serde_json::json!({
                 "model": m,
                 "messages": [{"role": "user", "content": user_msg.as_str()}],
-                "max_tokens": 900,
-                "temperature": 0.7
+                "max_tokens": 1400,
+                "temperature": 0.4
             })
         },
     )
@@ -573,7 +573,7 @@ async fn critique_draw(app: tauri::AppHandle, prompt: String, image_b64: String,
                         {"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{}", image_b64.as_str())}}
                     ]
                 }],
-                "max_tokens": 1100,
+                "max_tokens": 1400,
                 "temperature": 0.4
             })
         },

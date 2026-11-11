@@ -3193,7 +3193,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   async function refineWithVision(v, strokes, ax, ay) {
     if (!isTauri) return strokes;
     let cur = strokes;
-    for (let i = 0; i < 1; i++) {
+    const before = strokes;                 // 自纠前的版本（门控已判 YES），用于兜底
+    for (let i = 0; i < 2; i++) {
       try {
         const S = 320;
         const copy = JSON.parse(JSON.stringify(cur));
@@ -3207,12 +3208,19 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         cur = parsed;
       } catch (e) { console.warn('[vision] 自纠第' + (i + 1) + '轮失败，沿用上一版：', e); break; }
     }
+    // 自纠有可能把已经通过的画改坏：结果再过一次识别度门控，不通过就回退自纠前版本
+    if (cur !== before) {
+      try {
+        const ok = await screenWithVision(v, cur);
+        if (!ok) { console.warn('[vision] 自纠后反而不像了，回退自纠前版本'); return before; }
+      } catch (_) { /* 门控没调通就保持自纠结果 */ }
+    }
     return cur;
   }
   // 视觉筛选门控：把候选渲染成图 → 多模态(GLM-4V)做 YES/NO 识别度判断（"是否清晰可辨识地画出了 X"）。
   // 用识别度而非审美打分（之前已验证：审美分不可靠，识别却能做到），通过才上屏，不通过则让 LLM 重画。
   async function screenWithVision(v, strokes) {
-    if (!isTauri) return true;            // 网页版无后端，放行（交给随机兜底）
+    if (!isTauri) return true;            // 网页版无后端，直接上屏
     try {
       const S = 320;
       const copy = JSON.parse(JSON.stringify(strokes));
@@ -3222,13 +3230,31 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       const prompt = '这是一张简笔画，白底黑线。请判断：它是否清晰、可辨识地画出了「' + v + '」？只回答 YES 或 NO，不要任何解释。';
       const resp = await invoke('ask_glm', { imageB64: b64, prompt });
       const up = (resp || '').toUpperCase();
-      if (up.includes('YES')) return true;                         // 英文肯定
       const zh = resp || '';
+      // 收紧门控：明确/含糊的中文否定优先否决，避免"YES，但有点不像…"这类自相矛盾的回答把糟画放行
+      if (/不像|看不出|不清晰|无法判断|不确定|不太像/.test(zh)) return false;
+      if (up.includes('YES')) return true;                         // 英文肯定
       if (zh.includes('是') && !zh.includes('不是') && !zh.includes('否')) return true;  // 中文肯定（排除"不是/否"）
       return false;
-    } catch (e) { console.warn('[vision] 筛选调用失败，放行上一版：', e); return true; }
+    } catch (e) {
+      // 视觉接口没调通 = 没有判断依据，放行上一版；若返回 false 会白白连画 3 次、多耗额度仍是同一版
+      console.warn('[vision] 筛选调用失败（无判断依据），放行上一版：', e); return true;
+    }
   }
 
+  // 把失败原因压成一句话，供 toast 亮出来（完整原因留在输入框 + console）
+  // 用户明确反馈过"调用模型还画得一团糟"——那团糟其实是失败后的 startPaint('random') 随机乱涂；
+  // 现在失败就如实说失败、不再糊弄，也方便一眼看出是限流 / 没连上 / 没回画作。
+  function paintFailBrief(msg) {
+    const s = String(msg || '');
+    // "没回可解析画作"优先：这句文案里会提到"可能限流/网络抖动"，放后面会被误判成限流
+    if (/没看懂|解析|JSON|无法解析|没回/i.test(s)) return '模型没回可解析的画作';
+    if (/429|限流|额度|quota|频繁/i.test(s)) return '模型被限流了（429/额度用完）';
+    if (/未配置|API_KEY|api key/i.test(s)) return '没配 API Key';
+    if (/网络|超时|连接|timeout|fetch|拦截|不通/i.test(s)) return '没连上模型';
+    if (/网页版|无 Tauri|桌面版/i.test(s)) return '网页版不能调模型';
+    return '模型这次没画成';
+  }
   // 不认识的词：先联网查长相 → 再调智谱把"画 X"翻译成原语 JSON，再画出来
   function llmPaint(v) {
     const box = document.getElementById('paintBox');
@@ -3240,11 +3266,13 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     setState('think', 120000);   // 调模型前先进入"思考"姿势（歪头托腮），结果回来再切回画画
     const fail = (msg, log) => {
       if (log) console.warn(log);
-      if (hint) hint.textContent = msg;
+      if (hint) hint.textContent = msg;                 // 完整原因留在「画点什么」框里
       if (go) { go.disabled = false; go.textContent = '画！'; }
-      setTimeout(() => { box.classList.add('hidden'); startPaint('random'); }, 1300);
+      toast('🎨 这次没画成：' + paintFailBrief(msg) + '（没乱画）');
+      setState('idle');                                // 收回"思考"姿势，别一直托腮
+      setTimeout(() => { box.classList.add('hidden'); }, 6000);  // 留足时间看清原因
     };
-    if (!isTauri) { fail('（网页版无法联网思考，已随机画）🎲', '[paint] 网页版无 Tauri 后端，无法调用智谱，已随机兜底（请用桌面版 tauri dev）'); return; }
+    if (!isTauri) { fail('网页版没有桌面后端，画不了（请用桌面版 tauri dev）', '[paint] 网页版无 Tauri 后端，无法调用智谱（请用桌面版 tauri dev）'); return; }
     // 先联网查一下这东西长啥样（维基百科），给模型真实形状参考
     if (hint) hint.textContent = '🔍 小火查了查「' + v + '」…';
     describeConcept(v).then(ref => {
@@ -3256,21 +3284,21 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         setTimeout(() => box.classList.add('hidden'), 600);
         startPaintStrokes(finalStrokes);
       };
-      // 生成 → 视觉筛选 → 通过则精炼上屏；不通过重试一次；两次都不通过则展示最后一版（不空手而归）
+      // 生成 → 视觉筛选 → 通过则精炼上屏；不通过则重画（最多 3 次）；都不通过则展示最后一版（不再甩随机乱涂）
       const tryDraw = (attempt) => {
         if (hint) hint.textContent = '🤔 小火想怎么画「' + v + '」…';
         invoke('ask_draw', { prompt: v, refDesc: refText || null })   // camelCase，见上：snake_case 会被 Tauri 拒绝
           .then(res => {
             const strokes = llmToStrokes(res, ax, ay);
             if (!strokes) {
-              if (attempt < 2) return tryDraw(attempt + 1);
-              return fail('🤔 小火没看懂模型返回，随便画了点～', '[paint] 智谱返回无法解析为画作，原始返回：' + JSON.stringify(res).slice(0, 600));
+              if (attempt < 3) return tryDraw(attempt + 1);
+              return fail('模型这次没回可解析的画作（可能限流/网络抖动，或它输出了非 JSON 文字）。稍等再试～', '[paint] 智谱返回无法解析为画作，原始返回：' + JSON.stringify(res).slice(0, 600));
             }
             if (hint) hint.textContent = '🔎 小火自己看看画得像不像…';
             screenWithVision(v, strokes).then(pass => {
               if (pass) {
                 refineWithVision(v, strokes, ax, ay).then(finalStrokes => finish(finalStrokes));
-              } else if (attempt < 2) {
+              } else if (attempt < 3) {
                 if (hint) hint.textContent = '🤔 这版不太像，小火重想一下…';
                 tryDraw(attempt + 1);
               } else {
@@ -3280,7 +3308,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
             });
           })
           .catch(err => {
-            if (attempt < 2) return tryDraw(attempt + 1);
+            if (attempt < 3) return tryDraw(attempt + 1);
             fail(apiErrText(err), '[paint] ask_draw 调用失败：' + (err && err.message ? err.message : err));
           });
       };
