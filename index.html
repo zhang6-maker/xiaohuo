@@ -80,14 +80,14 @@
   .box.drag input, .box.drag textarea, .box.drag [contenteditable],
   .box.drag #chatLog, .box.drag #tipsText, .box.drag #answerText, .box.drag #screenText { cursor: default; }
   /* 换颜色面板：色板 */
-  #colorBox .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
-  #colorBox .swatch {
+  :is(#colorBox, #writeColorBox) .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
+  :is(#colorBox, #writeColorBox) .swatch {
     width: 30px; height: 30px; border-radius: 6px; cursor: pointer;
     border: 2px solid transparent; box-shadow: 0 0 0 1px rgba(255,255,255,.15);
   }
-  #colorBox .swatch.sel { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.55); }
-  #colorBox .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-  #colorBox input[type=color] { width: 38px; height: 28px; border: none; background: none; cursor: pointer; padding: 0; }
+  :is(#colorBox, #writeColorBox) .swatch.sel { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.55); }
+  :is(#colorBox, #writeColorBox) .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  :is(#colorBox, #writeColorBox) input[type=color] { width: 38px; height: 28px; border: none; background: none; cursor: pointer; padding: 0; }
   /* 换装面板：色板（服装选项） */
   #outfitBox .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
   #outfitBox .swatch {
@@ -229,6 +229,7 @@
   <div data-m="search">📸 搜一搜</div>
   <div data-m="screen">👀 看看屏幕</div>
   <div data-m="color">🎨 换颜色</div>
+  <div data-m="writecolor">✍️ 字色</div>
   <div data-m="outfit">👕 换装</div>
   <div data-m="tips">💡 提示</div>
   <div data-m="chat">💬 聊天</div>
@@ -248,6 +249,19 @@
     <input type="color" id="colorPicker" value="#2b2b2f" />
     <button id="colorReset" style="margin-left:auto;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;">恢复默认</button>
   </div>
+</div>
+
+<!-- 写字颜色面板：右键菜单「✍️ 字色」唤出。独立于身体色，会记住；不设则跟随身体色 -->
+<div id="writeColorBox" class="box hidden" style="top:12px;max-width:320px;">
+  <button class="close">×</button>
+  <div style="font-size:13px;color:#cfd2d8;margin:2px 0 2px;">✍️ 选个写字颜色（会记住，下次启动也生效）</div>
+  <div class="swatches" id="writeInkSwatches"></div>
+  <div class="row">
+    <span style="font-size:12px;color:#9aa0a6;">自定义</span>
+    <input type="color" id="writeInkPicker" value="#ff5b5b" />
+    <button id="writeInkReset" style="margin-left:auto;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;">跟随身体色</button>
+  </div>
+  <div style="font-size:12px;color:#9aa0a6;margin-top:8px;">也可以直接说「用红色写生日快乐」</div>
 </div>
 
 <!-- 换装面板：右键菜单「👕 换装」唤出。衣服 / 围巾 / 发型 三层完全独立，互不干扰；都会记住 -->
@@ -994,6 +1008,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       '😴 「睡觉」后约 3 秒会翻倒躺平进入深度睡眠，醒来会伸展一下',
       '📸 搜一搜 / 👀 看看屏幕 → 真截屏后拖框选，交给大模型分析',
       '🎨 「💬聊天」框里打字「画只猫」→ 小火按你的文字指令画画',
+      '✍️ 「在屏幕上写2026！」→ 汉字 / 数字 / 标点都一笔一划写，手跟着笔尖走',
+      '🖍️ 右键「✍️ 字色」选写字颜色（会记住）；或直接说「用红色写生日快乐」',
       '💬 「💬聊天」框里随便打字 → 小火用智谱回复，嘴会跟着动（念念有词）',
       '🚶 它会自动到处溜达，高兴时眼睛追着你看',
       '✊ 抓住小火<b>身体或腿按住拖动</b> → 把整个窗口拖到屏幕任意位置（头顶按住搓=揉、单击=戳、长按/右键=菜单，别搞混）',
@@ -1013,6 +1029,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     if (act === 'search') startPick('search');
     else if (act === 'screen') startPick('screen');
     else if (act === 'color') openColorBox();
+    else if (act === 'writecolor') openWriteColorBox();
     else if (act === 'outfit') openOutfitBox();
     else if (act === 'chat') openChatBox();
     else if (act === 'mem') openMemories();
@@ -1050,6 +1067,53 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   colorBox.querySelector('.close').addEventListener('click', () => colorBox.classList.add('hidden'));
   document.getElementById('colorReset').addEventListener('click', () => setPetColor('#2b2b2f'));
   colorPicker.addEventListener('input', e => setPetColor(e.target.value));
+
+  // ---------- 写字颜色（独立于身体色）----------
+  // null = 跟随身体色；否则是「✍️ 字色」面板选的色（localStorage 记忆）。
+  // 指令「用红色写X」只在本次生效，不改默认字色。
+  let writeInk = null;
+  try { writeInk = localStorage.getItem('xiaohuo.writeInk') || null; } catch (e) {}
+  const WRITE_INK_PRESETS = ['#ff5b5b', '#4da3ff', '#4bd07a', '#ffd24d', '#9b6bff', '#ff7eb6', '#ff8a3d', '#2bb6c4', '#ffffff', '#000000'];
+  const WRITE_INK_WORDS = {
+    '红': '#ff5b5b', '蓝': '#4da3ff', '绿': '#4bd07a', '黄': '#ffd24d', '紫': '#9b6bff',
+    '粉': '#ff7eb6', '白': '#ffffff', '黑': '#000000', '橙': '#ff8a3d', '灰': '#9aa0a6',
+    '青': '#2bb6c4', '金': '#f5a623', '银': '#d8d8dc',
+  };
+
+  // ---------- 写字颜色面板（独立于身体色）----------
+  const writeColorBox = document.getElementById('writeColorBox');
+  const writeInkSwatches = document.getElementById('writeInkSwatches');
+  const writeInkPicker = document.getElementById('writeInkPicker');
+  function setWriteInk(c) {
+    writeInk = c || null;                       // null = 跟随身体色
+    try {
+      if (writeInk) localStorage.setItem('xiaohuo.writeInk', writeInk);
+      else localStorage.removeItem('xiaohuo.writeInk');
+    } catch (e) {}
+    writeInkSwatches.querySelectorAll('.swatch').forEach(s => s.classList.toggle('sel', s.dataset.c === writeInk));
+    if (writeInk) writeInkPicker.value = writeInk;
+    return writeInk;
+  }
+  WRITE_INK_PRESETS.forEach(c => {
+    const s = document.createElement('div');
+    s.className = 'swatch'; s.dataset.c = c; s.style.background = c; s.title = c;
+    s.addEventListener('click', () => setWriteInk(c));
+    writeInkSwatches.appendChild(s);
+  });
+  function openWriteColorBox() {
+    setWriteInk(writeInk);
+    if (writeColorBox._boxPos) applyBoxPos(writeColorBox, writeColorBox._boxPos);  // 尊重拖过的位置
+    else {
+      writeColorBox.style.left = '50%'; writeColorBox.style.top = '12px';
+      writeColorBox.style.transform = 'translateX(-50%)';
+    }
+    writeColorBox.classList.remove('hidden');
+  }
+  writeColorBox.querySelector('.close').addEventListener('click', () => writeColorBox.classList.add('hidden'));
+  document.getElementById('writeInkReset').addEventListener('click', () => setWriteInk(null));
+  writeInkPicker.addEventListener('input', e => setWriteInk(e.target.value));
+  makeDraggable(writeColorBox);
+  setWriteInk(writeInk);   // 启动时同步选中态
   document.addEventListener('click', e => {
     if (!document.getElementById('ctxMenu').contains(e.target)) document.getElementById('ctxMenu').classList.add('hidden');
   });
@@ -1191,7 +1255,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   // 新增弹框只需改这一处；ctxMenu 虽不是 .box，但同样是「开着的浮层」，一并登记。
   const BOX_IDS = [
     'chatBox', 'answerBox', 'screenBox', 'memBox', 'tipsBox',
-    'paintBox', 'colorBox', 'outfitBox', 'ctxMenu',
+    'paintBox', 'colorBox', 'writeColorBox', 'outfitBox', 'ctxMenu',
   ];
   // 启动自检：DOM 里带 × 的 .box 都应已登记。漏了就直接报警，
   // 别等某天出现「Esc 关不掉新弹框 / 穿透不恢复 / 截图带着弹框」再回头找。
@@ -2959,6 +3023,50 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   let writeNextY = 0;
   const WR_CELL_W = 70, WR_CELL_H = 84, WR_GAP = 14;
   function isCJK(ch) { return /[\u3400-\u4dbf\u4e00-\u9fff\uF900-\uFAFF]/.test(ch); }
+
+  // 数字与标点的手写笔画（自编，坐标系同 hanzi-data.json：1024 网格、y 轴朝上）。
+  // 汉字库不含数字/标点，这里补齐，让它们也走同一套逐笔动画 + 手跟随笔尖。
+  const WR_GLYPHS = {
+    "0": [[[512,860],[420,840],[360,740],[345,600],[345,430],[380,280],[450,190],[520,170],[600,200],[660,290],[680,430],[675,600],[630,750],[560,845],[512,860]]],
+    "1": [[[370,700],[512,860],[512,170]]],
+    "2": [[[355,720],[400,810],[480,850],[560,830],[625,760],[645,660],[600,560],[470,390],[350,210],[350,185],[670,185]]],
+    "3": [[[355,750],[420,830],[505,850],[585,810],[625,720],[575,625],[490,590]],[[490,590],[580,620],[650,575],[672,460],[640,320],[560,205],[460,175],[370,230],[345,300]]],
+    "4": [[[560,860],[350,400],[680,400]],[[560,860],[560,170]]],
+    "5": [[[650,850],[370,850],[365,590]],[[365,590],[455,615],[560,595],[635,500],[630,350],[550,210],[440,175],[350,235]]],
+    "6": [[[630,820],[535,860],[440,790],[385,620],[360,420],[385,265],[455,185],[555,185],[630,255],[645,390],[585,480],[480,495],[385,430]]],
+    "7": [[[345,850],[680,850]],[[680,850],[420,175]]],
+    "8": [[[512,580],[430,625],[395,730],[435,825],[512,855],[590,820],[625,720],[585,615],[512,580]],[[512,580],[600,535],[660,425],[640,285],[555,180],[450,180],[375,280],[370,420],[425,525],[512,580]]],
+    "9": [[[430,565],[390,665],[420,780],[500,845],[585,815],[635,720],[620,615],[550,565],[460,590],[430,565]],[[635,720],[630,400],[600,255],[510,175]]],
+    "，": [[[490,430],[460,370],[410,300]]],
+    "。": [[[512,440],[462,425],[455,375],[490,335],[535,335],[568,375],[560,425],[512,440]]],
+    "！": [[[512,850],[512,480]],[[505,340],[512,305]]],
+    "？": [[[370,720],[410,830],[510,860],[610,810],[630,700],[560,610],[512,540],[512,430]],[[505,340],[512,305]]],
+    "、": [[[450,430],[525,330]]],
+    "；": [[[505,670],[512,635]],[[490,430],[460,370],[410,300]]],
+    "：": [[[505,670],[512,635]],[[505,390],[512,355]]],
+    "（": [[[600,850],[520,700],[475,520],[475,340],[525,185],[585,165]]],
+    "）": [[[425,850],[505,700],[550,520],[550,340],[500,185],[440,165]]],
+    "…": [[[355,420],[365,385]],[[505,420],[515,385]],[[655,420],[665,385]]],
+    "—": [[[280,510],[740,510]]],
+    "～": [[[300,470],[380,545],[460,460],[540,545],[620,460],[720,525]]],
+    "·": [[[495,530],[515,495]]],
+    "《": [[[620,760],[470,600],[620,440]]],
+    "》": [[[405,760],[555,600],[405,440]]],
+    "‘": [[[470,740],[435,650]]],
+    "’": [[[555,740],[520,650]]],
+    "“": [[[420,740],[385,650]],[[480,740],[445,650]]],
+    "”": [[[530,740],[495,650]],[[590,740],[555,650]]],
+    ".": [[[495,360],[512,325]]],
+    "-": [[[420,510],[600,510]]],
+    "!": [[[512,850],[512,480]],[[505,340],[512,305]]],
+    "?": [[[370,720],[410,830],[510,860],[610,810],[630,700],[560,610],[512,540],[512,430]],[[505,340],[512,305]]],
+    ",": [[[490,430],[460,370],[410,300]]],
+    ";": [[[505,670],[512,635]],[[490,430],[460,370],[410,300]]],
+    ":": [[[505,670],[512,635]],[[505,390],[512,355]]],
+    "(": [[[600,850],[520,700],[475,520],[475,340],[525,185],[585,165]]],
+    ")": [[[425,850],[505,700],[550,520],[550,340],[500,185],[440,165]]],
+    "~": [[[300,470],[380,545],[460,460],[540,545],[620,460],[720,525]]],
+  };
   function clearOldestWrite() { const o = WRITES.shift(); if (o) { o.el.classList.add('write-fade'); setTimeout(() => o.el.remove(), 700); } }
 
   // ---------- 写字：火柴人握笔跟随（精准版） ----------
@@ -2977,7 +3085,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   }
   function wrDrawChar(anim) {
     const g = anim.g; g.clearRect(0, 0, WR_WS, WR_WS);
-    g.strokeStyle = S.color; g.lineWidth = WR_WS * 0.09; g.lineCap = 'round'; g.lineJoin = 'round';
+    g.strokeStyle = anim.ink || S.color; g.lineWidth = WR_WS * 0.09; g.lineCap = 'round'; g.lineJoin = 'round';
     const md = anim.medians;
     for (let s = 0; s < md.length; s++) {
       const frac = s < anim.si ? 1 : (s === anim.si ? anim.frac : 0);
@@ -3073,9 +3181,12 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     });
     return { strokes, w: tw, h: th, fontSize };
   }
-  async function startWrite(text, customMs) {
+  async function startWrite(text, customMs, inkOverride) {
     text = (text || '').trim();
     if (!text) { addChat('sys', '✍️ 写点啥？'); return; }
+    // 字色：指令指定 > 色板设定的默认字色 > 跟随身体色。取一次固定下来，
+    // 避免写字过程中身体色被烟花/画作改掉，已写出的字跟着跳色。
+    const ink = inkOverride || writeInk || S.color;
     // 长文本（如整篇《出师表》）直接温柔拒绝，不再静默截断写残缺片段
     if (Array.from(text).length > 12) {
       addChat('pet', '✍️ 这么多字小火写不下呀～写个短词（像「我爱你」）我就能一笔一划写给你看');
@@ -3101,19 +3212,21 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     for (let ci = 0; ci < chars.length; ci++) {
       const ch = chars[ci];
       const cell = document.createElement('div'); cell.className = 'write-cell';
-      if (isCJK(ch) && data && data[ch] && data[ch].medians) {
+      // 汉字走离线笔顺库；数字/标点走内置 WR_GLYPHS（同一套坐标与动画），
+      // 二者都会逐笔书写并驱动笔尖，小火的手就跟着一笔一笔动。
+      const medians = (data && data[ch] && data[ch].medians) || WR_GLYPHS[ch] || null;
+      if (medians) {
         const cv = document.createElement('canvas');
         cv.width = WR_WS; cv.height = WR_WS;
         cv.style.width = WR_CELL_W + 'px'; cv.style.height = WR_CELL_W + 'px';
         const sx0 = blockLeft + ci * (WR_CELL_W + WR_GAP);
         const sy0 = writeNextY + (WR_CELL_H - WR_WS) / 2;
         cell.appendChild(cv);
-        const medians = data[ch].medians;
-        const anim = { ch, g: cv.getContext('2d'), sx0, sy0, medians, si: 0, frac: 0, acc: 0, done: false, _last: 0 };
+        const anim = { ch, g: cv.getContext('2d'), sx0, sy0, medians, ink, si: 0, frac: 0, acc: 0, done: false, _last: 0 };
         anims.push(anim);
         for (const m of medians) totalArc += wrArcLen(m);
       } else {
-        cell.classList.add('write-text'); cell.textContent = ch; cell.style.color = S.color;
+        cell.classList.add('write-text'); cell.textContent = ch; cell.style.color = ink;
       }
       block.appendChild(cell);
     }
@@ -3135,10 +3248,22 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   // 从"在屏幕上写X / 写『X』"里抽出要写的文字，同时解析可选的"停留X分钟/秒"；
   // 避开"写首诗"等让 AI 生成内容的聊天意图。返回 { text, ms } 或 null。
   function extractWriteText(tl) {
+    // 颜色指令：只在「写/题/签」之前的部分找，避免把要写的正文（如「在屏幕上写红色」）误当颜色指令
+    let ink = null;
+    const cut = tl.search(/写|题|签/);
+    const pre = cut >= 0 ? tl.slice(0, cut) : tl;
+    const cm = pre.match(/(红|蓝|绿|黄|紫|粉|白|黑|橙|灰|青|金|银)色?/);
+    if (cm) ink = WRITE_INK_WORDS[cm[1]] || null;
+
     let text = null;
     const m = tl.match(/(?:在|到|于|往)?\s*(?:屏幕|桌面|屏|墙上|黑板|白板|这[儿里]|那[儿里])\s*[^写题留签]{0,6}?\s*(?:写|题|留|签)\s*[:：]?\s*["'『「]?\s*(.{1,30}?)\s*["'』」]?\s*$/);
     if (m && m[1]) text = m[1].trim();
     else { const m2 = tl.match(/(?:写|题|留|签)\s*[:：]?\s*["'『「](.{1,30})["'』」]/); if (m2) text = m2[1].trim(); }
+    // 明确带颜色指令时，允许「用红色写生日快乐」这种不带「在屏幕上」的说法（有颜色词，不会误伤「写首诗」）
+    if (!text && ink) {
+      const m3 = tl.match(/(?:写|题|签)\s*[:：]?\s*["'『「]?\s*(.{1,30}?)\s*["'』」]?\s*$/);
+      if (m3 && m3[1]) text = m3[1].trim();
+    }
     if (!text) return null;
     // 解析"停留/停/保留 X 分钟|秒|小时"，无单位默认按分钟；未指定则 ms=null（用默认 1 分钟）
     let ms = null;
@@ -3148,7 +3273,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       let num = parseInt(dm[1], 10); if (isNaN(num)) num = cn[dm[1]] || null;
       if (num) { const u = dm[2] || '分钟'; let f = 60000; if (/秒/.test(u)) f = 1000; else if (/小时|时/.test(u)) f = 3600000; ms = clamp(num * f, 10000, 7200000); }
     }
-    return { text, ms };
+    return { text, ms, ink };
   }
   // 画之前先联网查一下这东西长啥样（维基百科摘要），给"思考"提供真实形状参考，
   // 避免 LLM 在抽象坐标里瞎编。查不到/超时也不影响，照常画。
@@ -3350,7 +3475,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
     const deny = (t) => {
       if (!t || !t.closest) return true;
-      if (t.closest('input,textarea,button,select,[contenteditable],.close')) return true;
+      if (t.closest('input,textarea,button,select,[contenteditable],.close,.swatches')) return true;  // 色板：点选优先，别误拖面板
       if (t.closest('#chatLog')) return true;   // 聊天记录：滚动/选中优先，不拖
       return false;
     };
@@ -3437,8 +3562,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     // 屏幕写字：在屏幕/桌面/墙上题字（"在屏幕上写X""写『X』"），与"写首诗"等让 AI 生成内容的聊天区分
     const wt = extractWriteText(tl);
     if (wt) {
-      addChat('sys', '✍️ 小火开始写…');
-      startWrite(wt.text, wt.ms);
+      addChat('sys', '✍️ 小火开始写…' + (wt.ink ? '（指定字色）' : ''));
+      startWrite(wt.text, wt.ms, wt.ink);
       return;
     }
     if (/唱|歌|sing|换一首|再来一首|下一首|点歌|换歌/.test(tl)) {
