@@ -230,7 +230,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![capture_screen, ask_glm, ask_draw, critique_draw, toggle_pick, set_box_open, ask_reply, drag_start, drag_move, drag_end, save_memory, list_memories, get_memory, delete_memory, open_memories_folder, web_lookup])
+        .invoke_handler(tauri::generate_handler![capture_screen, ask_glm, ask_draw, critique_draw, ask_sketch, toggle_pick, set_box_open, ask_reply, drag_start, drag_move, drag_end, save_memory, list_memories, get_memory, delete_memory, open_memories_folder, web_lookup])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -673,6 +673,69 @@ async fn ask_reply(app: tauri::AppHandle, text: String, history: Option<Vec<serd
                 "max_tokens": 256,
                 "temperature": 0.8
             })
+        },
+    )
+    .await
+}
+
+/// 数学/物理草图：把题目或描述发给文本模型，返回结构化草图 spec（JSON），前端再确定性渲染成坐标系。
+/// 与 ask_draw（返回艺术原语笔画）不同：这里要的是"干净的数学坐标图"，所以让模型只输出 spec，
+/// 由前端用统一比例尺画坐标轴/曲线/向量，绝不会画出一团糟。
+#[tauri::command]
+async fn ask_sketch(app: tauri::AppHandle, text: String) -> Result<String, String> {
+    let key = match std::env::var("ZHIPU_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return Err(
+            "未配置 ZHIPU_API_KEY：请把 key 写入 .env（ZHIPU_API_KEY=xxx，.env 放在 exe 同目录或 src-tauri/ 下）并重启程序".into(),
+        ),
+    };
+    let instruction = r##"你是一个数学/物理草图生成器。根据用户给的题目或描述，输出一张标准直角坐标系草图的结构化描述。
+【只输出一段 JSON，不要任何解释、不要 markdown 代码块、不要 ```。】
+
+坐标系：数学标准直角坐标系，x 向右、y 向上，原点在图中央。
+
+输出格式：
+{
+  "title": "简短标题（如：y=sin(x) 的图像 / 力的合成 / 二次函数图像）",
+  "xmin": -10, "xmax": 10, "ymin": -10, "ymax": 10,   // 可选；不填则前端自动推算合适范围
+  "grid": false,            // 是否画网格
+  "quadrants": false,       // 是否标注四个象限 I/II/III/IV
+  "items": [
+    {"type":"fn", "expr":"sin(x)"},                       // 函数图像 y=f(x)；expr 只用变量 x，支持 sin cos tan asin acos atan exp log ln sqrt abs 及 + - * / ^ 和常数 pi、e
+    {"type":"vector", "x":3, "y":4, "label":"F"},         // 从原点出发的向量（力的合成/位移常用）
+    {"type":"point", "x":1, "y":2, "label":"P"},          // 一个关键点
+    {"type":"circle", "cx":0, "cy":0, "r":1}              // 圆（轨迹/范围/单位圆）
+  ]
+}
+
+规则：
+1) 只输出 JSON，不要 ``` 、不要任何额外文字；
+2) items 可以为空（只画坐标系）；
+3) fn 的 expr 必须是合法数学表达式，三角函数用弧度（sin(x)、sin(2*pi*x)）；
+4) 坐标用数字；
+5) 物理题：受力/位移用 vector，关键点用 point，轨迹/约束边界可酌情用 circle 或 fn；
+6) 若需要函数图像但用户没给解析式，用你推断的近似函数（如自由落体位移用二次函数）。"##;
+    let user_msg = format!("{}\n\n请为以下题目/描述生成草图 spec：{}", instruction, text);
+    call_zhipu(
+        &app,
+        "sketch",
+        "ZHIPU_CHAT_MODEL",
+        "glm-4-flash",
+        &key,
+        60,
+        move |m| {
+            let mut payload = serde_json::json!({
+                "model": m,
+                "messages": [{"role": "user", "content": user_msg.as_str()}],
+                "max_tokens": 1400,
+                "temperature": 0.3
+            });
+            // 推理模型（glm-4.5/4.6/4.7）会把 max_tokens 花在 reasoning 上导致 content 空；
+            // 草图要的是 spec 不是思考，显式关掉思考。
+            if m.contains("4.5") || m.contains("4.6") || m.contains("4.7") {
+                payload["thinking"] = serde_json::json!({ "type": "disabled" });
+            }
+            payload
         },
     )
     .await
