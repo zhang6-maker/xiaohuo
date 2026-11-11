@@ -79,6 +79,20 @@
   .box.drag { cursor: move; }
   .box.drag input, .box.drag textarea, .box.drag [contenteditable],
   .box.drag #chatLog, .box.drag #tipsText, .box.drag #answerText, .box.drag #screenText { cursor: default; }
+  /* 数学/物理公式排版（轻量 LaTeX 风格，离线渲染，不引外部库） */
+  .math, .mathblock { font-family: 'Cambria Math', 'Latin Modern Math', 'Times New Roman', Georgia, serif; font-style: italic; line-height: 1.5; }
+  .math { display: inline-block; vertical-align: middle; }
+  .mathblock { display: block; text-align: center; margin: 8px 0; }
+  .frac { display: inline-flex; flex-direction: column; text-align: center; vertical-align: middle; margin: 0 3px; }
+  .frac > .num { border-bottom: 1px solid currentColor; padding: 0 4px; }
+  .frac > .den { padding: 0 4px; }
+  .sqrt { display: inline-flex; align-items: flex-start; margin: 0 1px; }
+  .sqrt > .sym { font-size: 1.05em; line-height: 1; }
+  .sqrt > .rad { border-top: 1px solid currentColor; padding: 0 2px; margin-top: 2px; }
+  .mtext { font-style: normal; }
+  code { background: #2b2b30; padding: 1px 4px; border-radius: 4px; font-size: 0.92em; }
+  #sketchClearBtn { position: fixed; right: 14px; bottom: 14px; z-index: 60; background: #2b2b30; color: #f3f3f5; border: 1px solid #4a4a52; border-radius: 8px; padding: 6px 11px; font-size: 12px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.45); }
+  #sketchClearBtn:hover { background: #3a3a42; }
   /* 换颜色面板：色板 */
   :is(#colorBox, #writeColorBox) .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
   :is(#colorBox, #writeColorBox) .swatch {
@@ -226,6 +240,7 @@
 </div>
 
 <!-- 右键菜单 -->
+<div id="sketchClearBtn" class="hidden">🧹 清除草图</div>
 <div id="ctxMenu" class="hidden">
   <div data-m="search">📸 搜一搜</div>
   <div data-m="screen">👀 看看屏幕</div>
@@ -235,6 +250,7 @@
   <div data-m="tips">💡 提示</div>
   <div data-m="chat">💬 聊天</div>
   <div data-m="sketch">📐 画草图</div>
+  <div data-m="clearsketch" id="ctxClearSketch" class="hidden">🧹 清除草图</div>
   <div data-m="mem">📖 记录本</div>
   <div data-m="about">ℹ️ 关于</div>
   <div data-m="fullscreen">🖥️ 全屏 / 窗口</div>
@@ -1012,6 +1028,9 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       '🎨 「💬聊天」框里打字「画只猫」→ 小火按你的文字指令画画',
       '📐 右键「📐 画草图」或聊天里说「画 y=sin(x) / 画象限 / 向量(3,4)」→ 小火画干净的数学/物理坐标系草图（离线就能画）',
       '📸 用「搜一搜」框选数学/物理题（函数·向量·受力·几何…）→ 解答出来后小火会顺手把草图画出来；结果框里也有「📐 画草图」按钮可手动触发',
+      '📐 草图会<b>一直显示、不自动消失</b>：想清除时点右下角「🧹 清除草图」按钮，或右键菜单「🧹 清除草图」（你来决定它何时消失）',
+      '🖱️ <b>所有弹窗都能自由拖动</b>：聊天/提示/解答/搜一搜/调色/换装/画画/记录本，按住标题区拖到顺手的位置即可',
+      '∑ 数学/物理解题的公式会用<b>教科书样式</b>呈现（分数、根号、上下标、希腊字母、向量等），更直观易读',
       '✍️ 「在屏幕上写2026！」→ 汉字 / 数字 / 标点都一笔一划写，手跟着笔尖走',
       '🖍️ 右键「✍️ 字色」选写字颜色（会记住）；或直接说「用红色写生日快乐」',
       '💬 「💬聊天」框里随便打字 → 小火用智谱回复，嘴会跟着动（念念有词）',
@@ -1037,6 +1056,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     else if (act === 'outfit') openOutfitBox();
     else if (act === 'chat') openChatBox();
     else if (act === 'sketch') { openPaintInput(); const h = document.getElementById('paintHint'); if (h) h.textContent = '📐 画草图：直角坐标系 / 象限 / y=sin(x) / 向量(3,4) / 点(1,2) / 圆 … 直接说就行，离线就能画'; }
+    else if (act === 'clearsketch') { clearSketches(); }
     else if (act === 'mem') openMemories();
     else if (act === 'tips') showTips();
     else if (act === 'about') alert('小火 · 桌面火柴人\n透明 Tauri 窗口：骨骼 / 状态机 / 心情 / 表情 / 嘴型。\n长按我（或右键）唤出菜单：搜一搜 / 看看屏幕 / 🎨 换颜色 / 提示 / 💬聊天 / 关于。在「💬聊天」框里打字：画只猫 / 唱首歌 / 看会儿书 / 随便聊，小火都会回应（回复时嘴会动）。\n右键「📐 画草图」或聊天里说「画 y=sin(x) / 画象限 / 向量(3,4)」→ 小火画干净的数学/物理坐标系草图（离线就能画）。\n👆 单击 = 戳我（会恼会躲，多戳缩角落）；🤚 在头顶按住鼠标来回搓 = 揉头哄我（被戳委屈后搓头也能哄好）；✊ 抓住身体或腿按住拖动 = 把整个窗口拖到屏幕任意位置。\n右键「🎨 换颜色」可改身体色并记住（选纯黑在黑色界面就藏起来了）；「👕 换装」可让过节自动穿衣服（万圣/双十一/圣诞/元旦/春节），也能手动预览，衣服只是叠加层、不影响任何动作；搜一搜、看看屏幕会真截屏后拖框选，交给大模型（智谱 GLM-4V）分析。');
@@ -1044,6 +1064,9 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     else if (act === 'quit') { if (isTauri && appWindow) appWindow.close(); else window.close(); }
     document.getElementById('ctxMenu').classList.add('hidden');
   });
+  // 右下角浮层「清除草图」按钮（仅在草图存在时显示；窗口可交互时方可点击，否则用右键菜单清除）
+  document.getElementById('sketchClearBtn').addEventListener('click', () => clearSketches());
+  syncSketchUI();
 
   // ---------- 换颜色面板 ----------
   const colorBox = document.getElementById('colorBox');
@@ -3199,13 +3222,27 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   }
 
   function startSketch(spec) {
+    // 同一时刻只保留最新一张草图；旧的先清掉（用户若想要多张可分别画，新画覆盖旧的）
+    for (let i = artworkPool.length - 1; i >= 0; i--) if (artworkPool[i].sketch) artworkPool.splice(i, 1);
     const ax = posX + 96, ay = posY + 36;
     const art = new Drawing('sketch', ax, ay, []);
     art.sketch = spec;
-    art.drawDur = 1900; art.life = 15000; art.lw = 2;
+    art.drawDur = 1900; art.life = Infinity; art.lw = 2;   // 常驻：不自动消失，由用户手动清除
     artworkPool.push(art); activeArt = art;
-    setState('paint', art.life);
+    setState('paint', art.drawDur + 600);   // 只在前 ~2.5s 显示作画姿态，之后自然回到常态
+    syncSketchUI();
     return art;
+  }
+  // 用户手动清除所有草图（是否消失由用户决定，不自动淡出）
+  function clearSketches() {
+    for (let i = artworkPool.length - 1; i >= 0; i--) if (artworkPool[i].sketch) artworkPool.splice(i, 1);
+    if (activeArt && activeArt.sketch) activeArt = null;
+    syncSketchUI();
+  }
+  function syncSketchUI() {
+    const has = artworkPool.some(a => a.sketch);
+    const btn = document.getElementById('sketchClearBtn'); if (btn) btn.classList.toggle('hidden', !has);
+    const mi = document.getElementById('ctxClearSketch'); if (mi) mi.classList.toggle('hidden', !has);
   }
 
   function _niceStep(span, target) { target = target || 10; const raw = span / target; const mag = Math.pow(10, Math.floor(Math.log10(raw))); const norm = raw / mag; let step; if (norm < 1.5) step = 1; else if (norm < 3) step = 2; else if (norm < 7) step = 5; else step = 10; return step * mag; }
@@ -3851,6 +3888,13 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   const chatLog = document.getElementById('chatLog');
   const chatInput = document.getElementById('chatInput');
   makeDraggable(chatBox);
+  // 其余弹窗也支持自由拖动（聊天/提示已接；这里补齐答案/搜一搜/调色/换装/画画/记录本）
+  makeDraggable(document.getElementById('answerBox'));
+  makeDraggable(document.getElementById('screenBox'));
+  makeDraggable(document.getElementById('colorBox'));
+  makeDraggable(document.getElementById('outfitBox'));
+  makeDraggable(document.getElementById('paintBox'));
+  makeDraggable(document.getElementById('memBox'));
   let chatHistory = [];   // 多轮上下文：[{role, content}]
   function addChat(role, text) {
     const row = document.createElement('div');
@@ -4420,6 +4464,75 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     if (e.key === 'Escape' && picking) closeAllPick();
   });
 
+  // ---------- 数学/物理公式排版（轻量离线渲染，识别 $...$ 内 LaTeX 风格记号） ----------
+  function escHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+  const MATHSYM = {
+    alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ε', varepsilon: 'ε', zeta: 'ζ', eta: 'η', theta: 'θ', vartheta: 'ϑ', iota: 'ι', kappa: 'κ', lambda: 'λ', mu: 'μ', nu: 'ν', xi: 'ξ', pi: 'π', rho: 'ρ', sigma: 'σ', tau: 'τ', upsilon: 'υ', phi: 'φ', varphi: 'ϕ', chi: 'χ', psi: 'ψ', omega: 'ω',
+    Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ', Xi: 'Ξ', Pi: 'Π', Sigma: 'Σ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
+    times: '×', cdot: '·', div: '÷', pm: '±', mp: '∓', leq: '≤', le: '≤', geq: '≥', ge: '≥', neq: '≠', ne: '≠', approx: '≈', equiv: '≡', propto: '∝', sim: '∼', infty: '∞', sum: '∑', prod: '∏', int: '∫', partial: '∂', nabla: '∇', to: '→', rightarrow: '→', leftarrow: '←', Rightarrow: '⇒', Leftarrow: '⇐', angle: '∠', perp: '⊥', parallel: '∥', circ: '∘', prime: '′', emptyset: '∅', in: '∈', notin: '∉', subset: '⊂', subseteq: '⊆', supset: '⊃', forall: '∀', exists: '∃',
+    sin: '<span class="mtext">sin</span>', cos: '<span class="mtext">cos</span>', tan: '<span class="mtext">tan</span>', cot: '<span class="mtext">cot</span>', sec: '<span class="mtext">sec</span>', csc: '<span class="mtext">csc</span>', log: '<span class="mtext">log</span>', ln: '<span class="mtext">ln</span>', lim: '<span class="mtext">lim</span>', exp: '<span class="mtext">exp</span>', det: '<span class="mtext">det</span>',
+    langle: '⟨', rangle: '⟩'
+  };
+  const MATHSETS = { R: 'ℝ', N: 'ℕ', Z: 'ℤ', Q: 'ℚ', C: 'ℂ' };
+  const MATHISH = /[\\^_{}=+\-*/<>≤≥≠≈×÷±·√∂∫∑∏πθφα-ωΑ-Ω]|[0-9]/;  // 仅当 $...$ 内含这些才当数学
+  function mathToHtml(s) {
+    let i = 0; const n = s.length;
+    const inner = g => mathToHtml(g);
+    function readBalanced() { let depth = 0, g = ''; while (i < n) { const c = s[i]; if (c === '{') depth++; else if (c === '}') { depth--; if (depth === 0) { i++; break; } } if (depth > 0) g += c; i++; } return g; }
+    function group() { if (s[i] === '{') return readBalanced(); if (s[i] === '\\') { let j = i + 1, cmd = ''; while (j < n && /[a-zA-Z]/.test(s[j])) { cmd += s[j]; j++; } const full = s.slice(i, j); i = j; return full; } const c = s[i]; i++; return c; }
+    function parse() {
+      let html = '';
+      while (i < n) {
+        const c = s[i];
+        if (c === '}') { i++; break; }
+        if (c === '{') { i++; html += parse(); continue; }
+        if (c === '\\') {
+          i++; let j = i, cmd = ''; while (j < n && /[a-zA-Z]/.test(s[j])) { cmd += s[j]; j++; }
+          if (cmd === '') { i++; html += ' '; continue; }
+          i = j; const low = cmd.toLowerCase();
+          if (low === 'frac') { const a = group(), b = group(); html += '<span class="frac"><span class="num">' + inner(a) + '</span><span class="den">' + inner(b) + '</span></span>'; }
+          else if (low === 'sqrt') { html += '<span class="sqrt"><span class="sym">√</span><span class="rad">' + inner(group()) + '</span></span>'; }
+          else if (low === 'vec') { html += '<span class="vec">' + inner(group()) + '⃗</span>'; }
+          else if (low === 'hat') { html += '<span class="hat">' + inner(group()) + '̂</span>'; }
+          else if (low === 'dot') { html += inner(group()) + '̇'; }
+          else if (low === 'ddot') { html += inner(group()) + '̈'; }
+          else if (low === 'text' || low === 'mathrm') { html += '<span class="mtext">' + escHtml(group()) + '</span>'; }
+          else if (low === 'mathbb') { const x = group(); html += '<span class="mtext">' + (MATHSETS[x] || x) + '</span>'; }
+          else if (['left', 'right', 'big', 'bigg', 'Big', 'Bigg', 'bigl', 'bigr', 'left.', 'right.'].includes(low)) { /* 定界符修饰，跳过 */ }
+          else { const sym = MATHSYM[low]; html += (sym !== undefined ? sym : '\\' + cmd); }
+          continue;
+        }
+        if (c === '^') { i++; html += '<sup>' + inner(group()) + '</sup>'; continue; }
+        if (c === '_') { i++; html += '<sub>' + inner(group()) + '</sub>'; continue; }
+        if (c === '&') { html += '&amp;'; i++; continue; }
+        html += escHtml(c); i++;
+      }
+      return html;
+    }
+    return parse();
+  }
+  function renderRich(text) {
+    if (text == null) return '';
+    text = String(text).replace(/^```[a-zA-Z0-9]*\n([\s\S]*?)\n?```$/m, '$1');
+    let out = '', i = 0; const n = text.length;
+    while (i < n) {
+      if (text[i] === '$' && text[i + 1] === '$') {
+        const end = text.indexOf('$$', i + 2);
+        if (end !== -1) { out += '<div class="mathblock">' + mathToHtml(text.slice(i + 2, end).trim()) + '</div>'; i = end + 2; continue; }
+      }
+      if (text[i] === '$') {
+        const end = text.indexOf('$', i + 1);
+        if (end !== -1) {
+          const body = text.slice(i + 1, end);
+          if (MATHISH.test(body)) { out += '<span class="math">' + mathToHtml(body) + '</span>'; i = end + 1; continue; }
+          out += '$'; i++; continue;
+        }
+      }
+      out += escHtml(text[i]); i++;
+    }
+    out = out.replace(/`([^`\n]+)`/g, '<code>$1</code>').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>');
+    return out;
+  }
   // act: 'search'（解题/搜索） | 'screen'（看屏/提问）
   // target: 结果落到 'screen'（看屏框）还是 'answer'（答案框）；不传则按 act 默认
   function runGlm(act, imgB64, question, target) {
@@ -4429,9 +4542,9 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     let prompt;
     if (act === 'search') {
-      prompt = '这是一道题目或问题（可能是文字题、公式、代码或报错截图）。请仔细看图，给出准确的解答步骤和最终答案；若是代码报错，请指出原因并给出修复方案。用中文、条理清晰地回答。';
+      prompt = '这是一道题目或问题（可能是文字题、公式、代码或报错截图）。请仔细看图，给出准确的解答步骤和最终答案；若是代码报错，请指出原因并给出修复方案。用中文、条理清晰地回答。\n涉及数学/物理公式时，请用 LaTeX 风格并用 $ 包裹单个公式，例如动能写为 $E_k=\\frac{1}{2}mv^2$、角度 $\\theta$、积分 $\\int_a^b f(x)\\,dx$、根号 $\\sqrt{x}$、向量 $\\vec{v}$、求和 $\\sum_{i=1}^n a_i$；这样公式显示更清晰、像教科书。';
     } else if (q) {
-      prompt = '这是用户截下的屏幕区域。用户对着这张图问你一个问题，请结合图片内容回答。\n用户的问题：' + q + '\n请用中文、条理清晰地回答，必要时给出具体操作步骤。';
+      prompt = '这是用户截下的屏幕区域。用户对着这张图问你一个问题，请结合图片内容回答。\n用户的问题：' + q + '\n请用中文、条理清晰地回答，必要时给出具体操作步骤。若涉及数学/物理公式，请用 $...$ 包裹（如自由落体位移 $\\frac{1}{2}gt^2$），便于清晰呈现。';
     } else {
       prompt = '请看这张屏幕截图，简要描述你看到的内容：用户大概在做什么、界面上有哪些关键信息（文字、报错、数据、窗口标题等）。用中文简要说明。';
     }
@@ -4457,7 +4570,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
           txt.innerHTML = '😵 模型这次没给出答案。建议只框选题目本身、把区域缩小一点再试；若反复为空，看下右下角模型角标是不是切到了免费版。';
           return;
         }
-        txt.innerHTML = esc(text).replace(/\n/g, '<br>');
+        txt.innerHTML = renderRich(text);
         lastSearchText = text; lastSearchImgB64 = imgB64;   // 供「📐 画草图」按钮复用
         if (useScreen && q) {   // 仅当用户带问题发问才收起提问框并显示「再问一次」；自动看/直接看时保留提问框便于追问
           screenAskWrap.classList.add('hidden');
@@ -4477,7 +4590,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
           }
         }
       })
-      .catch(err => { txt.innerHTML = esc(apiErrText(err)).replace(/\n/g, '<br>'); });
+      .catch(err => { txt.innerHTML = renderRich(apiErrText(err)); });
   }
 
   // 看屏截图后：先给用户输入问题（也可留空直接看），再发问
