@@ -75,6 +75,10 @@
     padding: 6px 0; border-radius: 6px; cursor: pointer; font-size: 12px;
   }
   .box .actions button:hover { background: #3a3a42; }
+  /* 可拖拽弹框：光标提示；输入框/按钮/滚动区恢复默认光标，且这些区域不触发拖动 */
+  .box.drag { cursor: move; }
+  .box.drag input, .box.drag textarea, .box.drag [contenteditable],
+  .box.drag #chatLog, .box.drag #tipsText, .box.drag #answerText, .box.drag #screenText { cursor: default; }
   /* 换颜色面板：色板 */
   #colorBox .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
   #colorBox .swatch {
@@ -995,13 +999,14 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       '✊ 抓住小火<b>身体或腿按住拖动</b> → 把整个窗口拖到屏幕任意位置（头顶按住搓=揉、单击=戳、长按/右键=菜单，别搞混）',
       '✨ 鼠标移开即恢复穿透，不挡桌面点击'
     ].join('<br>');
-    box.style.left = '50%'; box.style.top = '40%';
-    box.style.transform = 'translate(-50%,-50%)';
+    if (box._boxPos) { applyBoxPos(box, box._boxPos); }
+    else { box.style.left = '50%'; box.style.top = '40%'; box.style.transform = 'translate(-50%,-50%)'; }
     box.classList.remove('hidden');
   }
   document.querySelector('#tipsBox .close').addEventListener('click', () => {
     document.getElementById('tipsBox').classList.add('hidden');
   });
+  makeDraggable(document.getElementById('tipsBox'));
   // 长按/右键菜单：搜一搜 / 看看屏幕 / 提示 / 💬聊天 / 关于（唱歌·看书·画画·念念有词 都在聊天框里打字触发）
   document.getElementById('ctxMenu').addEventListener('click', e => {
     const act = e.target.dataset.m;
@@ -3287,6 +3292,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   const chatBox = document.getElementById('chatBox');
   const chatLog = document.getElementById('chatLog');
   const chatInput = document.getElementById('chatInput');
+  makeDraggable(chatBox);
   let chatHistory = [];   // 多轮上下文：[{role, content}]
   function addChat(role, text) {
     const row = document.createElement('div');
@@ -3297,8 +3303,58 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     positionChatBox();   // 消息增减后重定位，避免框被裁
     return b;
   }
+  // ---------- 弹框可拖拽：聊天框 / 提示框 按住非交互区移动，位置持久化 ----------
+  function applyBoxPos(el, p) {
+    if (!p) return;
+    const w = el.offsetWidth || 0, h = el.offsetHeight || 0;
+    let nx = p.x, ny = p.y;
+    // 钳制：整框至少 40px 留在视口内（窗口缩放后也不飞走）
+    if (w) { const a = Math.min(40 - w, window.innerWidth - 40), b = Math.max(40 - w, window.innerWidth - 40); nx = Math.min(Math.max(nx, a), b); }
+    if (h) { const a = Math.min(40 - h, window.innerHeight - 40), b = Math.max(40 - h, window.innerHeight - 40); ny = Math.min(Math.max(ny, a), b); }
+    el.style.left = nx + 'px'; el.style.top = ny + 'px';
+    el.style.right = 'auto'; el.style.bottom = 'auto'; el.style.transform = 'none';
+  }
+  function makeDraggable(el) {
+    if (!el) return;
+    const KEY = 'xh_boxpos_' + el.id;
+    try { const s = localStorage.getItem(KEY); if (s) el._boxPos = JSON.parse(s); } catch (_) {}
+    el.classList.add('drag');
+    let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
+    const deny = (t) => {
+      if (!t || !t.closest) return true;
+      if (t.closest('input,textarea,button,select,[contenteditable],.close')) return true;
+      if (t.closest('#chatLog')) return true;   // 聊天记录：滚动/选中优先，不拖
+      return false;
+    };
+    el.addEventListener('mousedown', e => {
+      if (e.button !== 0 || deny(e.target)) return;
+      dragging = true;
+      const r = el.getBoundingClientRect();
+      el.style.left = r.left + 'px'; el.style.top = r.top + 'px';  // 居中 transform 折算成 px，避免拖动跳变
+      el.style.right = 'auto'; el.style.bottom = 'auto'; el.style.transform = 'none';
+      sx = e.clientX; sy = e.clientY; ox = r.left; oy = r.top;
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', e => {
+      if (!dragging) return;
+      let nx = ox + (e.clientX - sx), ny = oy + (e.clientY - sy);
+      const w = el.offsetWidth, h = el.offsetHeight;
+      const ax = Math.min(40 - w, window.innerWidth - 40), bx = Math.max(40 - w, window.innerWidth - 40);
+      const ay = Math.min(40 - h, window.innerHeight - 40), by = Math.max(40 - h, window.innerHeight - 40);
+      nx = Math.min(Math.max(nx, ax), bx); ny = Math.min(Math.max(ny, ay), by);
+      el.style.left = nx + 'px'; el.style.top = ny + 'px';
+    });
+    document.addEventListener('mouseup', () => {
+      if (!dragging) return;
+      dragging = false;
+      const r = el.getBoundingClientRect();
+      el._boxPos = { x: r.left, y: r.top };
+      try { localStorage.setItem(KEY, JSON.stringify(el._boxPos)); } catch (_) {}
+    });
+  }
   // 把聊天框放到火柴人上方或下方，绝不挡住它（canvas 坐标 ≈ 窗口像素，1:1）
   function positionChatBox() {
+    if (chatBox._boxPos) { applyBoxPos(chatBox, chatBox._boxPos); return; }  // 用户拖过 → 保持原位，不自动重定位
     const margin = 8;
     const headY = posY - 190;   // 包围盒上沿（头顶）
     const feetY = posY + 40;    // 包围盒下沿（脚底）
