@@ -5,7 +5,9 @@
 > 想让它更聪明，再**可选**地填一个自己的智谱 API Key，解锁聊天、圈屏幕讲题、看屏理解和查词条。**不配 Key 也能玩大半功能。**
 
 基于 **Tauri v2 + Rust**（AI 能力可选接入智谱 GLM-4V）。
-[GitHub Releases](https://github.com/zhang6-maker/xiaohuo/releases) 提供**预编译便携包（约 19MB）**：解压 → 双击 → 完事，**不需要装 Rust / Node，也不需要账号**。
+[GitHub Releases](https://github.com/zhang6-maker/xiaohuo/releases) 提供**预编译便携包（约 19MB）**：解压 → 双击 → 完事；
+另有 **MSI 安装包** `xiaohuo_0.0.9_x64_en-US.msi`（14.34 MiB），双击安装、自动建开始菜单/桌面快捷方式，也可在系统「应用」里卸载。
+两者**不需要装 Rust / Node，也不需要账号**。
 仓库、exe、便携包**均不含任何真实 API Key**（详见[关于隐私](#关于隐私)）。
 
 ---
