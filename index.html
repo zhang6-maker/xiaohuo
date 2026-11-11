@@ -2963,7 +2963,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   let writeTip = null;        // 当前笔尖屏幕坐标 {x,y}；null=当前没在写具体笔画
   let writingTarget = null;   // 写字时小火要走到字旁的位置 {x,y}；null=不强制移动
   const WRITE_ANIMS = [];     // 本批写字动画 {ch,g,sx0,sy0,medians,si,frac,acc,done,_last}
-  function wrMap(mx, my) { const k = (WR_WS - 2 * WR_WP) / WR_GRID; return { x: WR_WP + k * mx, y: WR_WP + k * my }; }
+  // ⚠️ 笔顺库 y 轴朝上（字顶 y 值大），画布 y 朝下 → 必须 (GRID - y) 翻转，否则字上下颠倒
+  function wrMap(mx, my) { const k = (WR_WS - 2 * WR_WP) / WR_GRID; return { x: WR_WP + k * mx, y: WR_WP + k * (WR_GRID - my) }; }
   function wrArcLen(pts) {
     if (!pts || pts.length < 2) return 0; let L = 0;
     for (let i = 1; i < pts.length; i++) { const a = wrMap(pts[i-1][0], pts[i-1][1]), b = wrMap(pts[i][0], pts[i][1]); L += Math.hypot(b.x-a.x, b.y-a.y); }
@@ -2987,7 +2988,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const pts = anim.medians[anim.si]; if (!pts || !pts.length) return null;
     const n = pts.length, idx = Math.min(Math.floor(n * anim.frac), n - 1);
     const m = pts[idx]; const k = (WR_WS - 2 * WR_WP) / WR_GRID;
-    const lx = WR_WP + k * m[0], ly = WR_WP + k * m[1];    // 画布内局部坐标（与 wrDrawChar 同映射）
+    const lx = WR_WP + k * m[0], ly = WR_WP + k * (WR_GRID - m[1]);  // 与 wrMap 同映射（y 翻转）
     // 用真实渲染位置而非 sx0/sy0：避开任何 CSS padding/偏移，保证笔尖与手毫秒级对齐
     const r = anim.g.canvas.getBoundingClientRect();
     return { x: r.left + lx, y: r.top + ly };
