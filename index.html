@@ -512,7 +512,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         p.headDrop = 30; p.crouch = 14; p.sad = 1; p.hug = 1; break;  // 委屈：缩角落、垂头、抱臂、含泪
       case 'paint':
         p.lean = 8; p.headDrop = -3; p.happy = 1; p.eyeOpen = 1;
-        p.waveArm = 22; p.waveFreq = 4; p.armSwing = 2; p.armFreq = 4; break;  // 画画：举画笔手、专注前倾、开心
+        p.waveArm = 22; p.waveFreq = 4; p.armSwing = 2; p.armFreq = 4;
+        p.paint = 1; break;  // 画画：举画笔手、专注前倾、开心；paint=1 触发画笔手绘制
       case 'think':
         p.headDrop = 12; p.headTilt = 22; p.eyeOpen = 1; p.think = 1;
         p.armSwing = 3; p.armFreq = 4; break;   // 思考：歪头、手托下巴，想着怎么画
@@ -1355,6 +1356,11 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       const chin = { x: head.x + head.r * 0.5, y: head.y + head.r * 0.7 };
       elbowPtR = { x: shoulders.x + 28 * sc, y: shoulders.y + 6 * sc };
       handR = { x: chin.x, y: chin.y };
+    }
+    // 写字：右手精确贴到笔尖握笔（writeTip 已是屏幕坐标的当前笔尖）；肘部自然下垂形成弯臂
+    if (writeTip && currState === 'paint') {
+      handR = { x: writeTip.x, y: writeTip.y + 20 * sc };                                   // 手在笔尖下方握笔杆
+      elbowPtR = { x: (shoulders.x + handR.x) / 2 - 8 * sc, y: (shoulders.y + handR.y) / 2 + 18 * sc };
     }
 
     return { root, shoulders, headBottom, head, kneePtL, footL, kneePtR, footR, elbowPtL, handL, elbowPtR, handR };
@@ -2516,10 +2522,20 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     ctx.globalAlpha = pose.opacity;
     const hx = k.handR.x, hy = k.handR.y;
     ctx.strokeStyle = S.color; ctx.lineWidth = S.lineW * sc * 0.5; ctx.lineCap = 'round';
-    const penTip = point({ x: hx, y: hy }, UP - 0.6, 26 * sc);
-    ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(penTip.x, penTip.y); ctx.stroke();
-    ctx.fillStyle = '#2b2b2f';
-    ctx.beginPath(); ctx.arc(penTip.x, penTip.y, 3 * sc, 0, Math.PI * 2); ctx.fill();
+    if (writeTip && currState === 'paint') {
+      // 写字：笔尖精确落在 writeTip（真笔顺当前笔尖），手在下方握笔杆，笔尾再往上伸一点
+      const penTip = writeTip;
+      ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(penTip.x, penTip.y); ctx.stroke();
+      const tail = point(penTip, UP - 0.15, 15 * sc);
+      ctx.beginPath(); ctx.moveTo(penTip.x, penTip.y); ctx.lineTo(tail.x, tail.y); ctx.stroke();
+      ctx.fillStyle = '#2b2b2f';
+      ctx.beginPath(); ctx.arc(penTip.x, penTip.y, 3 * sc, 0, Math.PI * 2); ctx.fill();
+    } else {
+      const penTip = point({ x: hx, y: hy }, UP - 0.6, 26 * sc);
+      ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(penTip.x, penTip.y); ctx.stroke();
+      ctx.fillStyle = '#2b2b2f';
+      ctx.beginPath(); ctx.arc(penTip.x, penTip.y, 3 * sc, 0, Math.PI * 2); ctx.fill();
+    }
     ctx.restore();
   }
   // 触发画画：在小火面前生成画作，进入 paint 状态
@@ -2939,6 +2955,58 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   const WR_CELL_W = 70, WR_CELL_H = 84, WR_GAP = 14;
   function isCJK(ch) { return /[\u3400-\u4dbf\u4e00-\u9fff\uF900-\uFAFF]/.test(ch); }
   function clearOldestWrite() { const o = WRITES.shift(); if (o) { o.el.classList.add('write-fade'); setTimeout(() => o.el.remove(), 700); } }
+
+  // ---------- 写字：火柴人握笔跟随（精准版） ----------
+  // 不再用 HanziWriter 的自动动画，改用 medians（每笔中线点）自绘并驱动"笔尖"，
+  // 让小火的手精确贴着笔尖运笔、一字一字写；字与手共用同一时间轴 → 完全同步。
+  const WR_WS = WR_CELL_W, WR_WP = 8, WR_GRID = 1024, WR_SPEED = 0.42; // 字画布边长/内边距/笔顺网格/书写速度(px·ms⁻¹)
+  let writeTip = null;        // 当前笔尖屏幕坐标 {x,y}；null=当前没在写具体笔画
+  let writingTarget = null;   // 写字时小火要走到字旁的位置 {x,y}；null=不强制移动
+  const WRITE_ANIMS = [];     // 本批写字动画 {ch,g,sx0,sy0,medians,si,frac,acc,done,_last}
+  function wrMap(mx, my) { const k = (WR_WS - 2 * WR_WP) / WR_GRID; return { x: WR_WP + k * mx, y: WR_WP + k * my }; }
+  function wrArcLen(pts) {
+    if (!pts || pts.length < 2) return 0; let L = 0;
+    for (let i = 1; i < pts.length; i++) { const a = wrMap(pts[i-1][0], pts[i-1][1]), b = wrMap(pts[i][0], pts[i][1]); L += Math.hypot(b.x-a.x, b.y-a.y); }
+    return L;
+  }
+  function wrDrawChar(anim) {
+    const g = anim.g; g.clearRect(0, 0, WR_WS, WR_WS);
+    g.strokeStyle = S.color; g.lineWidth = WR_WS * 0.09; g.lineCap = 'round'; g.lineJoin = 'round';
+    const md = anim.medians;
+    for (let s = 0; s < md.length; s++) {
+      const frac = s < anim.si ? 1 : (s === anim.si ? anim.frac : 0);
+      if (frac <= 0) continue;
+      const pts = md[s]; if (!pts || pts.length < 2) continue;
+      const n = pts.length, last = Math.max(1, Math.floor(n * frac));
+      g.beginPath();
+      for (let i = 0; i <= last; i++) { const m = pts[Math.min(i, n-1)]; const p = wrMap(m[0], m[1]); i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y); }
+      g.stroke();
+    }
+  }
+  function wrTipScreen(anim) {
+    const pts = anim.medians[anim.si]; if (!pts || !pts.length) return null;
+    const n = pts.length, idx = Math.min(Math.floor(n * anim.frac), n - 1);
+    const m = pts[idx]; const k = (WR_WS - 2 * WR_WP) / WR_GRID;
+    const lx = WR_WP + k * m[0], ly = WR_WP + k * m[1];    // 画布内局部坐标（与 wrDrawChar 同映射）
+    // 用真实渲染位置而非 sx0/sy0：避开任何 CSS padding/偏移，保证笔尖与手毫秒级对齐
+    const r = anim.g.canvas.getBoundingClientRect();
+    return { x: r.left + lx, y: r.top + ly };
+  }
+  function stepWrites(now) {
+    if (!WRITE_ANIMS.length) { if (writeTip) writeTip = null; if (writingTarget) writingTarget = null; return; }
+    const cur = WRITE_ANIMS.find(a => !a.done);
+    if (!cur) { writeTip = null; writingTarget = null; return; }
+    const dt = Math.min(50, now - (cur._last || now)); cur._last = now;
+    cur.acc += WR_SPEED * dt;
+    let segLen = wrArcLen(cur.medians[cur.si]) || 1;
+    while (cur.acc >= segLen && cur.si < cur.medians.length - 1) { cur.acc -= segLen; cur.si++; segLen = wrArcLen(cur.medians[cur.si]) || 1; }
+    if (cur.si >= cur.medians.length - 1) {
+      cur.frac = Math.min(1, cur.acc / segLen);
+      if (cur.frac >= 1) { cur.done = true; cur.frac = 1; }
+    } else cur.frac = cur.acc / segLen;
+    wrDrawChar(cur);
+    writeTip = wrTipScreen(cur);
+  }
   function textToStrokes(text) {
     const fontSize = clamp(Math.round(50 - text.length * 1.0), 28, 56);
     const font = `bold ${fontSize}px "Microsoft YaHei","PingFang SC","Hiragino Sans GB","Source Han Sans SC","Noto Sans CJK SC",sans-serif`;
@@ -3022,36 +3090,38 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     block.style.left = Math.max(8, W / 2 - blockW / 2) + 'px';
     block.style.top = writeNextY + 'px';
 
-    const writers = [];
-    for (const ch of chars) {
+    const anims = []; let totalArc = 0;
+    const blockLeft = Math.max(8, W / 2 - blockW / 2);
+    for (let ci = 0; ci < chars.length; ci++) {
+      const ch = chars[ci];
       const cell = document.createElement('div'); cell.className = 'write-cell';
-      if (isCJK(ch) && data && data[ch]) {
-        const tgt = document.createElement('div');
-        tgt.style.width = WR_CELL_W + 'px'; tgt.style.height = WR_CELL_H + 'px';
-        cell.appendChild(tgt);
-        try {
-          const w = HanziWriter.create(tgt, ch, {
-            width: WR_CELL_W, height: WR_CELL_H, padding: 8,
-            showCharacter: false, showOutline: false,
-            strokeColor: S.color, radicalColor: S.color,
-            charDataLoader: (c, onComplete) => { onComplete(data[c] || null); }
-          });
-          w.animateCharacter();
-          writers.push(w);
-        } catch (e) { cell.textContent = ch; cell.style.color = S.color; }
+      if (isCJK(ch) && data && data[ch] && data[ch].medians) {
+        const cv = document.createElement('canvas');
+        cv.width = WR_WS; cv.height = WR_WS;
+        cv.style.width = WR_CELL_W + 'px'; cv.style.height = WR_CELL_W + 'px';
+        const sx0 = blockLeft + ci * (WR_CELL_W + WR_GAP);
+        const sy0 = writeNextY + (WR_CELL_H - WR_WS) / 2;
+        cell.appendChild(cv);
+        const medians = data[ch].medians;
+        const anim = { ch, g: cv.getContext('2d'), sx0, sy0, medians, si: 0, frac: 0, acc: 0, done: false, _last: 0 };
+        anims.push(anim);
+        for (const m of medians) totalArc += wrArcLen(m);
       } else {
         cell.classList.add('write-text'); cell.textContent = ch; cell.style.color = S.color;
       }
       block.appendChild(cell);
     }
     writeLayer.appendChild(block);
+    WRITE_ANIMS.length = 0; WRITE_ANIMS.push(...anims);
+    writeTip = null; writingTarget = { x: blockLeft + blockW / 2, y: writeNextY + blockH + 70 };
 
     const life = (customMs && customMs > 0) ? customMs : 60000;   // 默认 1 分钟；可指定停留时长
-    WRITES.push({ el: block, born: performance.now(), life, writers });
+    WRITES.push({ el: block, born: performance.now(), life });
     writeNextY += blockH + WR_GAP;
 
-    const drawDur = clamp(chars.length * 650 + 800, 1500, 6000);
-    setState('paint', drawDur);                  // 小火举笔写几秒，之后字继续留屏
+    // paint 时长盖过整段书写（含各字间隔），让小火在字旁待到写完才走开
+    const dur = clamp(Math.round(totalArc / WR_SPEED) + 3500, 3000, 45000);  // +3500 含走到字旁的时间，确保写完才走开
+    setState('paint', dur);                      // 小火走到字旁、握笔一字一字写
     addChat('pet', '✍️ 我来写～');
   }
   // 预拉取笔顺库（约 30MB，首次写字前先热身，避免第一句卡顿）
@@ -3486,6 +3556,12 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         posY = lerp(posY, ty, 0.06);
       }
     } else {
+      // 写字：走到字旁站位点 writingTarget，到位后停住；此期间不漫游、不躲鼠（由 paint 时长统一控制）
+      if (currState === 'paint' && writingTarget) {
+        const dwx = writingTarget.x - posX, dwy = writingTarget.y - posY;
+        const dwt = Math.hypot(dwx, dwy);
+        if (dwt > 4) { const sp = Math.min(dwt, 2.6); posX += dwx / dwt * sp; posY += dwy / dwt * sp; }
+      } else {
       const d = Math.hypot(mouse.x - posX, mouse.y - posY);
       if (mood < 0 && mouse.inside && d < 180 && !rubActive && currState !== 'paint') {
         // 躲避优先：朝远离鼠标的斜向逃（水平为主、垂直微调），用走路动画逃离
@@ -3509,6 +3585,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         }
       } else {
         // idle / sleep / wave：就地休息（不再强制回中，跑累了停在哪算哪，更自然）
+      }
       }
     }
 
@@ -3566,6 +3643,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     }
     const _bodyColor = S.color;
     if (now < angryUntil) S.color = ANGRY_COLOR;   // 愤怒：身体（火柴人线条）变红几秒
+    stepWrites(now);                              // 推进写字动画并更新笔尖 writeTip（须在 draw 前，供 buildFigure 取笔尖）
     draw(pose, t, now);
     if (now < angryUntil) S.color = _bodyColor;
     if (lyricTimer && !lyricsBox.classList.contains('hidden')) positionLyrics();   // 唱歌时歌词气泡跟随头顶
