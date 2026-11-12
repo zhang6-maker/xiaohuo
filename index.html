@@ -3318,6 +3318,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     if (btn) { btn.classList.toggle('hidden', !has); btn.textContent = selectedSketch ? '🧹 清除选中' : '🧹 清除全部'; }
     const mi = document.getElementById('ctxClearSketch'); if (mi) mi.classList.toggle('hidden', !has);
     updateSketchDelBtn();
+    emitPetRect();   // 草图/清除按钮显隐后立即刷新可交互区，避免依赖下一帧导致短暂点不到
   }
   // 草图屏幕矩形（与渲染区域一致：世界中心对齐到 (ax,ay)，含上方标题留白）
   function sketchRect(art) { return [art.x - SKETCH_W / 2, art.y - SKETCH_H / 2 - 22, SKETCH_W, SKETCH_H + 28]; }
@@ -3512,6 +3513,14 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
 
   // 搜一搜解答里出现这些词，才值得顺手画张草图（避免对非数学截图做多余视觉调用）
   const MATHPHYS_RE = /函数|方程|坐标|向量|抛物线|三角|sin|cos|tan|几何|受力|电路|运动|速度|加速度|电场|磁场|电流|电压|斜率|图像|曲线|直线|圆|角度|力|位移|动能|势能|求导|积分|质点|斜面|弹簧|电阻|电容|轨迹|波形/i;
+  // 文科/语言类题目（语文·英语·阅读理解·作文等）不应画数学/物理草图——这些题没有可画的几何/函数/矢量对象
+  const LIBERAL_ARTS_RE = /阅读|文章|作者|段落|词句|词语|句子|主旨|修辞|比喻|拟人|排比|夸张|文言文|古诗|诗词|诗歌|赏析|表达了|情感|中心思想|英语|单词|语法|完形|阅读理解|语文|作文|标点|词义|翻译|古今异义|人物形象|写作手法|说明文|议论文|记叙|选词|填空|默写|注音/i;
+  // 是否值得画数学/物理草图：必须是数理化题，且明显不是文科/语言类题（避免语文里出现"力/圆/运动"等词被误触发）
+  function isMathPhysQuestion(text) {
+    const t = String(text || '');
+    if (LIBERAL_ARTS_RE.test(t)) return false;   // 文科/语言类 → 不画
+    return MATHPHYS_RE.test(t);                   // 含数理化关键词 → 画
+  }
 
   // 搜一搜结果缓存（供「📐 画草图」按钮复用）
   let lastSearchText = '', lastSearchImgB64 = null;
@@ -3548,6 +3557,12 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
 
   // 搜一搜结果框「📐 画草图」按钮：离线确定性图 → 文字模型理解出 spec → 视觉模型看图兜底（不确定就空）
   async function drawSearchSketch() {
+    // 学科守卫：语文/英语/文科题没有可画的几何/函数/矢量对象，不画草图（避免模型瞎画坐标系误导）。
+    // 手动按钮只拦"明显文科/语言类"，不误伤用户明确要画、却没命中数理化关键词的 legit 数学题。
+    if (LIBERAL_ARTS_RE.test(lastSearchText || '')) {
+      toast('📐 这道是语文/英语/文科题，不需要画草图哦～');
+      return;
+    }
     setState('think', 90000);
     toast('📐 小火正在理解题目并画草图…');
     const off = physicsSketchFromText(lastSearchText);
@@ -3570,8 +3585,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   function mathSketch(text) {
     const spec = parseSketch(text);
     if (spec) { startSketch(spec); return true; }
-    // 解析不出 + 看起来像要"分析题目" → 交给模型出 spec
-    if (isTauri && /题|分析|受力|电路|运动|解方程|几何|根据|物理|斜率|函数图像|草图|怎么画|画什么/.test(text)) {
+    // 解析不出 + 看起来像要"分析题目" → 交给模型出 spec（但仅限数理化题；文科/语言类题不画草图，回退普通问答）
+    if (isTauri && isMathPhysQuestion(text) && /题|分析|受力|电路|运动|解方程|几何|根据|物理|斜率|函数图像|草图|怎么画|画什么/.test(text)) {
       addChat('sys', '📐 小火试着分析一下…');
       setState('think', 60000);
       askSketchSpec(text).then(sp => {
@@ -4855,7 +4870,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
           screenResultActions.classList.remove('hidden');
         }
         // 搜一搜数学/物理题 → 画草图（先离线确定性识别题型；识别不出再让【文字模型基于题目+解答理解后】出 spec；最后才视觉模型看图兜底且不确定的就空；绝不乱涂）
-        if (act === 'search' && isTauri && MATHPHYS_RE.test(text)) {
+        // 仅当判定为「数理化题」才画；语文/英语/文科题一律不画（否则模型会瞎画坐标系）
+        if (act === 'search' && isTauri && isMathPhysQuestion(text)) {
           const off = physicsSketchFromText(text);
           if (off) { startSketch(off); addChat('pet', '📐 顺手给你画了张受力分析草图～'); }
           else {
