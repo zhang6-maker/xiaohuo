@@ -3477,12 +3477,14 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   // 搜一搜截图题 → 视觉模型直接看图出 spec（数学/物理题自动画草图）
   async function askSearchSketch(imgB64) {
     try {
-      const prompt = '你是绘图助手。请看这张题目截图，判断它是否适合画一张数学/物理草图'
-        + '（如函数图像 y=f(x)、向量、点、圆、坐标系、受力/速度矢量图等）。\n'
-        + '如果适合，只输出如下 JSON（不要任何解释、不要 markdown 代码块标记、不要反引号）：\n'
+      const prompt = '你是绘图助手。请看这张题目截图，先判断它是否适合画一张数学/物理草图'
+        + '（函数图像 y=f(x)、向量、点、圆、坐标系、受力/速度矢量图等）。\n'
+        + '【关键】你必须真正看懂图里画了什么、坐标刻度是多少，才能画。'
+        + '如果图中没有给出明确的函数表达式、向量坐标或圆的精确参数，你无法可靠推断，就输出 {"items":[]}，千万不要猜测或编造数学量。\n'
+        + '如果适合且你能确定数学量，先一句话简述你看到的数学对象，再只输出如下 JSON（不要 markdown 代码块标记、不要反引号）：\n'
         + '{"title":"草图标题","xmin":-10,"xmax":10,"ymin":-10,"ymax":10,"grid":true,"quadrants":true,'
         + '"items":[{"type":"fn","expr":"sin(x)"},{"type":"vector","x":3,"y":4,"label":"F"},{"type":"point","x":1,"y":2,"label":"A"},{"type":"circle","cx":0,"cy":0,"r":3}]}\n'
-        + 'xmin/xmax/ymin/ymax 按内容取合理范围；不适合画草图（纯文字/代码/生活常识题）则只输出 {"items":[]}。务必且只能输出 JSON。';
+        + 'xmin/xmax/ymin/ymax 按图中刻度取合理范围；不适合画草图（纯文字/代码/生活常识题）或你不确定数学量时，只输出 {"items":[]}。务必且只能输出 JSON。';
       const raw = await invoke('ask_glm', { imageB64: imgB64, prompt });
       const sp = JSON.parse(extractJson(raw));
       const spec = buildSketchSpec(sp);
@@ -3526,19 +3528,21 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     return null;
   }
 
-  // 搜一搜结果框「📐 画草图」按钮：离线确定性图 → 视觉模型 → 文字模型兜底
+  // 搜一搜结果框「📐 画草图」按钮：离线确定性图 → 文字模型理解出 spec → 视觉模型看图兜底（不确定就空）
   async function drawSearchSketch() {
-    setState('think', 60000);
-    toast('📐 小火正在画草图…');
+    setState('think', 90000);
+    toast('📐 小火正在理解题目并画草图…');
     const off = physicsSketchFromText(lastSearchText);
     if (off) { startSketch(off); addChat('pet', '📐 给你画了张受力分析草图～'); setState('idle'); return; }
-    try {
-      const sp = await askSearchSketch(lastSearchImgB64);
-      if (sp && sp.items.length) { startSketch(sp); addChat('pet', '📐 顺手画了张草图～'); setState('idle'); return; }
-    } catch (e) {}
+    // 主路径：文字模型基于"题目+解答"理解后出 spec（比视觉从像素猜准得多）
     try {
       const sp = await askSketchSpec(lastSearchText);
-      if (sp && sp.items.length) { startSketch(sp); addChat('pet', '📐 画了张草图（模型生成的，仅供参考）～'); setState('idle'); return; }
+      if (sp && sp.items.length) { startSketch(sp); addChat('pet', '📐 画了张草图～'); setState('idle'); return; }
+    } catch (e) {}
+    // 兜底：视觉模型看图（不确定就空，不臆测）
+    try {
+      const sp = await askSearchSketch(lastSearchImgB64);
+      if (sp && sp.items.length) { startSketch(sp); addChat('pet', '📐 画了张草图（看着图画的，仅供参考）～'); setState('idle'); return; }
     } catch (e) {}
     setState('idle');
     toast('📐 这道题暂时没能画出草图（可能模型限流）；你可以直接说「画 y=…」让我离线画');
@@ -4797,17 +4801,26 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
           screenAskWrap.classList.add('hidden');
           screenResultActions.classList.remove('hidden');
         }
-        // 搜一搜数学/物理题 → 画草图（离线确定性优先，识别不出题型再让视觉模型看图转 spec；限流/解析失败静默跳过，绝不乱涂）
+        // 搜一搜数学/物理题 → 画草图（先离线确定性识别题型；识别不出再让【文字模型基于题目+解答理解后】出 spec；最后才视觉模型看图兜底且不确定的就空；绝不乱涂）
         if (act === 'search' && isTauri && MATHPHYS_RE.test(text)) {
           const off = physicsSketchFromText(text);
           if (off) { startSketch(off); addChat('pet', '📐 顺手给你画了张受力分析草图～'); }
           else {
-            setState('think', 60000);
-            toast('📐 小火正在画草图…');
-            askSearchSketch(imgB64).then(sp => {
-              if (sp) { startSketch(sp); addChat('pet', '📐 顺手给你画了张草图～'); }
-              setState('idle');
-            }).catch(() => setState('idle'));
+            setState('think', 90000);
+            toast('📐 小火正在理解题目并画草图…');
+            // 主路径：文字模型基于"题目+解答"理解后出 spec（比视觉从像素猜准得多）
+            askSketchSpec(text)
+              .catch(() => null)   // 文字失败（无 key/限流/解析）→ 当作 null，继续视觉兜底
+              .then(sp => {
+                if (sp && sp.items.length) { startSketch(sp); addChat('pet', '📐 顺手给你画了张草图～'); setState('idle'); return; }
+                // 文字没出 → 视觉模型看图兜底（不确定就空）
+                return askSearchSketch(imgB64);
+              })
+              .then(sp => {
+                if (sp && sp.items.length) { startSketch(sp); addChat('pet', '📐 顺手给你画了张草图（看着图画的，仅供参考）～'); }
+                setState('idle');
+              })
+              .catch(() => setState('idle'));
           }
         }
       })

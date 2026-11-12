@@ -714,7 +714,9 @@ async fn ask_sketch(app: tauri::AppHandle, text: String) -> Result<String, Strin
 3) fn 的 expr 必须是合法数学表达式，三角函数用弧度（sin(x)、sin(2*pi*x)）；
 4) 坐标用数字；
 5) 物理题：受力/位移用 vector，关键点用 point，轨迹/约束边界可酌情用 circle 或 fn；
-6) 若需要函数图像但用户没给解析式，用你推断的近似函数（如自由落体位移用二次函数）。"##;
+    6) 必须先理解题意：先确认这道题要画的是坐标系/函数/向量/几何中的哪些对象，再输出精确 spec；
+    7) 所有函数式、坐标、范围必须来自题目或解答中给出的确定数值，不得臆测；若题目未给出解析式或坐标，宁可 items 为空（只画坐标系）也绝不编造；
+    8) 不确定某对象是否该画、或拿不准它的精确数学表达时，宁可少画、不画错，不要输出存疑的近似值。"##;
     let user_msg = format!("{}\n\n请为以下题目/描述生成草图 spec：{}", instruction, text);
     call_zhipu(
         &app,
