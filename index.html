@@ -100,8 +100,10 @@
   .sol { color: #ff7a7a; font-weight: 700; }
   .ans { color: #7ad0ff; font-weight: 700; }
   code { background: #2b2b30; padding: 1px 4px; border-radius: 4px; font-size: 0.92em; }
-  #sketchClearBtn { position: fixed; right: 14px; bottom: 14px; z-index: 60; background: #2b2b30; color: #f3f3f5; border: 1px solid #4a4a52; border-radius: 8px; padding: 6px 11px; font-size: 12px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.45); }
+  #sketchClearBtn { position: fixed; left: 20px; top: 20px; z-index: 60; background: #2b2b30; color: #f3f3f5; border: 1px solid #4a4a52; border-radius: 8px; padding: 6px 11px; font-size: 12px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.45); user-select: none; }
   #sketchClearBtn:hover { background: #3a3a42; }
+  #sketchDelBtn { position: fixed; z-index: 61; width: 26px; height: 26px; line-height: 24px; text-align: center; background: #b23b3b; color: #fff; border: 1px solid #e8e8e8; border-radius: 50%; font-size: 15px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.45); user-select: none; }
+  #sketchDelBtn:hover { background: #d24a4a; }
   /* 换颜色面板：色板 */
   :is(#colorBox, #writeColorBox) .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
   :is(#colorBox, #writeColorBox) .swatch {
@@ -885,6 +887,10 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     if (e.button !== 0) return;                       // 只认左键（右键走 contextmenu）
     const r = canvas.getBoundingClientRect();
     const x = e.clientX - r.left, y = e.clientY - r.top;
+    // 草图优先：点中草图（且没点中小火）→ 拖动/选中，不触发戳/揉/拖窗
+    const sk = hitSketch(x, y);
+    if (sk && !hitPet(x, y)) { beginSketchDrag(sk, e); return; }
+    if (!sk && selectedSketch) { selectedSketch = null; updateSketchDelBtn(); }  // 点空白处取消选中
     if (!hitPet(x, y)) return;                        // 没按在小火身上 → 长按/揉/戳都不算
     longPressFired = false;
     pressStart = { x: e.clientX, y: e.clientY };
@@ -897,6 +903,15 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     }, 450);
   });
   window.addEventListener('mousemove', e => {
+    // 草图拖动进行中
+    if (skDrag) {
+      const r = canvas.getBoundingClientRect();
+      skDrag.art.x = (e.clientX - r.left) - skDrag.dx;
+      skDrag.art.y = (e.clientY - r.top) - skDrag.dy;
+      skDrag.moved = Math.max(skDrag.moved, Math.hypot(e.clientX - skDrag.downX, e.clientY - skDrag.downY));
+      if (selectedSketch === skDrag.art) updateSketchDelBtn();
+      return;
+    }
     // 拖窗进行中：持续把鼠标位移发给 Rust，由 Rust 搬窗口（拖拽期间 Rust 强制关穿透，鼠标不会丢）
     if (windowDragging && dragStartClient) {
       const ddx = e.clientX - dragStartClient.x, ddy = e.clientY - dragStartClient.y;
@@ -923,6 +938,12 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   });
   window.addEventListener('mouseup', () => {
     clearTimeout(pressTimer); pressTimer = null; pressStart = null;
+    if (skDrag) {                                      // 草图：区分"拖动"与"点击选中"
+      const wasClick = skDrag.moved < 6 && (performance.now() - skDrag.t0) < 400;
+      if (wasClick) selectSketch(skDrag.art);
+      skDrag = null;
+      return;
+    }
     if (windowDragging) {                              // 刚才是拖窗，不算戳
       windowDragging = false; dragStartClient = null;
       if (isTauri) invoke('drag_end').catch(() => {});
@@ -1078,7 +1099,12 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   // 注：不在初始化阶段调用 syncSketchUI()——它内部访问 artworkPool(let 声明在下方)，
   // 此处调用会触发 TDZ(暂时性死区) ReferenceError 中断整个初始化、导致透明窗空白。
   // 初始隐藏状态已由 HTML 的 class="hidden" 保证；运行时画/清草图会正常调用 syncSketchUI()。
-  document.getElementById('sketchClearBtn').addEventListener('click', () => clearSketches());
+  document.getElementById('sketchClearBtn').addEventListener('click', () => {
+    if (selectedSketch) removeSketch(selectedSketch);   // 选中了某张 → 只删那张
+    else clearSketches();                                // 没选中 → 清空全部
+  });
+  const sketchDelBtn = document.getElementById('sketchDelBtn');
+  if (sketchDelBtn) sketchDelBtn.addEventListener('click', () => { if (selectedSketch) removeSketch(selectedSketch); });
 
   // ---------- 换颜色面板 ----------
   const colorBox = document.getElementById('colorBox');
@@ -1320,11 +1346,16 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       emitter('pet-rect', [0, 0, W, H]).catch(() => {});
       return;
     }
-    const key = Math.round(posX) + ',' + Math.round(posY) + ',' + currState;
+    // 基础：宠物包围盒；再把所有草图矩形 + 清理/删除按钮并进来，使这些区域可交互（否则窗口穿透点不到）
+    let rx = Math.round(posX - 150), ry = Math.round(posY - 190), rw = 300, rh = 230;
+    const union = (x, y, w, h) => { const x2 = Math.max(rx + rw, x + w), y2 = Math.max(ry + rh, y + h); rx = Math.min(rx, x); ry = Math.min(ry, y); rw = x2 - rx; rh = y2 - ry; };
+    for (const art of artworkPool) { if (art.sketch) { const b = sketchRect(art); union(b[0], b[1], b[2], b[3]); } }
+    const cb = document.getElementById('sketchClearBtn'); if (cb && !cb.classList.contains('hidden')) { const b = cb.getBoundingClientRect(); if (b.width) union(b.left, b.top, b.width, b.height); }
+    const db = document.getElementById('sketchDelBtn'); if (db && !db.classList.contains('hidden')) { const b = db.getBoundingClientRect(); if (b.width) union(b.left, b.top, b.width, b.height); }
+    const key = rx + ',' + ry + ',' + rw + ',' + rh;
     if (key === lastRectKey) return;
     lastRectKey = key;
-    // 包围盒略放大以包容走路摆动(±~140px)；高度覆盖头到脚
-    emitter('pet-rect', [Math.round(posX - 150), Math.round(posY - 190), 300, 230]).catch(() => {});
+    emitter('pet-rect', [rx, ry, rw, rh]).catch(() => {});
   }
   // 弹框穿透修复：侦听弹框的显示/隐藏，任一可见即让 Rust 关穿透（否则框上 ×/按钮点不到）
   function syncBoxOpen() {
@@ -2240,6 +2271,9 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   // ================= 绘画系统 =================
   // 画作池：每幅画是一个对象，有绘画过程(drawing)与生命周期(life)，到期自动消散
   let artworkPool = [];
+  let selectedSketch = null;     // 当前选中的草图（点击选中后显示 🗑 删除按钮）
+  let skDrag = null;             // 草图拖动状态：{art, dx, dy, moved, downX, downY, t0}
+  let sketchSeq = 0;             // 草图自增 id
   let activeArt = null;            // 当前正在画的那幅（用于小火变色）
   class Drawing {
     constructor(type, x, y, strokes) {
@@ -3234,13 +3268,20 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   }
 
   function startSketch(spec) {
-    // 同一时刻只保留最新一张草图；旧的先清掉（用户若想要多张可分别画，新画覆盖旧的）
-    for (let i = artworkPool.length - 1; i >= 0; i--) if (artworkPool[i].sketch) artworkPool.splice(i, 1);
+    // 多草图共存：不再清掉旧草图，可同时画多张不同题目的草图；超过上限(8)则移除最早一张
     const ax = posX + 96, ay = posY + 36;
     const art = new Drawing('sketch', ax, ay, []);
     art.sketch = spec;
+    art.sketchId = ++sketchSeq;
     art.drawDur = 1900; art.life = Infinity; art.lw = 2;   // 常驻：不自动消失，由用户手动清除
     artworkPool.push(art); activeArt = art;
+    const sketches = artworkPool.filter(a => a.sketch);
+    if (sketches.length > 8) {
+      const oldest = sketches[0];
+      const idx = artworkPool.indexOf(oldest);
+      if (idx >= 0) artworkPool.splice(idx, 1);
+      if (selectedSketch === oldest) selectedSketch = null;
+    }
     setState('paint', art.drawDur + 600);   // 只在前 ~2.5s 显示作画姿态，之后自然回到常态
     syncSketchUI();
     return art;
@@ -3248,13 +3289,62 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   // 用户手动清除所有草图（是否消失由用户决定，不自动淡出）
   function clearSketches() {
     for (let i = artworkPool.length - 1; i >= 0; i--) if (artworkPool[i].sketch) artworkPool.splice(i, 1);
+    selectedSketch = null;
     if (activeArt && activeArt.sketch) activeArt = null;
     syncSketchUI();
   }
   function syncSketchUI() {
     const has = artworkPool.some(a => a.sketch);
-    const btn = document.getElementById('sketchClearBtn'); if (btn) btn.classList.toggle('hidden', !has);
+    const btn = document.getElementById('sketchClearBtn');
+    if (btn) { btn.classList.toggle('hidden', !has); btn.textContent = selectedSketch ? '🧹 清除选中' : '🧹 清除全部'; }
     const mi = document.getElementById('ctxClearSketch'); if (mi) mi.classList.toggle('hidden', !has);
+    updateSketchDelBtn();
+  }
+  // 草图屏幕矩形（与渲染区域一致：世界中心对齐到 (ax,ay)，含上方标题留白）
+  function sketchRect(art) { return [art.x - SKETCH_W / 2, art.y - SKETCH_H / 2 - 22, SKETCH_W, SKETCH_H + 28]; }
+  function hitSketch(x, y) {
+    for (let i = artworkPool.length - 1; i >= 0; i--) {
+      const art = artworkPool[i]; if (!art.sketch) continue;
+      const b = sketchRect(art);
+      if (x >= b[0] && x <= b[0] + b[2] && y >= b[1] && y <= b[1] + b[3]) return art;
+    }
+    return null;
+  }
+  function beginSketchDrag(art, e) {
+    const r = canvas.getBoundingClientRect();
+    skDrag = { art, dx: (e.clientX - r.left) - art.x, dy: (e.clientY - r.top) - art.y, moved: 0, downX: e.clientX, downY: e.clientY, t0: performance.now() };
+  }
+  function selectSketch(art) {
+    selectedSketch = (selectedSketch === art) ? null : art;   // 再点一次取消选中
+    syncSketchUI();
+  }
+  function removeSketch(art) {
+    const idx = artworkPool.indexOf(art);
+    if (idx >= 0) artworkPool.splice(idx, 1);
+    if (selectedSketch === art) selectedSketch = null;
+    if (activeArt === art) activeArt = null;
+    syncSketchUI();
+  }
+  function updateSketchDelBtn() {
+    const db = document.getElementById('sketchDelBtn');
+    if (!db) return;
+    if (selectedSketch) {
+      const b = sketchRect(selectedSketch);
+      db.style.left = (b[0] + b[2] - 13) + 'px';   // 贴在草图右上角
+      db.style.top = (b[1] - 13) + 'px';
+      db.classList.remove('hidden');
+    } else {
+      db.classList.add('hidden');
+    }
+  }
+  // 清理按钮默认贴着小火右侧跟随（避开右下角时钟、也不扩大穿透区）；用户拖过后保持原位
+  function positionClearBtn() {
+    const cb = document.getElementById('sketchClearBtn');
+    if (!cb || cb.classList.contains('hidden')) return;
+    if (cb._boxPos || cb._dragging) return;
+    cb.style.left = (posX + 165) + 'px';
+    cb.style.top = (posY - 60) + 'px';
+    cb.style.right = 'auto'; cb.style.bottom = 'auto';
   }
 
   function _niceStep(span, target) { target = target || 10; const raw = span / target; const mag = Math.pow(10, Math.floor(Math.log10(raw))); const norm = raw / mag; let step; if (norm < 1.5) step = 1; else if (norm < 3) step = 2; else if (norm < 7) step = 5; else step = 10; return step * mag; }
@@ -3344,6 +3434,12 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     }
     // 标题
     if (sp.title && p >= 1) { ctx.fillStyle = '#cfd2d8'; ctx.font = '12px system-ui'; ctx.fillText(sp.title, ax, ay - SKETCH_H / 2 - 10); }
+    if (art === selectedSketch) {                       // 选中态：虚线高亮框，提示可删除
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,210,61,0.95)'; ctx.lineWidth = 2; ctx.setLineDash([7, 4]);
+      ctx.strokeRect(ax - SKETCH_W / 2 - 6, ay - SKETCH_H / 2 - 26, SKETCH_W + 12, SKETCH_H + 32);
+      ctx.restore();
+    }
     ctx.restore();
   }
 
@@ -3907,6 +4003,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   makeDraggable(document.getElementById('outfitBox'));
   makeDraggable(document.getElementById('paintBox'));
   makeDraggable(document.getElementById('memBox'));
+  makeDraggable(document.getElementById('sketchClearBtn'));   // 清理按钮也可拖动（默认贴着火柴人，避开右下角时钟）
   let chatHistory = [];   // 多轮上下文：[{role, content}]
   function addChat(role, text) {
     const row = document.createElement('div');
@@ -3942,7 +4039,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     };
     el.addEventListener('mousedown', e => {
       if (e.button !== 0 || deny(e.target)) return;
-      dragging = true;
+      dragging = true; el._dragging = true;
       const r = el.getBoundingClientRect();
       el.style.left = r.left + 'px'; el.style.top = r.top + 'px';  // 居中 transform 折算成 px，避免拖动跳变
       el.style.right = 'auto'; el.style.bottom = 'auto'; el.style.transform = 'none';
@@ -3960,7 +4057,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     });
     document.addEventListener('mouseup', () => {
       if (!dragging) return;
-      dragging = false;
+      dragging = false; el._dragging = false;
       const r = el.getBoundingClientRect();
       el._boxPos = { x: r.left, y: r.top };
       try { localStorage.setItem(KEY, JSON.stringify(el._boxPos)); } catch (_) {}
@@ -4220,7 +4317,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   function loop(now) {
     const t = (now - start) / 1000;
 
-    // 悬停即交互：把宠物包围盒发给 Rust，由它切换穿透/可交互（桌面版）；浏览器版无副作用
+    // 悬停即交互：把宠物包围盒（联合草图/按钮）发给 Rust，由它切换穿透/可交互（桌面版）；浏览器版无副作用
+    positionClearBtn();
     emitPetRect();
 
     // 自动切换：固定睡眠时段强制"以睡为主、不漫游"；平时加权随机；刚被戳别立刻切走
