@@ -91,13 +91,14 @@
   .sqrt > .rad { border-top: 1px solid currentColor; padding: 0 2px; margin-top: 2px; }
   .mtext { font-style: normal; }
   /* 试卷式解答排版：公式独立成行居中、多行等号对齐、解/答醒目 */
-  .mathblock { font-size: 1.1em; margin: 10px 0; }
-  .aligned { display: inline-block; text-align: left; vertical-align: middle; margin: 2px 0; }
-  .aligned .arow { display: grid; grid-template-columns: auto 1fr; column-gap: 10px; line-height: 1.85; }
-  .aligned .al { text-align: right; white-space: nowrap; }
+  .mathblock { font-size: 1.18em; margin: 12px 0; }
+  .aligned { display: inline-block; text-align: left; vertical-align: middle; margin: 4px 0; }
+  .aligned .arow { display: grid; grid-template-columns: auto 1fr; column-gap: 16px; line-height: 2.0; }
+  .aligned .al { text-align: right; white-space: nowrap; padding-right: 2px; }
   .aligned .ar { text-align: left; white-space: nowrap; }
+  .mathblock .frac { font-size: 1.12em; }
   .solution { border-left: 3px solid #6b7cff; padding: 2px 0 2px 12px; margin: 8px 0; }
-  .sol { color: #ff7a7a; font-weight: 700; }
+  .sol { color: #ff8a8a; font-weight: 700; }
   .ans { color: #7ad0ff; font-weight: 700; }
   code { background: #2b2b30; padding: 1px 4px; border-radius: 4px; font-size: 0.92em; }
   #sketchClearBtn { position: fixed; left: 20px; top: 20px; z-index: 60; background: #2b2b30; color: #f3f3f5; border: 1px solid #4a4a52; border-radius: 8px; padding: 6px 11px; font-size: 12px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.45); user-select: none; }
@@ -4580,7 +4581,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ε', varepsilon: 'ε', zeta: 'ζ', eta: 'η', theta: 'θ', vartheta: 'ϑ', iota: 'ι', kappa: 'κ', lambda: 'λ', mu: 'μ', nu: 'ν', xi: 'ξ', pi: 'π', rho: 'ρ', sigma: 'σ', tau: 'τ', upsilon: 'υ', phi: 'φ', varphi: 'ϕ', chi: 'χ', psi: 'ψ', omega: 'ω',
     Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ', Xi: 'Ξ', Pi: 'Π', Sigma: 'Σ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
     times: '×', cdot: '·', div: '÷', pm: '±', mp: '∓', leq: '≤', le: '≤', geq: '≥', ge: '≥', neq: '≠', ne: '≠', approx: '≈', equiv: '≡', propto: '∝', sim: '∼', infty: '∞', sum: '∑', prod: '∏', int: '∫', partial: '∂', nabla: '∇', to: '→', rightarrow: '→', leftarrow: '←', Rightarrow: '⇒', Leftarrow: '⇐', angle: '∠', perp: '⊥', parallel: '∥', circ: '∘', prime: '′', emptyset: '∅', in: '∈', notin: '∉', subset: '⊂', subseteq: '⊆', supset: '⊃', forall: '∀', exists: '∃',
-    sin: '<span class="mtext">sin</span>', cos: '<span class="mtext">cos</span>', tan: '<span class="mtext">tan</span>', cot: '<span class="mtext">cot</span>', sec: '<span class="mtext">sec</span>', csc: '<span class="mtext">csc</span>', log: '<span class="mtext">log</span>', ln: '<span class="mtext">ln</span>', lim: '<span class="mtext">lim</span>', exp: '<span class="mtext">exp</span>', det: '<span class="mtext">det</span>',
+    sin: '<span class="mtext">sin</span>', cos: '<span class="mtext">cos</span>', tan: '<span class="mtext">tan</span>', cot: '<span class="mtext">cot</span>', sec: '<span class="mtext">sec</span>', csc: '<span class="mtext">csc</span>', log: '<span class="mtext">log</span>', ln: '<span class="mtext">ln</span>', lim: '<span class="mtext">lim</span>', exp: '<span class="mtext">exp</span>', det: '<span class="mtext">det</span>', arccos: '<span class="mtext">arccos</span>', arcsin: '<span class="mtext">arcsin</span>', arctan: '<span class="mtext">arctan</span>',
     langle: '⟨', rangle: '⟩'
   };
   const MATHSETS = { R: 'ℝ', N: 'ℕ', Z: 'ℤ', Q: 'ℚ', C: 'ℂ' };
@@ -4608,7 +4609,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
           else if (low === 'ddot') { html += inner(group()) + '̈'; }
           else if (low === 'text' || low === 'mathrm') { html += '<span class="mtext">' + escHtml(group()) + '</span>'; }
           else if (low === 'mathbb') { const x = group(); html += '<span class="mtext">' + (MATHSETS[x] || x) + '</span>'; }
-          else if (['left', 'right', 'big', 'bigg', 'Big', 'Bigg', 'bigl', 'bigr', 'left.', 'right.'].includes(low)) { /* 定界符修饰，跳过 */ }
+          else if (['left', 'right', 'big', 'bigg', 'Big', 'Bigg', 'bigl', 'bigr', 'left.', 'right.', 'quad', 'qquad', 'thinspace', ';', ':', '!', ' ', 'mkern', 'hspace'].includes(low)) { html += ' '; }
           else { const sym = MATHSYM[low]; html += (sym !== undefined ? sym : '\\' + cmd); }
           continue;
         }
@@ -4641,9 +4642,38 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     }
     return html + '</div>';
   }
+  // 解题/问答安全网：模型偶尔会漏掉 LaTeX 命令（用 Unicode 数学符号、数字分数 1/2、√ 等），
+  // 这里只在 $...$ / $$...$$ 数学区内做「近似 LaTeX 化」，让轻量渲染器也能画成教科书样式。
+  function normalizeMath(text) {
+    if (!text) return text;
+    const SUP = { '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9' };
+    const SUB = { '₀': '0', '₁': '1', '₂': '2', '₃': '3', '₄': '4', '₅': '5', '₆': '6', '₇': '7', '₈': '8', '₉': '9' };
+    const UNI = { 'θ': '\\theta', 'α': '\\alpha', 'β': '\\beta', 'γ': '\\gamma', 'π': '\\pi', 'φ': '\\phi', 'Φ': '\\Phi', 'ω': '\\omega', 'Ω': '\\Omega', 'Δ': '\\Delta', '∞': '\\infty', '≤': '\\le', '≥': '\\ge', '≠': '\\ne', '≈': '\\approx', '·': '\\cdot', '×': '\\times', '±': '\\pm', '÷': '\\div', '→': '\\to', '∑': '\\sum', '∫': '\\int' };
+    function conv(m) {
+      // 上标 / 下标数字（Unicode）→ ^{n} / _{n}
+      m = m.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]/g, d => '^{' + SUP[d] + '}');
+      m = m.replace(/[₀₁₂₃₄₅₆₇₈₉]/g, d => '_{' + SUB[d] + '}');
+      // √(...) → \sqrt{...}（优先，避免 √ 只罩住左括号）
+      m = m.replace(/√\s*\(([^()]*)\)/g, '\\sqrt{$1}');
+      m = m.replace(/√/g, '\\sqrt');
+      // 三角函数/常用函数：cos sin tan ... → \cos 等（负向后顾：前置字母/反斜杠则不转换，避免误伤 arccos/反斜杠命令）
+      m = m.replace(/(?<![\w\\])(cos|sin|tan|cot|sec|csc|log|ln|lim)(?!\w)/g, '\\$1');
+      // 其余 Unicode 数学符号 → LaTeX
+      m = m.replace(/[θαβγπφΦωΩΔ∞≤≥≠≈·×±÷→∑∫]/g, c => UNI[c]);
+      // 反三角
+      m = m.replace(/\barccos\b/g, '\\arccos').replace(/\barcsin\b/g, '\\arcsin').replace(/\barctan\b/g, '\\arctan');
+      // 数字分数 a/b → \frac{a}{b}（仅数字、非字母包围；\frac 内部无斜杠不会重复转换）
+      m = m.replace(/(^|[^\w\\{])(\d+)\s*\/\s*(\d+)(?=[^\w]|$)/g, (mm, p1, a, b) => p1 + '\\frac{' + a + '}{' + b + '}');
+      return m;
+    }
+    text = text.replace(/\$\$([\s\S]*?)\$\$/g, (mm, b) => '$$' + conv(b) + '$$');
+    text = text.replace(/\$([^$\n]+?)\$/g, (mm, b) => '$' + conv(b) + '$');
+    return text;
+  }
   function renderRich(text) {
     if (text == null) return '';
     text = String(text).replace(/^```[a-zA-Z0-9]*\n([\s\S]*?)\n?```$/m, '$1');
+    text = normalizeMath(text);                    // LaTeX 安全网：把漏掉的 Unicode 数学符号/数字分数归一化
     let out = '', i = 0; const n = text.length;
     while (i < n) {
       if (text[i] === '$' && text[i + 1] === '$') {
@@ -4667,9 +4697,10 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     }
     out = out.replace(/`([^`\n]+)`/g, '<code>$1</code>').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>');
     // 教科书式：先把「解：…」整段用左边框括起（div 在外层），再在内部高亮「解：」「答：」（span 在 div 内，合法嵌套）
-    out = out.replace(/(解\s*[:：][\s\S]*)$/, '<div class="solution">$1</div>');
-    out = out.replace(/(解\s*[:：])/g, '<span class="sol">$1</span>');
-    out = out.replace(/(答\s*[:：])/g, '<span class="ans">$1</span>');
+    out = out.replace(/(?:【解】|解\s*[:：])[\s\S]*$/, m => '<div class="solution">' + m + '</div>');
+    out = out.replace(/(?:【解】|解\s*[:：])/g, '<span class="sol">$&</span>');
+    out = out.replace(/(?:【答】|答\s*[:：])/g, '<span class="ans">$&</span>');
+    out = out.replace(/(\(1\)|\(2\)|\(3\)|\(4\)|\(5\)|\(6\)|\(7\)|\(8\)|\(9\))/g, '<b>$1</b>');
     return out;
   }
   // act: 'search'（解题/搜索） | 'screen'（看屏/提问）
@@ -4705,18 +4736,34 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     let prompt;
     if (act === 'search') {
       prompt = [
-        '这是一道题目或问题（可能是文字题、公式、代码或报错截图）。请按「教科书/试卷参考答案」的规范格式、用中文作答：',
-        '1. 第一行以「解：」开头，并单独成行（前面空一行）；',
-        '2. 分步骤推导，每步一行，用 ① ② ③ 或 (1)(2)(3) 编号；先写公式、再代入已知量、最后算出结果；',
-        '3. 每个关键等式都用 $$ 单独成行居中，不要夹在句子里；多步推导请用等号对齐写法（用 & 放在等号前、用 \\\\ 换行，会自动等号对齐，像教科书一样）：',
-        '   $$ \\begin{aligned} x &= 3 + 5 \\\\ &= 8 \\end{aligned} $$',
-        '4. 公式用 LaTeX 风格：分数 \\frac{a}{b}、根号 \\sqrt{x}、上下标 x^2、希腊字母 \\theta、向量 \\vec{v}、求和 \\sum_{i=1}^n a_i、积分 \\int_a^b f(x)\\,dx；',
-        '5. 若有明确数值答案，最后以「答：」单独成行写出结论。',
-        '若是代码报错题，请指出原因并给出修复方案。要求清晰、规范、像试卷答案一样易读。'
+        '你正在写一份数学/物理题的「教科书式参考答案」。你的回答会被一个 LaTeX 公式排版引擎渲染成教科书样式（分数会堆叠成上下结构、多步等式会等号逐行对齐）。',
+        '因此请直接输出 LaTeX 源码，严格遵守以下铁律：',
+        '【铁律】',
+        '1. 禁止用手画分数横线（如 ─）或纯文本斜杠（如 1/2）表示分数；所有分数一律写成 \\frac{分子}{分母}。',
+        '2. 第一行写「解：」并单独成行；多道小题用 (1)(2)(3) 分节，每节之间空一行。',
+        '3. 每一个等式都放进 $$ ... $$ 单独成行、居中显示；同一小题的多步推导放进一个 aligned 环境，用 & 放在等号之前、用 \\\\ 换行，实现等号逐行对齐：',
+        '   $$ \\begin{aligned} \\frac{1}{2} m v_0^2 &= \\frac{1}{2} m v^2 + mgR(1-\\cos\\theta) \\\\ v^2 &= v_0^2 - 2gR(1-\\cos\\theta) \\end{aligned} $$',
+        '4. 公式写法：分数 \\frac{a}{b}；下标 v_0、上标 v^2；三角函数 \\cos\\theta、\\sin x；希腊字母 \\theta、\\pi；根号 \\sqrt{5gR}；点乘 \\cdot；小于等于 \\le、大于等于 \\ge；反三角 \\arccos、\\arcsin。',
+        '5. 行内简短公式用单个 $ 包裹，如 动能 $E_k=\\frac{1}{2}mv^2$；独立成行的等式用 $$ 包裹。',
+        '6. 情况分析用 ① ② ③ 编号；最后以「答：」单独成行给出结论（行内公式用 $ 包裹）。',
+        '',
+        '【参考范例（请模仿这种排版，不要改动格式）】',
+        '解：',
+        '(1) 由机械能守恒：',
+        '$$ \\begin{aligned} \\frac{1}{2} m v_0^2 &= \\frac{1}{2} m v^2 + mgR(1-\\cos\\theta) \\end{aligned} $$',
+        '整理得 $v^2 = v_0^2 - 2gR(1-\\cos\\theta)$ ①。由牛顿第二定律（指向圆心为正）：',
+        '$$ N - mg\\cos\\theta = \\frac{m v^2}{R} \\quad \\text{②} $$',
+        '将①代入②得 $N(\\theta)=\\frac{m v_0^2}{R}-2mg+3mg\\cos\\theta$。',
+        '',
+        '(2) 小球恰能通过最高点的条件为 $N(\\pi)=0$：',
+        '$$ \\frac{m v_0^2}{R} - 5mg = 0 \\quad\\Rightarrow\\quad v_0 = \\sqrt{5gR} $$',
+        '答：$v_0$ 的最小值为 $\\sqrt{5gR}$。',
+        '',
+        '请严格按上述格式、用中文、像试卷答案一样清晰作答。若是代码报错题，请指出原因并给出修复方案。'
       ].join('\n');
     } else if (q) {
       prompt = '这是用户截下的屏幕区域。用户对着这张图问你一个问题，请结合图片内容回答。\n用户的问题：' + q
-        + '\n请用中文、条理清晰地回答，必要时给出具体操作步骤。若是在解答数学/物理题目，请按「解：→ 分步骤推导（每步一行，关键等式用 $$ 单独成行、多步用 \\begin{aligned} a &= b \\\\ &= c \\end{aligned} 等号对齐）→ 答：」的教科书/试卷格式作答；公式用 LaTeX 风格并用 $ 包裹（如自由落体位移 $\\frac{1}{2}gt^2$、动能 $E_k=\\frac{1}{2}mv^2$），便于清晰呈现。';
+        + '\n请用中文、条理清晰地回答，必要时给出具体操作步骤。若是在解答数学/物理题目，请按教科书/试卷格式作答：第一行「解：」单独成行；多道小题用 (1)(2)(3) 分节；每一个等式放进 $$ ... $$ 单独成行居中，多步推导用 \\begin{aligned} a &= b \\\\ &= c \\end{aligned} 实现等号对齐；所有分数用 \\frac{分子}{分母}（不要用手画横线 ─ 或纯文本 1/2）；上下标用 _ 和 ^（如 v_0^2），三角函数 \\cos\\theta、希腊字母 \\theta、根号 \\sqrt{x}；最后以「答：」单独成行给出结论，行内公式用 $ 包裹。';
     } else {
       prompt = '请看这张屏幕截图，简要描述你看到的内容：用户大概在做什么、界面上有哪些关键信息（文字、报错、数据、窗口标题等）。用中文简要说明。';
     }
