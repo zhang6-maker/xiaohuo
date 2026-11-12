@@ -90,6 +90,15 @@
   .sqrt > .sym { font-size: 1.05em; line-height: 1; }
   .sqrt > .rad { border-top: 1px solid currentColor; padding: 0 2px; margin-top: 2px; }
   .mtext { font-style: normal; }
+  /* 试卷式解答排版：公式独立成行居中、多行等号对齐、解/答醒目 */
+  .mathblock { font-size: 1.1em; margin: 10px 0; }
+  .aligned { display: inline-block; text-align: left; vertical-align: middle; margin: 2px 0; }
+  .aligned .arow { display: grid; grid-template-columns: auto 1fr; column-gap: 10px; line-height: 1.85; }
+  .aligned .al { text-align: right; white-space: nowrap; }
+  .aligned .ar { text-align: left; white-space: nowrap; }
+  .solution { border-left: 3px solid #6b7cff; padding: 2px 0 2px 12px; margin: 8px 0; }
+  .sol { color: #ff7a7a; font-weight: 700; }
+  .ans { color: #7ad0ff; font-weight: 700; }
   code { background: #2b2b30; padding: 1px 4px; border-radius: 4px; font-size: 0.92em; }
   #sketchClearBtn { position: fixed; right: 14px; bottom: 14px; z-index: 60; background: #2b2b30; color: #f3f3f5; border: 1px solid #4a4a52; border-radius: 8px; padding: 6px 11px; font-size: 12px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.45); }
   #sketchClearBtn:hover { background: #3a3a42; }
@@ -4481,7 +4490,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   function mathToHtml(s) {
     let i = 0; const n = s.length;
     const inner = g => mathToHtml(g);
-    function readBalanced() { let depth = 0, g = ''; while (i < n) { const c = s[i]; if (c === '{') depth++; else if (c === '}') { depth--; if (depth === 0) { i++; break; } } if (depth > 0) g += c; i++; } return g; }
+    function readBalanced() { if (s[i] === '{') i++; let depth = 1, g = ''; while (i < n) { const c = s[i]; if (c === '{') depth++; else if (c === '}') { depth--; if (depth === 0) { i++; break; } } if (depth > 0) g += c; i++; } return g; }
     function group() { if (s[i] === '{') return readBalanced(); if (s[i] === '\\') { let j = i + 1, cmd = ''; while (j < n && /[a-zA-Z]/.test(s[j])) { cmd += s[j]; j++; } const full = s.slice(i, j); i = j; return full; } const c = s[i]; i++; return c; }
     function parse() {
       let html = '';
@@ -4514,6 +4523,26 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     }
     return parse();
   }
+  // 多行公式等号对齐：支持 \begin{aligned}...\end{aligned} 或裸 \\ 换行的多行等式
+  function renderAligned(body) {
+    body = body.replace(/\\begin\{(aligned|align|alignedat|align\*)\}/g, '').replace(/\\end\{(aligned|align|alignedat|align\*)\}/g, '');
+    const lines = body.split('\\\\').map(s => s.trim()).filter(s => s && !/^\[[^\]]*\]$/.test(s));
+    if (!lines.length) return '';
+    let html = '<div class="aligned">';
+    for (const ln of lines) {
+      let left = '', right = ln;
+      const amp = ln.indexOf('&');
+      if (amp !== -1) {
+        left = ln.slice(0, amp).trim();
+        right = ln.slice(amp + 1).trim().replace(/^\s*=\s*/, m => { left += ' ='; return ''; });
+      } else {
+        const eq = ln.search(/=[^=]/);
+        if (eq !== -1) { left = ln.slice(0, eq + 1).trim(); right = ln.slice(eq + 1).trim(); }
+      }
+      html += '<div class="arow"><span class="al">' + mathToHtml(left) + '</span><span class="ar">' + mathToHtml(right) + '</span></div>';
+    }
+    return html + '</div>';
+  }
   function renderRich(text) {
     if (text == null) return '';
     text = String(text).replace(/^```[a-zA-Z0-9]*\n([\s\S]*?)\n?```$/m, '$1');
@@ -4521,7 +4550,12 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     while (i < n) {
       if (text[i] === '$' && text[i + 1] === '$') {
         const end = text.indexOf('$$', i + 2);
-        if (end !== -1) { out += '<div class="mathblock">' + mathToHtml(text.slice(i + 2, end).trim()) + '</div>'; i = end + 2; continue; }
+        if (end !== -1) {
+          const body = text.slice(i + 2, end).trim();
+          const isMulti = /\\begin\{(aligned|align)\}/.test(body) || body.indexOf('\\\\') !== -1;
+          out += '<div class="mathblock">' + (isMulti ? renderAligned(body) : mathToHtml(body)) + '</div>';
+          i = end + 2; continue;
+        }
       }
       if (text[i] === '$') {
         const end = text.indexOf('$', i + 1);
@@ -4534,6 +4568,10 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       out += escHtml(text[i]); i++;
     }
     out = out.replace(/`([^`\n]+)`/g, '<code>$1</code>').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>');
+    // 教科书式：先把「解：…」整段用左边框括起（div 在外层），再在内部高亮「解：」「答：」（span 在 div 内，合法嵌套）
+    out = out.replace(/(解\s*[:：][\s\S]*)$/, '<div class="solution">$1</div>');
+    out = out.replace(/(解\s*[:：])/g, '<span class="sol">$1</span>');
+    out = out.replace(/(答\s*[:：])/g, '<span class="ans">$1</span>');
     return out;
   }
   // act: 'search'（解题/搜索） | 'screen'（看屏/提问）
@@ -4568,9 +4606,19 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     let prompt;
     if (act === 'search') {
-      prompt = '这是一道题目或问题（可能是文字题、公式、代码或报错截图）。请仔细看图，并按「教科书/试卷标准解答」的格式、用中文作答：\n① 第一行以「解：」开头；\n② 分步骤推导，每步一行、用 ① ② ③ 或 (1)(2)(3) 编号，先写所用公式、再代入已知量、最后算出结果，关键步骤之间适当留空行；\n③ 涉及数学/物理公式用 LaTeX 风格并用 $ 包裹（如动能 $E_k=\\frac{1}{2}mv^2$、角度 $\\theta$、积分 $\\int_a^b f(x)\\,dx$、根号 $\\sqrt{x}$、向量 $\\vec{v}$、求和 $\\sum_{i=1}^n a_i$）；\n④ 若有明确数值答案，最后以「答：」收尾写出结论。\n若是代码报错，请指出原因并给出修复方案。要求条理清晰、像试卷参考答案一样规范易读。';
+      prompt = [
+        '这是一道题目或问题（可能是文字题、公式、代码或报错截图）。请按「教科书/试卷参考答案」的规范格式、用中文作答：',
+        '1. 第一行以「解：」开头，并单独成行（前面空一行）；',
+        '2. 分步骤推导，每步一行，用 ① ② ③ 或 (1)(2)(3) 编号；先写公式、再代入已知量、最后算出结果；',
+        '3. 每个关键等式都用 $$ 单独成行居中，不要夹在句子里；多步推导请用等号对齐写法（用 & 放在等号前、用 \\\\ 换行，会自动等号对齐，像教科书一样）：',
+        '   $$ \\begin{aligned} x &= 3 + 5 \\\\ &= 8 \\end{aligned} $$',
+        '4. 公式用 LaTeX 风格：分数 \\frac{a}{b}、根号 \\sqrt{x}、上下标 x^2、希腊字母 \\theta、向量 \\vec{v}、求和 \\sum_{i=1}^n a_i、积分 \\int_a^b f(x)\\,dx；',
+        '5. 若有明确数值答案，最后以「答：」单独成行写出结论。',
+        '若是代码报错题，请指出原因并给出修复方案。要求清晰、规范、像试卷答案一样易读。'
+      ].join('\n');
     } else if (q) {
-      prompt = '这是用户截下的屏幕区域。用户对着这张图问你一个问题，请结合图片内容回答。\n用户的问题：' + q + '\n请用中文、条理清晰地回答，必要时给出具体操作步骤。若是在解答数学/物理题目，请按「解：→ 分步骤推导 → 答：」的教科书/试卷格式作答；涉及公式用 LaTeX 风格并用 $ 包裹（如自由落体位移 $\\frac{1}{2}gt^2$、动能 $E_k=\\frac{1}{2}mv^2$），便于清晰呈现。';
+      prompt = '这是用户截下的屏幕区域。用户对着这张图问你一个问题，请结合图片内容回答。\n用户的问题：' + q
+        + '\n请用中文、条理清晰地回答，必要时给出具体操作步骤。若是在解答数学/物理题目，请按「解：→ 分步骤推导（每步一行，关键等式用 $$ 单独成行、多步用 \\begin{aligned} a &= b \\\\ &= c \\end{aligned} 等号对齐）→ 答：」的教科书/试卷格式作答；公式用 LaTeX 风格并用 $ 包裹（如自由落体位移 $\\frac{1}{2}gt^2$、动能 $E_k=\\frac{1}{2}mv^2$），便于清晰呈现。';
     } else {
       prompt = '请看这张屏幕截图，简要描述你看到的内容：用户大概在做什么、界面上有哪些关键信息（文字、报错、数据、窗口标题等）。用中文简要说明。';
     }
