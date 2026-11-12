@@ -3001,6 +3001,12 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const v = document.getElementById('paintText').value.trim();
     // 数学/物理草图优先解析（离线优先，解析不出且像题目再走模型）；命中就收起输入框
     if (mathSketch(v)) { document.getElementById('paintBox').classList.add('hidden'); return; }
+    // 用户在画草图输入框里只写了"画草图"却没给具体数学对象 → 提示补内容，不把"草图"当动物字面去画
+    if (/草图/.test(v) && !/(坐标|向量|函数|画点|画圆|象限|sin|cos|tan|抛物线|y\s*=)/i.test(v)) {
+      toast('📐 想画什么草图？比如「画 y=sin(x)」「向量(3,4)」「画圆」');
+      document.getElementById('paintText').value = '';
+      return;
+    }
     const tmpl = knownTemplate(v);
     if (tmpl) { document.getElementById('paintBox').classList.add('hidden'); startPaint(tmpl); return; }
     const t = knownPaint(v);
@@ -3258,8 +3264,11 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
 
     // 5) 坐标轴 / 象限 / 坐标系
     if (/象限/.test(raw)) { spec.quadrants = true; hasContent = true; }
-    if (!hasContent || /坐标|网格|画个?图|直角|坐标轴/.test(raw)) {
-      spec.axes = true; hasContent = true;
+    // 仅当确实画了数学对象(hasContent)或用户明确要坐标系时才画坐标轴；
+    // 否则"画猫/画狼"这类与数学无关的指令会被误判成"画了张空白坐标系"，从而抢走动物/物品绘画（走草图逻辑）。
+    const wantAxes = /坐标|网格|画个?图|直角|坐标轴/i.test(raw);
+    if (hasContent || wantAxes) {
+      spec.axes = true;
       if (/网格|grid/i.test(raw)) spec.grid = true;
     }
 
@@ -4150,6 +4159,13 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       || /\by\s*=\s*.+x/i.test(tl)
       || /画\s+(sin|cos|tan|exp|log|ln|sqrt|abs)\s*\(/i.test(tl)) {
       if (mathSketch(v)) { addChat('sys', '📐 小火开始画草图…'); return; }
+      // 命中"草图"等关键词但没解析出具体数学对象（例如只说了"画草图"）→ 打开画草图输入框让用户补具体表达式，
+      // 而不是把字面"草图"丢给动物/图标画师从字面去画（那样会画不出或乱画）
+      if (/草图/.test(v)) {
+        addChat('sys', '📐 想画什么草图？告诉我具体内容，比如「画 y=sin(x)」「向量(3,4)」「画圆」～');
+        openPaintInput();
+        return;
+      }
     }
     // 意图分流：画画 / 唱歌 / 看书 / 看屏 / 其余=聊天回复
     // 画画意图：仅明确指令才触发，避免"我想看看你画画的水平""你会画画吗"等评价/疑问句误触发画画
