@@ -1333,6 +1333,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   let lastRectKey = '';
   let boxOpen = false;            // 任一弹框可见时为 true，emitPetRect 据此把矩形扩成全窗口
   const openBoxes = new Set();
+  let shotBarOpen = false;         // 多次截图批次栏可见时为 true：与弹框同效，强制窗口可交互，保证栏上「再加一张/提交/取消」点得到（不直接塞 BOX_IDS，避免被点外关闭误伤看屏框）
   // ---------- 弹框单一清单：所有「可关闭浮层」只在这里登记一次 ----------
   // MutationObserver / captureClean / Esc 关闭 / 点外关闭 四处全部引用本数组，不再各抄一份。
   // 历史教训：memBox 曾漏进 observer 列表，导致单独开记录本时窗口仍是穿透态、× 点不到（2dac058）。
@@ -1377,8 +1378,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     emitter('pet-rect', [rx, ry, rw, rh]).catch(() => {});
   }
   // 弹框穿透修复：侦听弹框的显示/隐藏，任一可见即让 Rust 关穿透（否则框上 ×/按钮点不到）
-  function syncBoxOpen() {
-    boxOpen = openBoxes.size > 0;
+    function syncBoxOpen() {
+      boxOpen = openBoxes.size > 0 || shotBarOpen;
     // 直接、可靠地通知 Rust 是否有框开着：框开着→强制可交互(×才点得到)，关掉→恢复穿透。
     // 不再只靠 pet-rect 整窗广播（那条链路在全屏/看屏时序下会竞态，导致"框开着窗口却穿透、×点不到"）。
     // 截图隐藏弹框期间(suppressBoxSync)强制上报 true，避免窗口掉进穿透态。
@@ -1402,8 +1403,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   // 窗口也不会永久卡在穿透态、导致框里的 × / 📝记忆 / 发送 全部点不到。
   // Rust 侧只在 false→true 上升沿 set_focus，重复上报不会反复抢焦点。
   setInterval(() => {
-    if (isTauri && openBoxes.size > 0) invoke('set_box_open', { open: true }).catch(() => {});
-  }, 400);
+      if (isTauri && (openBoxes.size > 0 || shotBarOpen)) invoke('set_box_open', { open: true }).catch(() => {});
+    }, 400);
 
   // ---------- 构建火柴人 ----------
   function buildFigure(pose, t) {
@@ -4613,10 +4614,11 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const cnt = sb.querySelector('#shotCount');
     if (cnt) cnt.textContent = '已截 ' + searchShots.length + ' 张';
     const sub = sb.querySelector('#shotSubmit');
-    if (sub) sub.textContent = '✅ 提交' + (searchShots.length > 1 ? '(' + searchShots.length + ')' : '');
-    sb.classList.remove('hidden');
-  }
-  function hideShotBar() { const sb = document.getElementById('shotBar'); if (sb) sb.classList.add('hidden'); }
+        if (sub) sub.textContent = '✅ 提交' + (searchShots.length > 1 ? '(' + searchShots.length + ')' : '');
+        sb.classList.remove('hidden');
+        shotBarOpen = true; syncBoxOpen();   // 批次栏出现 → 强制窗口可交互，栏上三按钮必点得到（绕开 over_pet 单矩形命中对远处浮动 UI 的不可靠）
+      }
+      function hideShotBar() { const sb = document.getElementById('shotBar'); if (sb) sb.classList.add('hidden'); shotBarOpen = false; syncBoxOpen(); }
   document.getElementById('shotAdd').addEventListener('click', () => startPick(currentAct));  // 再框选一张，拼进同一批次
   document.getElementById('shotSubmit').addEventListener('click', () => {
     const act = currentAct, s = searchShots.slice();
@@ -5108,10 +5110,16 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   document.addEventListener('mousedown', e => {
     if (picking) return; // 框选中时不处理
     const t = e.target;
-    BOX_IDS.forEach(id => {
-      const el = document.getElementById(id);
-      if (el && !el.classList.contains('hidden') && !el.contains(t)) el.classList.add('hidden');
-    });
+    // 收集所有可见浮层（弹框 + 批次栏）。点击落在任一浮层内 → 不关闭任何；
+    // 落在其外(桌面/宠物) → 关闭全部可见浮层。这样点批次栏按钮不会误关同显的看屏框。
+    const floats = BOX_IDS.map(id => document.getElementById(id)).filter(el => el && !el.classList.contains('hidden'));
+    const sbEl = document.getElementById('shotBar');
+    if (sbEl && !sbEl.classList.contains('hidden')) floats.push(sbEl);
+    const onFloat = floats.some(el => el.contains(t));
+    if (!onFloat) {
+      BOX_IDS.forEach(id => { const el = document.getElementById(id); if (el && !el.classList.contains('hidden')) el.classList.add('hidden'); });
+      if (sbEl && !sbEl.classList.contains('hidden')) hideShotBar(); // 走 hideShotBar 同步 shotBarOpen，避免窗口卡在不穿透态
+    }
   });
 
   // 诊断面板：Ctrl+Shift+D 开关。把"前端 boxOpen"与"Rust 实际 want_ignore(穿透?)/box_open"并排显示，
