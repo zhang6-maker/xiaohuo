@@ -5057,12 +5057,16 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       const a = esc(it.answer || '');
       const ts = fmtTs(it.ts);
       const row = document.createElement('div');
-      row.style.cssText = 'border:1px solid #3a3a42;border-radius:8px;padding:8px 10px;margin-bottom:8px;cursor:pointer;';
+      row.style.cssText = 'border:1px solid #3a3a42;border-radius:8px;padding:8px 10px;margin-bottom:8px;cursor:pointer;position:relative;';
       row.innerHTML =
         `<div style="font-size:11px;color:#9aa0a6;margin-bottom:2px;">${ts}</div>` +
         `<div style="font-size:13px;color:#f3f3f5;margin-bottom:2px;max-height:40px;overflow:hidden;">${q || '<span style="color:#9aa0a6;">（截图提问，无文字）</span>'}</div>` +
-        `<div style="font-size:12px;color:#b9bcc4;max-height:36px;overflow:hidden;">${a}</div>`;
-      row.onclick = () => viewMemory(it.id);
+        `<div style="font-size:12px;color:#b9bcc4;max-height:36px;overflow:hidden;">${a}</div>` +
+        `<button data-copy="1" title="复制这条记录的回答" style="position:absolute;right:8px;bottom:8px;font-size:11px;padding:2px 7px;background:#3a3a42;color:#f3f3f5;border:1px solid #4a4a52;border-radius:6px;cursor:pointer;">📋 复制</button>`;
+      row.addEventListener('click', (ev) => {
+        if (ev.target.closest('[data-copy]')) { copyText(it.answer || '', '记录回答'); return; }
+        viewMemory(it.id);
+      });
       list.appendChild(row);
     });
   }
@@ -5078,6 +5082,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">` +
         `<span style="font-size:11px;color:#9aa0a6;">${ts}</span>` +
         `<span><button id="memBack" style="font-size:12px;padding:2px 8px;margin-right:6px;">← 返回</button>` +
+        `<button id="memCopy" style="font-size:12px;padding:2px 8px;margin-right:6px;">📋 复制</button>` +
         `<button id="memDel" style="font-size:12px;padding:2px 8px;">🗑 删除</button></span>` +
       `</div>` +
       `<div style="font-size:12px;color:#9aa0a6;margin-bottom:3px;">问题</div>` +
@@ -5086,6 +5091,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       `<div style="font-size:13px;white-space:pre-wrap;margin-bottom:10px;">${esc(e.answer || '')}</div>` +
       (e.image_data ? `<div style="font-size:12px;color:#9aa0a6;margin-bottom:3px;">截图</div><img src="${e.image_data}" style="max-width:100%;border-radius:8px;border:1px solid #3a3a42;"/>` : '');
     detail.querySelector('#memBack').onclick = () => { detail.classList.add('hidden'); list.classList.remove('hidden'); };
+    detail.querySelector('#memCopy').onclick = () => copyText(e.answer || '', '记录回答');
     detail.querySelector('#memDel').onclick = () => delMemory(id);
   }
   async function delMemory(id) {
