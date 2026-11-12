@@ -104,6 +104,15 @@
   #sketchClearBtn { position: fixed; left: 20px; top: 20px; z-index: 60; background: #2b2b30; color: #f3f3f5; border: 1px solid #4a4a52; border-radius: 8px; padding: 6px 11px; font-size: 12px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.45); user-select: none; }
   #sketchClearBtn:hover { background: #3a3a42; }
   #sketchDelBtn { position: fixed; z-index: 61; width: 26px; height: 26px; line-height: 24px; text-align: center; background: #b23b3b; color: #fff; border: 1px solid #e8e8e8; border-radius: 50%; font-size: 15px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.45); user-select: none; }
+  /* 多次截图批次栏：底部居中、抬高到任务栏之上，且不压右下角时钟 */
+  #shotBar { position: fixed; left: 50%; bottom: 56px; transform: translateX(-50%); z-index: 61; background: #2b2b30; color: #f3f3f5; border: 1px solid #4a4a52; border-radius: 10px; padding: 8px 12px; display: flex; gap: 8px; align-items: center; box-shadow: 0 2px 10px rgba(0,0,0,.5); font-size: 13px; user-select: none; }
+  #shotBar #shotCount { font-weight: 600; margin-right: 4px; }
+  #shotBar button { background: #3a3a42; color: #f3f3f5; border: 1px solid #55555f; border-radius: 6px; padding: 5px 10px; cursor: pointer; font-size: 13px; }
+  #shotBar button:hover { background: #4a4a54; }
+  #shotBar #shotSubmit { background: #2f6b3a; border-color: #3f8a4c; }
+  #shotBar #shotSubmit:hover { background: #387f44; }
+  #shotBar #shotCancel { background: #5a3030; border-color: #7a4040; }
+  #shotBar #shotCancel:hover { background: #6e3a3a; }
   #sketchDelBtn:hover { background: #d24a4a; }
   /* 换颜色面板：色板 */
   :is(#colorBox, #writeColorBox) .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
@@ -222,6 +231,14 @@
   <img id="pickImg" alt="">
   <div id="pickHint">拖拽框选你想让小火看的区域，松手即分析</div>
   <div id="pickRect"></div>
+</div>
+
+<!-- 多次截图批次栏：截完一张后可继续加、或一次性提交（支持"一次搜索截多张图"） -->
+<div id="shotBar" class="hidden">
+  <span id="shotCount">已截 1 张</span>
+  <button id="shotAdd" title="再框选一张截图，拼进同一次搜索">📸 再加一张</button>
+  <button id="shotSubmit" title="把已截的多张图一次性发给小火">✅ 提交</button>
+  <button id="shotCancel" title="丢弃已截的图，不搜索">✕ 取消</button>
 </div>
 
 <!-- 搜题答案框 -->
@@ -1055,7 +1072,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       '💬 「💬聊天」框里打字「看会儿书」→ 坐地捧书低头安静阅读，很专注',
       '🎵 「💬聊天」框里打字「唱首歌」→ 闭眼陶醉、举臂打拍子、头顶飘歌词；8 首原创短歌每次随机换，说「换一首」立刻换一首',
       '😴 「睡觉」后约 3 秒会翻倒躺平进入深度睡眠，醒来会伸展一下',
-      '📸 搜一搜 / 👀 看看屏幕 → 真截屏后拖框选，交给大模型分析',
+      '📸 搜一搜 / 👀 看看屏幕 → 真截屏后拖框选，交给大模型分析。<b>支持一次截多张</b>：框选一张后底部会出现「已截 N 张 · 📸再加一张 · ✅提交」，可反复加图，最后一次性把多张图发给小火，适合题目分几屏、或好几张图凑一个问法',
       '🎨 「💬聊天」框里打字「画只猫」→ 小火按你的文字指令画画',
       '📐 右键「📐 画草图」或聊天里说「画 y=sin(x) / 画象限 / 向量(3,4)」→ 小火画干净的数学/物理坐标系草图（离线就能画）',
       '📸 用「搜一搜」框选数学/物理题（函数·向量·受力·几何…）→ 解答出来后小火会顺手把草图画出来；结果框里也有「📐 画草图」按钮可手动触发',
@@ -1353,6 +1370,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     for (const art of artworkPool) { if (art.sketch) { const b = sketchRect(art); union(b[0], b[1], b[2], b[3]); } }
     const cb = document.getElementById('sketchClearBtn'); if (cb && !cb.classList.contains('hidden')) { const b = cb.getBoundingClientRect(); if (b.width) union(b.left, b.top, b.width, b.height); }
     const db = document.getElementById('sketchDelBtn'); if (db && !db.classList.contains('hidden')) { const b = db.getBoundingClientRect(); if (b.width) union(b.left, b.top, b.width, b.height); }
+    const sb = document.getElementById('shotBar'); if (sb && !sb.classList.contains('hidden')) { const b = sb.getBoundingClientRect(); if (b.width) union(b.left, b.top, b.width, b.height); }  // 多次截图批次栏也要可交互
     const key = rx + ',' + ry + ',' + rw + ',' + rh;
     if (key === lastRectKey) return;
     lastRectKey = key;
@@ -3485,7 +3503,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         + '{"title":"草图标题","xmin":-10,"xmax":10,"ymin":-10,"ymax":10,"grid":true,"quadrants":true,'
         + '"items":[{"type":"fn","expr":"sin(x)"},{"type":"vector","x":3,"y":4,"label":"F"},{"type":"point","x":1,"y":2,"label":"A"},{"type":"circle","cx":0,"cy":0,"r":3}]}\n'
         + 'xmin/xmax/ymin/ymax 按图中刻度取合理范围；不适合画草图（纯文字/代码/生活常识题）或你不确定数学量时，只输出 {"items":[]}。务必且只能输出 JSON。';
-      const raw = await invoke('ask_glm', { imageB64: imgB64, prompt });
+      const raw = await invoke('ask_glm', { imagesB64: [imgB64], prompt });
       const sp = JSON.parse(extractJson(raw));
       const spec = buildSketchSpec(sp);
       return (spec && spec.items.length) ? spec : null;
@@ -3908,7 +3926,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       const b64 = renderStrokesToDataURL(copy, S).split(',')[1];
       if (!b64) return true;
       const prompt = '这是一张简笔画，白底黑线。请判断：它是否清晰、可辨识地画出了「' + v + '」？只回答 YES 或 NO，不要任何解释。';
-      const resp = await invoke('ask_glm', { imageB64: b64, prompt });
+      const resp = await invoke('ask_glm', { imagesB64: [b64], prompt });
       const up = (resp || '').toUpperCase();
       const zh = resp || '';
       // 收紧门控：明确/含糊的中文否定优先否决，避免"YES，但有点不像…"这类自相矛盾的回答把糟画放行
@@ -4496,6 +4514,10 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   const pickRect = document.getElementById('pickRect');
   const pickHint = document.getElementById('pickHint');
   let picking = false, pickStart = null, lastRegionB64 = '', currentAct = 'search';
+  let searchShots = [];   // 多次截图批次：每次框选都收进这里，最后一次性提交
+  let lastShots = [];      // 上一次提交用的整批图（"再问一次"时复用，避免丢前面的图）
+  // 取当前要发给模型的图批次：优先未提交的批次，否则用上一次提交的整批
+  function shotsArr() { return searchShots.length ? searchShots.slice() : lastShots.slice(); }
 
   function closeAllPick() {
     picking = false;
@@ -4569,14 +4591,43 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const c = document.createElement('canvas');
     c.width = Math.max(1, Math.round(RW * scale)); c.height = Math.max(1, Math.round(RH * scale));
     c.getContext('2d').drawImage(pickImg, X, Y, RW, RH, 0, 0, c.width, c.height);
-    lastRegionB64 = c.toDataURL('image/jpeg', 0.85);
+    const b64 = c.toDataURL('image/jpeg', 0.85);
+    lastRegionB64 = b64;
     closeAllPick();                                // 退出全屏，回小窗显示结果
-    if (currentAct === 'screen') { showScreenAsk(); runGlm('screen', lastRegionB64, ''); }  // 看屏：弹提问框并自动直接看一次（不必再点按钮）
-    else runGlm(currentAct, lastRegionB64);        // 搜一搜：直接解题
+    appendShot(currentAct, b64);                   // 进入"可多次截图"流程：先收进批次，再让用户决定再加还是提交
   });
   // Esc 取消框选（不想框了就按 Esc）
   window.addEventListener('keydown', e => {
     if (e.key === 'Escape' && picking) closeAllPick();
+  });
+
+  // ---------- 多次截图批次：把一张张截图收进批次，最后一次性提交 ----------
+  function appendShot(act, b64) {
+    searchShots.push(b64);
+    showShotBar();
+    // 看屏：截第一张后弹提问框（和之前一样）；之后再加的图仍留在批次里
+    if (act === 'screen' && searchShots.length === 1) showScreenAsk();
+  }
+  function showShotBar() {
+    const sb = document.getElementById('shotBar'); if (!sb) return;
+    const cnt = sb.querySelector('#shotCount');
+    if (cnt) cnt.textContent = '已截 ' + searchShots.length + ' 张';
+    const sub = sb.querySelector('#shotSubmit');
+    if (sub) sub.textContent = '✅ 提交' + (searchShots.length > 1 ? '(' + searchShots.length + ')' : '');
+    sb.classList.remove('hidden');
+  }
+  function hideShotBar() { const sb = document.getElementById('shotBar'); if (sb) sb.classList.add('hidden'); }
+  document.getElementById('shotAdd').addEventListener('click', () => startPick(currentAct));  // 再框选一张，拼进同一批次
+  document.getElementById('shotSubmit').addEventListener('click', () => {
+    const act = currentAct, s = searchShots.slice();
+    searchShots = []; lastShots = s.slice();
+    hideShotBar();
+    if (act === 'search') runGlm('search', s, '');                 // 搜一搜：一次性把多张图发给模型解题
+    else runGlm('screen', s, (screenAsk && screenAsk.value) || ''); // 看屏：多张图 + 问题一起发
+  });
+  document.getElementById('shotCancel').addEventListener('click', () => {
+    searchShots = []; lastShots = []; hideShotBar();
+    if (currentAct === 'screen') { screenAskWrap.classList.add('hidden'); screenResultActions.classList.add('hidden'); screenBox.classList.add('hidden'); }
   });
 
   // ---------- 数学/物理公式排版（轻量离线渲染，识别 $...$ 内 LaTeX 风格记号） ----------
@@ -4733,6 +4784,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   }
 
   function runGlm(act, imgB64, question, target) {
+    const shots = Array.isArray(imgB64) ? imgB64 : [imgB64];   // 支持多张截图：单张也包成数组，统一发给模型
+    const repImg = shots[shots.length - 1];                      // 代表性单图（草图兜底视觉模型用）
     const q = (question || '').trim();
     // 模型回答里常有 < > &（拍代码题尤其多），直接塞 innerHTML 会被当 HTML 标签吞掉，
     // 表现就是「返回空值 / 内容缺一截」。先转义再换行，保证原文完整显示。
@@ -4786,8 +4839,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     box.style.transform = useScreen ? 'translateX(-50%)' : 'translate(-50%,-50%)';
     box.classList.remove('hidden');
     // Tauri v2 默认把 Rust 的 snake_case 参数转成 camelCase 暴露给前端，
-    // 所以这里必须写 imageB64（写 image_b64 会报 missing required key imageB64）
-    invoke('ask_glm', { imageB64: imgB64, prompt })
+    // 所以这里必须写 imagesB64（写 image_b64 会报 missing required key imagesB64）；多张图打包成数组
+    invoke('ask_glm', { imagesB64: shots, prompt })
       .then(res => {
         const text = (typeof res === 'string' ? res : '').trim();
         if (!text) {   // 后端兜底后一般不会再空，但留一道防线，绝不让结果框显示成一片空白
@@ -4796,7 +4849,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         }
         txt._raw = text;
         txt.innerHTML = renderRich(text);
-        lastSearchText = text; lastSearchImgB64 = imgB64;   // 供「📐 画草图」按钮复用
+        lastSearchText = text; lastSearchImgB64 = repImg;   // 供「📐 画草图」按钮复用
         if (useScreen && q) {   // 仅当用户带问题发问才收起提问框并显示「再问一次」；自动看/直接看时保留提问框便于追问
           screenAskWrap.classList.add('hidden');
           screenResultActions.classList.remove('hidden');
@@ -4814,7 +4867,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
               .then(sp => {
                 if (sp && sp.items.length) { startSketch(sp); addChat('pet', '📐 顺手给你画了张草图～'); setState('idle'); return; }
                 // 文字没出 → 视觉模型看图兜底（不确定就空）
-                return askSearchSketch(imgB64);
+                return askSearchSketch(repImg);
               })
               .then(sp => {
                 if (sp && sp.items.length) { startSketch(sp); addChat('pet', '📐 顺手给你画了张草图（看着图画的，仅供参考）～'); }
@@ -4854,12 +4907,12 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const s = b.dataset.s;
     if (s === 'ask') {
       // 有/无问题都走 runGlm；问题留空等价于「直接看截图」
-      runGlm('screen', lastRegionB64, screenAsk.value);
+      runGlm('screen', shotsArr(), screenAsk.value);
     } else if (s === 'look') {
-      runGlm('screen', lastRegionB64, '');
+      runGlm('screen', shotsArr(), '');
     } else if (s === 'search') {
       // 在看屏里顺手搜索：用解题提示词，但结果就显示在同一个看屏框里
-      runGlm('search', lastRegionB64, '', 'screen');
+      runGlm('search', shotsArr(), '', 'screen');
     } else if (s === 'sketch') {
       // 搜一搜结果框里手动触发画草图（离线确定性图 → 视觉模型 → 文字模型兜底）
       drawSearchSketch();
@@ -4877,7 +4930,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   }));
   screenBox.querySelector('.close').addEventListener('click', () => screenBox.classList.add('hidden'));
   // 在提问框按回车 = 问问他（问题留空则为直接看）；中文输入法组词中的回车不触发
-  screenAsk.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) runGlm('screen', lastRegionB64, screenAsk.value); });
+  screenAsk.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) runGlm('screen', shotsArr(), screenAsk.value); });
 
   // ---------- 记忆本：记录「问题 + 截图 + 回答」，随时翻阅 ----------
   const memBox = document.getElementById('memBox');

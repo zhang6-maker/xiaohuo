@@ -449,7 +449,7 @@ async fn call_zhipu(
 /// 调智谱 GLM-4V（多模态）：把裁剪后的图片（data URL）+ 提示词发给模型，返回文本。
 /// 模型走 call_zhipu：优先 ZHIPU_VISION_MODEL（资源包），耗尽自动降级 glm-4v-flash。
 #[tauri::command]
-async fn ask_glm(app: tauri::AppHandle, image_b64: String, prompt: String) -> Result<String, String> {
+async fn ask_glm(app: tauri::AppHandle, images_b64: Vec<String>, prompt: String) -> Result<String, String> {
     let key = match std::env::var("ZHIPU_API_KEY") {
         Ok(k) if !k.is_empty() => k,
         _ => return Err(
@@ -464,14 +464,17 @@ async fn ask_glm(app: tauri::AppHandle, image_b64: String, prompt: String) -> Re
         &key,
         90,
         move |m| {
+            // 支持多张截图：先放一段文字提示，再把每一张图作为 image_url 依次拼进 content
+            // （GLM-4V 原生支持 content 内多图；免费兜底 glm-4v-flash 也支持）。
+            let mut content = vec![serde_json::json!({"type": "text", "text": prompt.as_str()})];
+            for img in &images_b64 {
+                content.push(serde_json::json!({"type": "image_url", "image_url": {"url": img.as_str()}}));
+            }
             let mut payload = serde_json::json!({
                 "model": m,
                 "messages": [{
                     "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt.as_str()},
-                        {"type": "image_url", "image_url": {"url": image_b64.as_str()}}
-                    ]
+                    "content": content
                 }],
                 "max_tokens": 2048,
                 "temperature": 0.6
