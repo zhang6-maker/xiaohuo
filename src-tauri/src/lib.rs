@@ -116,11 +116,12 @@ pub fn run() {
             let dragging = app.state::<AppState>().dragging.clone();
             let box_open = app.state::<AppState>().box_open.clone();
 
-            // 前端每帧把宠物包围盒(窗口内逻辑坐标 [x,y,w,h])经 event 发过来
-            let rect = Arc::new(Mutex::new([250i32, 170i32, 300i32, 230i32]));
+            // 前端每帧把"需要可交互的区域"作为独立矩形列表(窗口内逻辑坐标 [x,y,w,h])经 event 发过来；
+            // 模态框时发 [[0,0,W,H]](整窗)，区域可交互时发 [宠物,草图,按钮,批次栏,结果框] 多个矩形。
+            let rect = Arc::new(Mutex::new(vec![[250i32, 170i32, 300i32, 230i32]]));
             let rect_listen = rect.clone();
             let _ = app_handle.listen("pet-rect", move |e| {
-                if let Ok(v) = serde_json::from_str::<[i32; 4]>(e.payload()) {
+                if let Ok(v) = serde_json::from_str::<Vec<[i32; 4]>>(e.payload()) {
                     if let Ok(mut g) = rect_listen.lock() {
                         *g = v;
                     }
@@ -172,7 +173,7 @@ pub fn run() {
 
                     // 悬停判定（全部在设备像素下做，与 lx/ly 同源）：
                     // 在宠物包围盒内 → 关穿透(可交互)；否则穿透(不挡桌面)
-                    let pr = *rect_poll.lock().unwrap_or_else(|e| e.into_inner());
+                    let rects = rect_poll.lock().unwrap_or_else(|e| e.into_inner()).clone();
                     // 窗口实际尺寸用 GetWindowRect 取（设备像素），不再写死 480/540，
                     // 这样全屏铺满或切回小窗时 inside 判定都正确（hwnd 取不到时退回 480×540 兜底）
                     let (win_w, win_h) = if wr_r > wr_l && wr_b > wr_t {
@@ -184,11 +185,16 @@ pub fn run() {
                         && lx <= win_w as i32
                         && ly >= 0
                         && ly <= win_h as i32;
-                    let over_pet = inside
-                        && lx >= (pr[0] as f64 * sf) as i32
-                        && lx <= ((pr[0] + pr[2]) as f64 * sf) as i32
-                        && ly >= (pr[1] as f64 * sf) as i32
-                        && ly <= ((pr[1] + pr[3]) as f64 * sf) as i32;
+                    // 多矩形命中：光标落在任一矩形内即视为"在可交互区"，矩形之间的空隙仍是穿透（桌面照常可用）。
+                    // 前端在模态框时发 [[0,0,W,H]](整窗)，在区域可交互时发 [宠物,草图,按钮,批次栏,结果框] 多个独立矩形。
+                    let mut over_pet = false;
+                    for r in &rects {
+                        if r.len() == 4 {
+                            let inx = lx >= (r[0] as f64 * sf) as i32 && lx <= ((r[0] + r[2]) as f64 * sf) as i32;
+                            let iny = ly >= (r[1] as f64 * sf) as i32 && ly <= ((r[1] + r[3]) as f64 * sf) as i32;
+                            if inside && inx && iny { over_pet = true; break; }
+                        }
+                    }
                     // 顶部按钮栏已隐藏（功能收进长按菜单），不再因按钮栏区域关闭穿透，
                     // 否则窗口顶部 95px 会一直挡住桌面点击。
                     let over_bar = false;

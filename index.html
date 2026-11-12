@@ -1331,9 +1331,10 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
 
   // 把宠物包围盒(窗口内逻辑坐标)发给 Rust（仅在位置变化时），驱动"悬停即交互"
   let lastRectKey = '';
-  let boxOpen = false;            // 任一弹框可见时为 true，emitPetRect 据此把矩形扩成全窗口
+  let boxOpen = false;            // 任一弹框/批次栏可见时为 true（仅用于诊断展示）
   const openBoxes = new Set();
-  let shotBarOpen = false;         // 多次截图批次栏可见时为 true：与弹框同效，强制窗口可交互，保证栏上「再加一张/提交/取消」点得到（不直接塞 BOX_IDS，避免被点外关闭误伤看屏框）
+  let shotBarOpen = false;         // 多次截图批次栏可见时为 true：其矩形并入 pet-rect 多矩形列表，区域可交互（不锁整窗）
+  let modalOpen = false;           // 真正"模态"框(ctxMenu/chat/mem/tips/paint/color/writeColor/outfit/screen)开着时为 true → 整窗可交互(保留点外关闭+焦点)；answerBox/shotBar 不在此列，只走区域可交互
   // ---------- 弹框单一清单：所有「可关闭浮层」只在这里登记一次 ----------
   // MutationObserver / captureClean / Esc 关闭 / 点外关闭 四处全部引用本数组，不再各抄一份。
   // 历史教训：memBox 曾漏进 observer 列表，导致单独开记录本时窗口仍是穿透态、× 点不到（2dac058）。
@@ -1359,23 +1360,20 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   // 截图(captureClean)会临时隐藏弹框，若此时让 observer 上报 false，窗口会瞬间进入穿透态；
   // 这期间强制保持"有框→可交互"，杜绝 false→true 的 IPC 抖动把窗口永久卡在穿透态。
   let suppressBoxSync = false;
+  // pet-rect 多矩形：前端把"需要可交互的区域"各自作为独立矩形发给 Rust，Rust 光标落在任一矩形内即关穿透；
+  // 矩形之间的空隙仍是穿透，桌面照常可用。模态框时发 [[0,0,W,H]](整窗)；否则发 [宠物,草图,按钮,批次栏,搜一搜结果框] 多个独立矩形。
   function emitPetRect() {
     if (!emitter) return;
-    if (boxOpen) {                // 弹框开着：扩成全窗口，让 Rust 关穿透，框上 ×/按钮才点得到
-      emitter('pet-rect', [0, 0, W, H]).catch(() => {});
-      return;
-    }
-    // 基础：宠物包围盒；再把所有草图矩形 + 清理/删除按钮并进来，使这些区域可交互（否则窗口穿透点不到）
-    let rx = Math.round(posX - 150), ry = Math.round(posY - 190), rw = 300, rh = 230;
-    const union = (x, y, w, h) => { const x2 = Math.max(rx + rw, x + w), y2 = Math.max(ry + rh, y + h); rx = Math.min(rx, x); ry = Math.min(ry, y); rw = x2 - rx; rh = y2 - ry; };
-    for (const art of artworkPool) { if (art.sketch) { const b = sketchRect(art); union(b[0], b[1], b[2], b[3]); } }
-    const cb = document.getElementById('sketchClearBtn'); if (cb && !cb.classList.contains('hidden')) { const b = cb.getBoundingClientRect(); if (b.width) union(b.left, b.top, b.width, b.height); }
-    const db = document.getElementById('sketchDelBtn'); if (db && !db.classList.contains('hidden')) { const b = db.getBoundingClientRect(); if (b.width) union(b.left, b.top, b.width, b.height); }
-    const sb = document.getElementById('shotBar'); if (sb && !sb.classList.contains('hidden')) { const b = sb.getBoundingClientRect(); if (b.width) union(b.left, b.top, b.width, b.height); }  // 多次截图批次栏也要可交互
-    const key = rx + ',' + ry + ',' + rw + ',' + rh;
+    const W = window.innerWidth, H = window.innerHeight;
+    if (modalOpen) { emitter('pet-rect', [[0, 0, W, H]]).catch(() => {}); lastRectKey = 'FULL'; return; }
+    const rects = [[Math.round(posX - 150), Math.round(posY - 190), 300, 230]];   // 宠物基础包围盒
+    for (const art of artworkPool) { if (art.sketch) { const b = sketchRect(art); rects.push(b); } }
+    const addRect = id => { const el = document.getElementById(id); if (el && !el.classList.contains('hidden')) { const b = el.getBoundingClientRect(); if (b.width) rects.push([Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height)]); } };
+    addRect('sketchClearBtn'); addRect('sketchDelBtn'); addRect('shotBar'); addRect('answerBox');  // 批次栏 + 搜一搜结果框都只区域可交互，不锁整窗
+    const key = JSON.stringify(rects);
     if (key === lastRectKey) return;
     lastRectKey = key;
-    emitter('pet-rect', [rx, ry, rw, rh]).catch(() => {});
+    emitter('pet-rect', rects).catch(() => {});
   }
   // 弹框穿透修复：侦听弹框的显示/隐藏，任一可见即让 Rust 关穿透（否则框上 ×/按钮点不到）
     function syncBoxOpen() {
@@ -1383,11 +1381,11 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     // 直接、可靠地通知 Rust 是否有框开着：框开着→强制可交互(×才点得到)，关掉→恢复穿透。
     // 不再只靠 pet-rect 整窗广播（那条链路在全屏/看屏时序下会竞态，导致"框开着窗口却穿透、×点不到"）。
     // 截图隐藏弹框期间(suppressBoxSync)强制上报 true，避免窗口掉进穿透态。
-    const reported = suppressBoxSync ? true : boxOpen;
+    modalOpen = [...openBoxes].some(id => id !== 'answerBox');
+    const reported = suppressBoxSync ? true : modalOpen;
     if (isTauri) invoke('set_box_open', { open: reported }).catch(() => {});
     if (!emitter) return;
-    if (boxOpen) emitter('pet-rect', [0, 0, W, H]).catch(() => {});
-    else { lastRectKey = ''; emitPetRect(); }
+    lastRectKey = ''; emitPetRect();
   }
   BOX_IDS.forEach(id => {
     const el = document.getElementById(id);
@@ -1403,7 +1401,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   // 窗口也不会永久卡在穿透态、导致框里的 × / 📝记忆 / 发送 全部点不到。
   // Rust 侧只在 false→true 上升沿 set_focus，重复上报不会反复抢焦点。
   setInterval(() => {
-      if (isTauri && (openBoxes.size > 0 || shotBarOpen)) invoke('set_box_open', { open: true }).catch(() => {});
+      // 仅对模态框做自愈(强制整窗可交互)，避免卡在穿透态；区域可交互的 answerBox/shotBar 不在此列。
+      if (isTauri && modalOpen) invoke('set_box_open', { open: true }).catch(() => {});
     }, 400);
 
   // ---------- 构建火柴人 ----------
@@ -4727,6 +4726,33 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     text = text.replace(/\$([^$\n]+?)\$/g, (mm, b) => '$' + conv(b) + '$');
     return text;
   }
+  // 全科解题提示词：先识别题型（数学/物理 / 语文 / 英语 / 文综 / 代码 / 其他），再按对应格式作答。
+  // 数理化沿用教科书 LaTeX 排版；语文/英语/文科阅读用自然段落+分点（词义/修辞/主旨/长难句），不强制公式。
+  function searchPrompt(question) {
+    return [
+      '你是一个全科学习辅导助手。用户截了一张屏幕区域（可能是数学/物理题、语文或英语阅读理解、文综/理综材料题、代码报错，或其他内容），请先识别题型，再用中文像老师讲解一样给出清晰解答。',
+      (question && question.trim()) ? ('用户附带的问题是：' + question.trim()) : '若图中没有明显提问，请主动把截到的题目/内容完整地解一遍或讲解清楚。',
+      '',
+      '【通用格式】',
+      '第一行写「解：」或「分析：」单独成行；多道小问用 (1)(2)(3) 分节，每节之间空一行；条理清晰、分点作答；结尾用「答：」或「总结：」给结论（如适用）。用中文。',
+      '',
+      '【若是数学/物理题】请直接输出 LaTeX 源码，按教科书样式排版（分数会堆叠成上下结构、多步等式等号逐行对齐）：',
+      '1. 所有分数写 \\frac{分子}{分母}，禁止手画横线 ─ 或纯文本 1/2。',
+      '2. 独立成行的等式放进 $$ ... $$ 居中；多步推导用 \\begin{aligned} a &= b \\\\ &= c \\end{aligned} 实现等号逐行对齐。',
+      '3. 上下标 v_0^2、三角 \\cos\\theta、希腊 \\theta\\pi、根号 \\sqrt{x}、反三角 \\arccos。',
+      '4. 行内短公式用 $ 包裹，如 动能 $E_k=\\frac12mv^2$。',
+      '5. 情况分析用 ① ② ③。',
+      '',
+      '【若是语文/英语/文科阅读理解】不要使用 LaTeX 公式语法，用自然段落与分点作答：',
+      '- 语文：先概括段落/文章大意，再逐题分析——字词含义（结合语境）、修辞手法（比喻/拟人/排比等及其表达作用）、句子/段落作用、作者情感态度、文章主旨；作答要引用原文依据。',
+      '- 英语：先概括文章主旨；逐题点明题型（细节理解/主旨大意/推理判断/词义猜测/观点态度），给出答案并解释；点拨长难句结构与关键词汇（保留英文原词）。',
+      '- 文综（史地政）：结合材料分点作答，术语准确，引用材料关键信息。',
+      '',
+      '【若是代码报错/其他】指出问题原因并给出修复方案，保留必要的代码。',
+      '',
+      '请先判断这张图属于哪一类，再按对应格式作答；若兼有多种内容，按主次分别说明。'
+    ].join('\n');
+  }
   function renderRich(text) {
     if (text == null) return '';
     text = String(text).replace(/^```[a-zA-Z0-9]*\n([\s\S]*?)\n?```$/m, '$1');
@@ -4793,36 +4819,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     // 表现就是「返回空值 / 内容缺一截」。先转义再换行，保证原文完整显示。
     const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     let prompt;
-    if (act === 'search') {
-      prompt = [
-        '你正在写一份数学/物理题的「教科书式参考答案」。你的回答会被一个 LaTeX 公式排版引擎渲染成教科书样式（分数会堆叠成上下结构、多步等式会等号逐行对齐）。',
-        '因此请直接输出 LaTeX 源码，严格遵守以下铁律：',
-        '【铁律】',
-        '1. 禁止用手画分数横线（如 ─）或纯文本斜杠（如 1/2）表示分数；所有分数一律写成 \\frac{分子}{分母}。',
-        '2. 第一行写「解：」并单独成行；多道小题用 (1)(2)(3) 分节，每节之间空一行。',
-        '3. 每一个等式都放进 $$ ... $$ 单独成行、居中显示；同一小题的多步推导放进一个 aligned 环境，用 & 放在等号之前、用 \\\\ 换行，实现等号逐行对齐：',
-        '   $$ \\begin{aligned} \\frac{1}{2} m v_0^2 &= \\frac{1}{2} m v^2 + mgR(1-\\cos\\theta) \\\\ v^2 &= v_0^2 - 2gR(1-\\cos\\theta) \\end{aligned} $$',
-        '4. 公式写法：分数 \\frac{a}{b}；下标 v_0、上标 v^2；三角函数 \\cos\\theta、\\sin x；希腊字母 \\theta、\\pi；根号 \\sqrt{5gR}；点乘 \\cdot；小于等于 \\le、大于等于 \\ge；反三角 \\arccos、\\arcsin。',
-        '5. 行内简短公式用单个 $ 包裹，如 动能 $E_k=\\frac{1}{2}mv^2$；独立成行的等式用 $$ 包裹。',
-        '6. 情况分析用 ① ② ③ 编号；最后以「答：」单独成行给出结论（行内公式用 $ 包裹）。',
-        '',
-        '【参考范例（请模仿这种排版，不要改动格式）】',
-        '解：',
-        '(1) 由机械能守恒：',
-        '$$ \\begin{aligned} \\frac{1}{2} m v_0^2 &= \\frac{1}{2} m v^2 + mgR(1-\\cos\\theta) \\end{aligned} $$',
-        '整理得 $v^2 = v_0^2 - 2gR(1-\\cos\\theta)$ ①。由牛顿第二定律（指向圆心为正）：',
-        '$$ N - mg\\cos\\theta = \\frac{m v^2}{R} \\quad \\text{②} $$',
-        '将①代入②得 $N(\\theta)=\\frac{m v_0^2}{R}-2mg+3mg\\cos\\theta$。',
-        '',
-        '(2) 小球恰能通过最高点的条件为 $N(\\pi)=0$：',
-        '$$ \\frac{m v_0^2}{R} - 5mg = 0 \\quad\\Rightarrow\\quad v_0 = \\sqrt{5gR} $$',
-        '答：$v_0$ 的最小值为 $\\sqrt{5gR}$。',
-        '',
-        '请严格按上述格式、用中文、像试卷答案一样清晰作答。若是代码报错题，请指出原因并给出修复方案。'
-      ].join('\n');
-    } else if (q) {
-      prompt = '这是用户截下的屏幕区域。用户对着这张图问你一个问题，请结合图片内容回答。\n用户的问题：' + q
-        + '\n请用中文、条理清晰地回答，必要时给出具体操作步骤。若是在解答数学/物理题目，请按教科书/试卷格式作答：第一行「解：」单独成行；多道小题用 (1)(2)(3) 分节；每一个等式放进 $$ ... $$ 单独成行居中，多步推导用 \\begin{aligned} a &= b \\\\ &= c \\end{aligned} 实现等号对齐；所有分数用 \\frac{分子}{分母}（不要用手画横线 ─ 或纯文本 1/2）；上下标用 _ 和 ^（如 v_0^2），三角函数 \\cos\\theta、希腊字母 \\theta、根号 \\sqrt{x}；最后以「答：」单独成行给出结论，行内公式用 $ 包裹。';
+    if (act === 'search' || q) {
+      prompt = searchPrompt(q);
     } else {
       prompt = '请看这张屏幕截图，简要描述你看到的内容：用户大概在做什么、界面上有哪些关键信息（文字、报错、数据、窗口标题等）。用中文简要说明。';
     }
@@ -5144,10 +5142,12 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   setInterval(() => {
     if (diagHud.style.display === 'none') return;
     const [lx, ly, inside, overPet, wantIgnore, sf, boxOpenRust] = lastDbg;
+    const mode = modalOpen ? '整窗可交互(模态框)' : (boxOpen ? '区域可交互(只解锁UI矩形)' : '穿透(桌面可用)');
     diagHud.textContent =
       '── 诊断 ──\n' +
-      '前端 boxOpen : ' + boxOpen + '\n' +
+      '前端 boxOpen : ' + boxOpen + (modalOpen ? '(模态)' : '(区域)') + '\n' +
       'Rust box_open: ' + boxOpenRust + '\n' +
+      '交互模式    : ' + mode + '\n' +
       'Rust 穿透态  : ' + (wantIgnore ? '穿透(点不到)' : '可交互(可点)') + '\n' +
       '鼠标 in窗口  : ' + inside + '  over宠物:' + overPet + '\n' +
       '鼠标 rel    : ' + lx + ',' + ly + '  dpr:' + (sf / 100) + '\n' +
