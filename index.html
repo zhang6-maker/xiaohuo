@@ -3227,15 +3227,18 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     for (const it of items) {
       if (it.type === 'fn') {
         // tan/cot/csc/sec 在渐近线附近会返回极大值（有限但天文数字），
-        // 会把 y 轴范围撑到 ±10^15，导致后续 y 轴刻度循环爆炸（卡死）。
-        // 先把这些函数的采样 y 限制在 ±20，防卡死。
+        // 若直接纳入 y 范围会把坐标轴撑爆、卡死，还会把曲线压成一条平线（看不出陡峭特征）。
+        // 改用“标准显示窗口” ASYM_WIN：只统计窗口内的有限 y 来定 y 范围，
+        // 既突出中心区“穿过原点、逼近渐近线”的特征，又不被极大值撑爆。
         const hasAsymptote = /tan|cot|csc|sec/.test(it.expr);
+        const ASYM_WIN = 4.5;
         const N = 240;
         for (let k = 0; k <= N; k++) {
           const x = xmin + (xmax - xmin) * k / N;
-          let y = it.fn(x);
-          if (hasAsymptote && isFinite(y)) y = Math.max(-20, Math.min(20, y));
-          if (isFinite(y)) { hasY = true; if (y < ymin) ymin = y; if (y > ymax) ymax = y; }
+          const y = it.fn(x);
+          if (!isFinite(y)) continue;
+          if (hasAsymptote && Math.abs(y) > ASYM_WIN) continue;   // 超出窗口的值不撑 y 范围
+          hasY = true; if (y < ymin) ymin = y; if (y > ymax) ymax = y;
         }
       }
       else if (it.type === 'vector') { hasY = true; ymin = Math.min(ymin, 0, it.y); ymax = Math.max(ymax, 0, it.y); xmin = Math.min(xmin, 0, it.x); xmax = Math.max(xmax, 0, it.x); }
@@ -3309,10 +3312,15 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     // 定义域
     const dom = parseDomain(raw);
     if (dom) { spec.xmin = dom[0]; spec.xmax = dom[1]; }
-    // 三角函数一律用 π 刻度（有定义域就用给定定义域，否则默认 ±2π）
+    // 三角函数一律用 π 刻度。无定义域时：tan/cot/sec/csc 只取一个对称窗口 [-π, π]
+    // （正好覆盖两个完整周期、含原点与 ±π/2 渐近线，比 ±2π 更标准易读）；sin/cos 取 ±2π。
     if (spec.items.some(it => it.type === 'fn' && /(sin|cos|tan)/.test(it.expr))) {
       spec.piTicks = true;
-      if (!dom) { spec.xmin = -2 * Math.PI; spec.xmax = 2 * Math.PI; }
+      if (!dom) {
+        const onlyAsym = !spec.items.some(it => it.type === 'fn' && /(sin|cos)/.test(it.expr));
+        spec.xmin = onlyAsym ? -Math.PI : -2 * Math.PI;
+        spec.xmax = onlyAsym ? Math.PI : 2 * Math.PI;
+      }
     }
     // 自动范围
     const fr = _autoFrame(spec.items, dom);
@@ -3321,7 +3329,11 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     if (spec.ymin == null) spec.ymin = fr.ymin;
     if (spec.ymax == null) spec.ymax = fr.ymax;
     if (!spec.title) {
-      if (spec.items.length === 1 && spec.items[0].type === 'fn') spec.title = 'y = ' + spec.items[0].expr;
+      if (spec.items.length === 1 && spec.items[0].type === 'fn') {
+        let tt = 'y = ' + spec.items[0].expr;
+        if (/tan|cot|csc|sec/.test(spec.items[0].expr)) tt += '　周期 π · 红虚线为渐近线';
+        spec.title = tt;
+      }
       else if (spec.quadrants && spec.items.length === 0) spec.title = '直角坐标系';
     }
     return spec;
@@ -3494,7 +3506,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
           ctx.setLineDash(it.dashed ? [6, 4] : []); ctx.beginPath();
           let started = false; const upTo = Math.floor(cP * N);
           const hasAsymptote = /tan|cot|csc|sec/.test(it.expr);
-          const yBreak = (ymax - ymin) * 2;   // 渐近线附近断线阈值：超出屏幕范围约 2 倍就断开
+          const yBreak = Math.max(ymax, -ymin) * 1.15;   // 渐近线附近断线：超出屏幕上/下界约 15% 即断开，曲线在逼近渐近线处自然断开（不冲出画布）
           for (let k = 0; k <= upTo; k++) { const x = xmin + (xmax - xmin) * k / N; let y = it.fn(x);
             // tan/cot/csc/sec 在渐近线附近值极大，超出屏幕范围就把画笔断开，避免一条线冲出画布
             if (hasAsymptote && Math.abs(y) > yBreak) { started = false; continue; }
