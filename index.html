@@ -4655,6 +4655,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const lieFrac = Math.min(1, lieAngle / TOPPLE_MAX);
     pose.headDrop *= (1 - lieFrac);
     pose.crouch *= (1 - lieFrac);
+    // 躺平（lieFrac 越大越平）时按 (1-lieFrac) 压低举臂幅度——任何状态（醒伸/wave/sing/paint）只要还躺着手就放下来，站直才正常举，彻底杜绝"躺着举手"
+    pose.waveArm *= (1 - lieFrac);
 
     // 刚睡醒的伸展（约 1200ms：抬头 + 举臂），让"固定睡眠→天亮醒来"有过渡。
     // 关键：起身（lieAngle 回落到直立）约需 1–2 秒，若一醒来就举臂会与"还躺着"重叠，
