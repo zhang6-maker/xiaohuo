@@ -3142,7 +3142,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     if (!s) return '';
     s = s.toLowerCase()
       .replace(/π/g, 'pi').replace(/÷/g, '/').replace(/×/g, '*')
-      .replace(/（/g, '(').replace(/）/g, ')').replace(/，/g, ',');
+      .replace(/（/g, '(').replace(/）/g, ')').replace(/，/g, ',')
+      .replace(/\[/g, '(').replace(/\]/g, ')');   // 方括号也当分组括号：用户常用 cos[sin(1-x)] 这类写法
 
     // 关键修复：sin x / cos x / tan x / ln x / sqrt x 这类"函数名 + 空格 + 单个变量"
     // 在数学上等价于 sin(x) / cos(x) / ...，先去空格会把它们粘成 sinx 导致解析失败。
@@ -3305,6 +3306,9 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     work = work.replace(/(坐标)?(轴)?(红|橙|黄|绿|青|蓝|紫|粉红|粉色|粉|黑|白|灰)(色)?(坐标)?(轴)?/g, '');
     work = work.replace(/#[0-9a-fA-F]{6}/g, '').replace(/#[0-9a-fA-F]{3}/g, '');
     work = work.replace(/\b(red|orange|yellow|green|cyan|blue|purple|pink|black|white|gray|grey)\b/gi, '');
+    // 方括号归一为圆括号：用户常用 [ ] 当函数分组括号（如 cos[sin(1-x)]）。
+    // 仅作用于数学表达式(work)，不影响 parseDomain 用原始 raw 识别「在[0,π]」这类方括号定义域。
+    work = work.replace(/\[/g, '(').replace(/\]/g, ')');
     const spec = { title: '', xmin: null, xmax: null, ymin: null, ymax: null, grid: false, quadrants: false, piTicks: false, items: [], axisColor: axisColor || null };
     let hasContent = false;
 
