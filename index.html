@@ -867,14 +867,9 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     if (x < posX - 150 || x > posX + 150 || y < posY - 190 || y > posY + 230) return;
     disturbSleep();                                       // 睡着/刚被吵醒时戳他 = 连续吵醒，连击计数
     const now = performance.now();
-    if (now - lastPoke > 1500) clickCount = 0;
-    clickCount++; lastPoke = now; mood = clamp(mood - 25, -100, 100);
     pokeFlash = now;                    // 标记刚被戳：draw 里闪一下 + 状态栏提示，便于确认点击真传进来了
-    // 连戳 5 下 或 心情跌到 -60（≈3 下）直接缩角落含泪；不再要求"5 下快戳"才躲
-    if (clickCount >= 5 || mood <= -60) {
-      clickCount = 0; mood = Math.min(mood, -60);
-      nextPeekAt = now + rand(3000, 5000); setState('hide');
-    }
+    // 戳一下只做"被欺负"的即时反馈（变脸/闪一下），不再降心情、不再缩角落、也不再触发逃离——
+    // 避免"点一下宠物就消失"。心情/委屈/躲开这套只在未来有"故意欺负"入口时再接上。
   }
   // 从睡梦中把小火吵醒：睡着或刚被吵醒的宽限期内，每次打扰 +1 连击；连着 ≥2 次 → 暴怒（身体变红 + 怒容几秒）
   function makeAngry(ms) { angryUntil = Math.max(angryUntil, performance.now() + ms); }
@@ -1133,7 +1128,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     else if (act === 'mem') openMemories();
     else if (act === 'shotmem') openShotMem();
     else if (act === 'tips') showTips();
-    else if (act === 'about') alert('小火 · 桌面火柴人\n透明 Tauri 窗口：骨骼 / 状态机 / 心情 / 表情 / 嘴型。\n长按我（或右键）唤出菜单：搜一搜 / 看看屏幕 / 🎨 换颜色 / 提示 / 💬聊天 / 关于。在「💬聊天」框里打字：画只猫 / 唱首歌 / 看会儿书 / 随便聊，小火都会回应（回复时嘴会动）。\n右键「📐 画草图」或聊天里说「画 y=sin(x) / 画象限 / 向量(3,4)」→ 小火画干净的数学/物理坐标系草图（离线就能画）。\n👆 单击 = 戳我（会恼会躲，多戳缩角落）；🤚 在头顶按住鼠标来回搓 = 揉头哄我（被戳委屈后搓头也能哄好）；✊ 抓住身体或腿按住拖动 = 把整个窗口拖到屏幕任意位置。\n右键「🎨 换颜色」可改身体色并记住（选纯黑在黑色界面就藏起来了）；「👕 换装」可让过节自动穿衣服（万圣/双十一/圣诞/元旦/春节），也能手动预览，衣服只是叠加层、不影响任何动作；搜一搜、看看屏幕会真截屏后拖框选，交给大模型（智谱 GLM-4V）分析。');
+    else if (act === 'about') alert('小火 · 桌面火柴人\n透明 Tauri 窗口：骨骼 / 状态机 / 心情 / 表情 / 嘴型。\n长按我（或右键）唤出菜单：搜一搜 / 看看屏幕 / 🎨 换颜色 / 提示 / 💬聊天 / 关于。在「💬聊天」框里打字：画只猫 / 唱首歌 / 看会儿书 / 随便聊，小火都会回应（回复时嘴会动）。\n右键「📐 画草图」或聊天里说「画 y=sin(x) / 画象限 / 向量(3,4)」→ 小火画干净的数学/物理坐标系草图（离线就能画）。\n👆 单击 = 戳我（被戳会吓一跳，但不再缩角落消失）；🤚 在头顶按住鼠标来回搓 = 揉头哄我；✊ 抓住身体或腿按住拖动 = 把小火拖到屏幕任意位置（全屏拖宠物本体；小窗拖整窗）。\n右键「🎨 换颜色」可改身体色并记住（选纯黑在黑色界面就藏起来了）；「👕 换装」可让过节自动穿衣服（万圣/双十一/圣诞/元旦/春节），也能手动预览，衣服只是叠加层、不影响任何动作；搜一搜、看看屏幕会真截屏后拖框选，交给大模型（智谱 GLM-4V）分析。');
     else if (act === 'fullscreen') toggleFullscreen();
     else if (act === 'quit') { if (isTauri && appWindow) appWindow.close(); else window.close(); }
     document.getElementById('ctxMenu').classList.add('hidden');
