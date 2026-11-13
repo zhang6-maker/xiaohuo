@@ -3223,7 +3223,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     let xmin = dom ? dom[0] : null, xmax = dom ? dom[1] : null;
     let ymin = Infinity, ymax = -Infinity, hasY = false;
     const trig = items.some(it => it.type === 'fn' && /(sin|cos|tan)/.test(it.expr));
-    if (xmin == null) { xmin = trig ? -2 * Math.PI : -10; xmax = trig ? 2 * Math.PI : 10; }
+    if (xmin == null) { xmin = trig ? -Math.PI : -10; xmax = trig ? Math.PI : 10; }
     for (const it of items) {
       if (it.type === 'fn') {
         // tan/cot/csc/sec 在渐近线附近会返回极大值（有限但天文数字），
@@ -3312,15 +3312,11 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     // 定义域
     const dom = parseDomain(raw);
     if (dom) { spec.xmin = dom[0]; spec.xmax = dom[1]; }
-    // 三角函数一律用 π 刻度。无定义域时：tan/cot/sec/csc 只取一个对称窗口 [-π, π]
-    // （正好覆盖两个完整周期、含原点与 ±π/2 渐近线，比 ±2π 更标准易读）；sin/cos 取 ±2π。
+    // 三角函数一律用 π 刻度；无定义域时默认取对称窗口 [-π, π]（正好一个完整周期，
+    // 含原点与关键零点/极值，相位平移一目了然；比 ±2π 更聚焦、更适合当教科书式草图）。
     if (spec.items.some(it => it.type === 'fn' && /(sin|cos|tan)/.test(it.expr))) {
       spec.piTicks = true;
-      if (!dom) {
-        const onlyAsym = !spec.items.some(it => it.type === 'fn' && /(sin|cos)/.test(it.expr));
-        spec.xmin = onlyAsym ? -Math.PI : -2 * Math.PI;
-        spec.xmax = onlyAsym ? Math.PI : 2 * Math.PI;
-      }
+      if (!dom) { spec.xmin = -Math.PI; spec.xmax = Math.PI; }
     }
     // 自动范围
     const fr = _autoFrame(spec.items, dom);
@@ -3513,6 +3509,39 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
             if (!isFinite(y)) { started = false; continue; }
             const X = sx(x), Y = sy(y); if (!started) { ctx.moveTo(X, Y); started = true; } else ctx.lineTo(X, Y); }
           ctx.stroke(); ctx.setLineDash([]); ctx.lineWidth = art.lw || 2;
+          // —— 零点 / 峰值标注（sin/cos 类，画好后标关键特征，便于读图）——
+          if (cP >= 1 && /(sin|cos)/.test(it.expr)) {
+            const fmtNum = (v) => {
+              const r = v / (Math.PI / 2);
+              if (Math.abs(r - Math.round(r)) < 1e-3) { const k = Math.round(r); if (k === 0) return '0'; if (k === 1) return 'π/2'; if (k === -1) return '-π/2'; return (k % 2 === 0) ? (k / 2 + 'π') : (k + 'π/2'); }
+              const d = Math.round(v * 100) / 100; return Math.abs(d - Math.round(d)) < 1e-6 ? String(Math.round(d)) : d.toFixed(2);
+            };
+            const M = 400, samp = [];
+            for (let k = 0; k <= M; k++) { const x = xmin + (xmax - xmin) * k / M; const y = it.fn(x); samp.push([x, y]); }
+            // 零点：采样点恰为零（含窗口边缘 ±π）或相邻异号 → 线性插值求交点 x
+            const zeros = [];
+            for (let k = 0; k < samp.length; k++) {
+              const x = samp[k][0], y = samp[k][1];
+              if (!isFinite(y)) continue;
+              if (Math.abs(y) < 1e-7) { zeros.push(x); continue; }
+              if (k > 0) { const a = samp[k-1]; if (isFinite(a[1]) && (a[1] > 0) !== (y > 0)) { const t = a[1] / (a[1] - y); zeros.push(a[0] + t * (x - a[0])); } }
+            }
+            zeros.sort((u, v) => u - v);
+            const zf = zeros.filter((z, i) => i === 0 || Math.abs(z - zeros[i - 1]) > 1e-3);
+            ctx.fillStyle = '#ff6b6b';
+            for (const zx of zf) {
+              if (zx <= xmin + 1e-3 || zx >= xmax - 1e-3) continue;   // 跳过恰好落在窗口边缘的零点（如 sin x 的 ±π）
+              const X = sx(zx), Y = sy(0);
+              ctx.beginPath(); ctx.arc(X, Y, 4, 0, 2 * Math.PI); ctx.fill();
+              if (Math.abs(zx) >= 0.04) ctx.fillText(fmtNum(zx), X, Y + 14);   // x≈0 只画点不写数字，避免与原点 O 重叠
+            }
+            // 峰值（极值）：斜率变号处（峰与谷都标）
+            const peaks = [];
+            for (let k = 1; k < samp.length - 1; k++) { const ym = samp[k-1][1], y0 = samp[k][1], yp = samp[k+1][1]; if (isFinite(ym) && isFinite(y0) && isFinite(yp) && (y0 - ym) * (yp - y0) < 0) peaks.push([samp[k][0], y0]); }
+            ctx.fillStyle = '#ffd23d';
+            for (const pk of peaks) { const X = sx(pk[0]), Y = sy(pk[1]); ctx.beginPath(); ctx.arc(X, Y, 3.5, 0, 2 * Math.PI); ctx.fill(); ctx.fillText(fmtNum(pk[0]), X, Y - 9); }
+            ctx.fillStyle = '#e8eaed';
+          }
         } else if (it.type === 'vector') {
           const aX = (it.ax != null && isFinite(it.ax)) ? it.ax : 0;
           const aY = (it.ay != null && isFinite(it.ay)) ? it.ay : 0;
