@@ -3122,9 +3122,25 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   // ---- 安全的数学表达式求值（递归下降，只认白名单符号，绝不 eval）----
   function _normExpr(s) {
     if (!s) return '';
-    s = s.toLowerCase().replace(/\s+/g, '')
+    s = s.toLowerCase()
       .replace(/π/g, 'pi').replace(/÷/g, '/').replace(/×/g, '*')
       .replace(/（/g, '(').replace(/）/g, ')').replace(/，/g, ',');
+
+    // 关键修复：sin x / cos x / tan x / ln x / sqrt x 这类"函数名 + 空格 + 单个变量"
+    // 在数学上等价于 sin(x) / cos(x) / ...，先去空格会把它们粘成 sinx 导致解析失败。
+    // 这里在去空格之前先把它们补成带括号的形式。
+    s = s.replace(
+      /\b(sin|cos|tan|cot|sec|csc|asin|acos|atan|exp|log|ln|sqrt|abs|sign|floor|ceil|round)\s+([a-zA-Z])/g,
+      '$1($2)'
+    );
+
+    // 再处理"函数名直接粘 x"的写法（sinx / cosx / tanx / asinx），避免用户完全不写空格时也失败。
+    // 用 \b 收尾，不会误伤 sink / cosy 这类变量名。
+    s = s.replace(/\b(sin|cos|tan|cot|sec|csc|asin|acos|atan|exp|log|ln|sqrt|abs|sign|floor|ceil|round)(x)\b/g, '$1($2)');
+
+    // 到这里才去空格
+    s = s.replace(/\s+/g, '');
+
     // 隐式乘法：数字 / 右括号 与 字母 / 左括号 之间补 *
     s = s.replace(/(\d)([a-z(])/g, '$1*$2');
     s = s.replace(/(\))([a-z\d])/g, '$1*$2');
@@ -3209,7 +3225,19 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const trig = items.some(it => it.type === 'fn' && /(sin|cos|tan)/.test(it.expr));
     if (xmin == null) { xmin = trig ? -2 * Math.PI : -10; xmax = trig ? 2 * Math.PI : 10; }
     for (const it of items) {
-      if (it.type === 'fn') { const N = 240; for (let k = 0; k <= N; k++) { const x = xmin + (xmax - xmin) * k / N; const y = it.fn(x); if (isFinite(y)) { hasY = true; if (y < ymin) ymin = y; if (y > ymax) ymax = y; } } }
+      if (it.type === 'fn') {
+        // tan/cot/csc/sec 在渐近线附近会返回极大值（有限但天文数字），
+        // 会把 y 轴范围撑到 ±10^15，导致后续 y 轴刻度循环爆炸（卡死）。
+        // 先把这些函数的采样 y 限制在 ±20，防卡死。
+        const hasAsymptote = /tan|cot|csc|sec/.test(it.expr);
+        const N = 240;
+        for (let k = 0; k <= N; k++) {
+          const x = xmin + (xmax - xmin) * k / N;
+          let y = it.fn(x);
+          if (hasAsymptote && isFinite(y)) y = Math.max(-20, Math.min(20, y));
+          if (isFinite(y)) { hasY = true; if (y < ymin) ymin = y; if (y > ymax) ymax = y; }
+        }
+      }
       else if (it.type === 'vector') { hasY = true; ymin = Math.min(ymin, 0, it.y); ymax = Math.max(ymax, 0, it.y); xmin = Math.min(xmin, 0, it.x); xmax = Math.max(xmax, 0, it.x); }
       else if (it.type === 'point') { hasY = true; ymin = Math.min(ymin, it.y); ymax = Math.max(ymax, it.y); xmin = Math.min(xmin, it.x); xmax = Math.max(xmax, it.x); }
       else if (it.type === 'circle') { hasY = true; ymin = Math.min(ymin, it.cy - it.r); ymax = Math.max(ymax, it.cy + it.r); xmin = Math.min(xmin, it.cx - it.r); xmax = Math.max(xmax, it.cx + it.r); }
@@ -3407,10 +3435,11 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     if (frameP > 0 && sp.axes !== false) {
       // 网格
       if (sp.grid) {
-        const step = sp.piTicks ? Math.PI / 2 : _niceStep((xmax - xmin) / 10);
+        const xStep = sp.piTicks ? Math.PI / 2 : _niceStep((xmax - xmin) / 10);
+        const yStep = _niceStep((ymax - ymin) / 10);     // y 轴刻度/网格用 y 自己的 nice step（tan 的 y 不是 π 倍数）
         ctx.save(); ctx.globalAlpha = fade * 0.18; ctx.strokeStyle = '#9aa0a6'; ctx.lineWidth = 1;
-        for (let x = Math.ceil(xmin / step) * step; x <= xmax; x += step) { const X = sx(x); ctx.beginPath(); ctx.moveTo(X, sy(ymin)); ctx.lineTo(X, sy(ymax)); ctx.stroke(); }
-        for (let y = Math.ceil(ymin / step) * step; y <= ymax; y += step) { const Y = sy(y); ctx.beginPath(); ctx.moveTo(sx(xmin), Y); ctx.lineTo(sx(xmax), Y); ctx.stroke(); }
+        for (let x = Math.ceil(xmin / xStep) * xStep; x <= xmax; x += xStep) { const X = sx(x); ctx.beginPath(); ctx.moveTo(X, sy(ymin)); ctx.lineTo(X, sy(ymax)); ctx.stroke(); }
+        for (let y = Math.ceil(ymin / yStep) * yStep; y <= ymax; y += yStep) { const Y = sy(y); ctx.beginPath(); ctx.moveTo(sx(xmin), Y); ctx.lineTo(sx(xmax), Y); ctx.stroke(); }
         ctx.restore();
       }
       const OX = sx(0), OY = sy(0);
@@ -3419,10 +3448,13 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       _drawArrow(ctx, sx(xmin), OY, sx(xmax), OY);
       _drawArrow(ctx, OX, sy(ymin), OX, sy(ymax));
       // 刻度
-      const step = sp.piTicks ? Math.PI / 2 : _niceStep((xmax - xmin) / 10);
+      const xStep = sp.piTicks ? Math.PI / 2 : _niceStep((xmax - xmin) / 10);
+      const yStep = _niceStep((ymax - ymin) / 10);     // y 轴始终用 nice step（不与 x 轴 step 复用，避免 tan 撑爆）
       const lab = sp.piTicks ? _fmtPi : _fmt;
-      for (let x = Math.ceil(xmin / step) * step; x <= xmax; x += step) { if (Math.abs(x) < 1e-9) continue; const X = sx(x); ctx.beginPath(); ctx.moveTo(X, OY - 4); ctx.lineTo(X, OY + 4); ctx.stroke(); if (frameP >= 1) ctx.fillText(lab(x), X, OY + 14); }
-      for (let y = Math.ceil(ymin / step) * step; y <= ymax; y += step) { if (Math.abs(y) < 1e-9) continue; const Y = sy(y); ctx.beginPath(); ctx.moveTo(OX - 4, Y); ctx.lineTo(OX + 4, Y); ctx.stroke(); if (frameP >= 1) ctx.fillText(lab(y), OX - 14, Y); }
+      // x 轴：π 刻度 / nice step
+      for (let x = Math.ceil(xmin / xStep) * xStep; x <= xmax; x += xStep) { if (Math.abs(x) < 1e-9) continue; const X = sx(x); ctx.beginPath(); ctx.moveTo(X, OY - 4); ctx.lineTo(X, OY + 4); ctx.stroke(); if (frameP >= 1) ctx.fillText(lab(x), X, OY + 14); }
+      // y 轴：始终用 nice step（y 轴不用 π 刻度，tan 的 y 本来就不是 π 的倍数）
+      for (let y = Math.ceil(ymin / yStep) * yStep; y <= ymax; y += yStep) { if (Math.abs(y) < 1e-9) continue; const Y = sy(y); ctx.beginPath(); ctx.moveTo(OX - 4, Y); ctx.lineTo(OX + 4, Y); ctx.stroke(); if (frameP >= 1) ctx.fillText(_fmt(y), OX - 14, Y); }
       // 原点 / 轴标签
       if (frameP >= 1) { ctx.fillText('O', OX - 10, OY + 12); ctx.fillText('x', sx(xmax) - 8, OY + 14); ctx.fillText('y', OX - 14, sy(ymin) + 12); }
       // 象限标注
@@ -3442,7 +3474,13 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         if (it.type === 'fn') {
           const N = 260; ctx.strokeStyle = it.color || '#6ab0ff'; ctx.lineWidth = 2.5; ctx.beginPath();
           let started = false; const upTo = Math.floor(cP * N);
-          for (let k = 0; k <= upTo; k++) { const x = xmin + (xmax - xmin) * k / N; const y = it.fn(x); if (!isFinite(y)) { started = false; continue; } const X = sx(x), Y = sy(y); if (!started) { ctx.moveTo(X, Y); started = true; } else ctx.lineTo(X, Y); }
+          const hasAsymptote = /tan|cot|csc|sec/.test(it.expr);
+          const yBreak = (ymax - ymin) * 2;   // 渐近线附近断线阈值：超出屏幕范围约 2 倍就断开
+          for (let k = 0; k <= upTo; k++) { const x = xmin + (xmax - xmin) * k / N; let y = it.fn(x);
+            // tan/cot/csc/sec 在渐近线附近值极大，超出屏幕范围就把画笔断开，避免一条线冲出画布
+            if (hasAsymptote && Math.abs(y) > yBreak) { started = false; continue; }
+            if (!isFinite(y)) { started = false; continue; }
+            const X = sx(x), Y = sy(y); if (!started) { ctx.moveTo(X, Y); started = true; } else ctx.lineTo(X, Y); }
           ctx.stroke(); ctx.lineWidth = art.lw || 2;
         } else if (it.type === 'vector') {
           const aX = (it.ax != null && isFinite(it.ax)) ? it.ax : 0;
