@@ -4656,8 +4656,10 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     pose.headDrop *= (1 - lieFrac);
     pose.crouch *= (1 - lieFrac);
 
-    // 刚睡醒的伸展（约 900ms：抬头 + 举臂），让"固定睡眠→天亮醒来"有过渡
-    if (prevState === 'sleep' && currState !== 'sleep' && now - transStart < 900) {
+    // 刚睡醒的伸展（约 1200ms：抬头 + 举臂），让"固定睡眠→天亮醒来"有过渡。
+    // 关键：起身（lieAngle 回落到直立）约需 1–2 秒，若一醒来就举臂会与"还躺着"重叠，
+    // 看起来像"躺着举手"。故仅在已基本站直（lieFrac 较小）后才触发伸展——先起身、再伸懒腰。
+    if (prevState === 'sleep' && currState !== 'sleep' && now - transStart < 1200 && lieFrac < 0.5) {
       pose.headDrop = lerp(pose.headDrop, 0, 0.25);
       pose.waveArm = Math.max(pose.waveArm, 28);
     }
