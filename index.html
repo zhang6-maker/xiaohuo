@@ -359,7 +359,7 @@
   <button class="close">×</button>
   <div id="paintHint" style="margin-bottom:8px;font-size:12px;color:#9aa0a6;">让小火画点什么：画树 / 画太阳 / 画花 / 或说「画 y=sin(x)」「画象限」「向量(3,4)」让他画数学草图（离线就能画）</div>
   <input id="paintText" type="text" placeholder="画树" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:6px;font-size:13px;" />
-  <div class="actions"><button id="paintGo">画！</button></div>
+  <div class="actions"><span style="font-size:12px;color:#9aa0a6;margin-right:4px;">坐标轴</span><select id="paintAxisColor" style="background:#2b2b30;color:#f3f3f5;border:1px solid #4a4a52;border-radius:6px;padding:4px 6px;font-size:12px;max-width:92px;"><option value="">默认灰</option><option value="#ff5b5b">红</option><option value="#ff9f43">橙</option><option value="#ffd23d">黄</option><option value="#4bd07a">绿</option><option value="#3dd6d6">青</option><option value="#6ab0ff">蓝</option><option value="#b18cff">紫</option><option value="#ff8fc7">粉</option><option value="#2a2a2e">黑</option><option value="#ffffff">白</option></select><button id="paintGo">画！</button></div>
 </div>
 
 <!-- 聊天框（菜单「💬 聊天」唤出）：一个输入框统管 唱歌 / 看书 / 画画 / 回复，打字触发 -->
@@ -2998,6 +2998,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     return null;
   }
   function submitPaint() {
+    const sel = document.getElementById('paintAxisColor');
+    pendingAxisColor = (sel && sel.value) ? sel.value : null;   // 取色器选择透传（关键词优先级更高）
     const v = document.getElementById('paintText').value.trim();
     // 数学/物理草图优先解析（离线优先，解析不出且像题目再走模型）；命中就收起输入框
     if (mathSketch(v)) { document.getElementById('paintBox').classList.add('hidden'); return; }
@@ -3252,22 +3254,54 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const xpad = (xmax - xmin) * 0.12 || 1; xmin -= xpad; xmax += xpad;
     return { xmin, xmax, ymin, ymax };
   }
+  // 坐标轴颜色：支持「红轴 / 黑坐标轴 / 坐标蓝色 / #ff0000 / red」等（与 虚线 同款关键词机制）
+  const AXIS_COLOR_MAP = {
+    '红色': '#ff5b5b', '红': '#ff5b5b',
+    '橙色': '#ff9f43', '橙': '#ff9f43',
+    '黄色': '#ffd23d', '黄': '#ffd23d',
+    '绿色': '#4bd07a', '绿': '#4bd07a',
+    '青色': '#3dd6d6', '青': '#3dd6d6',
+    '蓝色': '#6ab0ff', '蓝': '#6ab0ff',
+    '紫色': '#b18cff', '紫': '#b18cff',
+    '粉红': '#ff8fc7', '粉色': '#ff8fc7', '粉': '#ff8fc7',
+    '黑色': '#2a2a2e', '黑': '#2a2a2e',
+    '白色': '#ffffff', '白': '#ffffff',
+    '灰色': '#e8eaed', '灰': '#e8eaed'
+  };
+  const AXIS_COLOR_KEYS = Object.keys(AXIS_COLOR_MAP).sort((a, b) => b.length - a.length);  // 长词优先（红色 先于 红）
+  const AXIS_COLOR_EN = { red: '#ff5b5b', orange: '#ff9f43', yellow: '#ffd23d', green: '#4bd07a', cyan: '#3dd6d6', blue: '#6ab0ff', purple: '#b18cff', pink: '#ff8fc7', black: '#2a2a2e', white: '#ffffff', gray: '#e8eaed', grey: '#e8eaed' };
+  function _parseAxisColor(text) {
+    const t = String(text || '');
+    for (const k of AXIS_COLOR_KEYS) if (t.includes(k)) return AXIS_COLOR_MAP[k];   // 中文颜色词
+    const m = t.match(/#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}/); if (m) return m[0];          // 十六进制
+    const en = (t.match(/\b(red|orange|yellow|green|cyan|blue|purple|pink|black|white|gray|grey)\b/i) || [])[0];
+    if (en) return AXIS_COLOR_EN[en.toLowerCase()];                                    // 英文
+    return null;
+  }
+  let pendingAxisColor = null;   // 画草图框取色器暂存，提交时透传给 spec（关键词优先级更高）
   function parseSketch(text) {
     const raw = (text || '').trim();
     if (!raw) return null;
-    const spec = { title: '', xmin: null, xmax: null, ymin: null, ymax: null, grid: false, quadrants: false, piTicks: false, items: [] };
+    const axisColor = _parseAxisColor(raw);   // 先检测坐标轴颜色（用原始串，避免被下方剥离）
+    // 剥离"坐标轴颜色"相关短语（红轴 / 黑坐标轴 / 坐标蓝色 / #ff0000 / red 等），得到仅含数学对象的解析串 work，
+    // 避免「y=sin x 红轴」里的「红轴」被函数正则吞进表达式导致解析失败
+    let work = raw;
+    work = work.replace(/(坐标)?(轴)?(红|橙|黄|绿|青|蓝|紫|粉红|粉色|粉|黑|白|灰)(色)?(坐标)?(轴)?/g, '');
+    work = work.replace(/#[0-9a-fA-F]{6}/g, '').replace(/#[0-9a-fA-F]{3}/g, '');
+    work = work.replace(/\b(red|orange|yellow|green|cyan|blue|purple|pink|black|white|gray|grey)\b/gi, '');
+    const spec = { title: '', xmin: null, xmax: null, ymin: null, ymax: null, grid: false, quadrants: false, piTicks: false, items: [], axisColor: axisColor || null };
     let hasContent = false;
 
     // 1) 函数：y = f(x) / f(x) = ...（惰性捕获；表达式里允许括号，遇到"在/区间/范围/从/其中/和/以及/还有/[/"或句末才停；括号本身不作为停止符，否则 sin(x) 会被截断）
     const fnRe = /(?:y|f\s*\(x\))\s*=\s*([^，。；;？?！!（）\n]+?)(?=\s*(?:在|区间|范围|从|其中|和|以及|还有|\[|（|）|，|,)|$)/gi;
     let m, fns = [];
-    while ((m = fnRe.exec(raw))) fns.push(m[1].trim());
+    while ((m = fnRe.exec(work))) fns.push(m[1].trim());
     if (fns.length) {
       for (const e of fns) { const ex = compileExpr(expandChineseMath(e)); if (ex) spec.items.push({ type: 'fn', expr: e, fn: ex, color: '#6ab0ff' }); }
       hasContent = true;
     } else {
       // 无 '='：看是否"画 sin(x)" 这类纯表达式或中文名曲线
-      const seg = raw.replace(/^[^画]*画/i, '').replace(/[，,。；;？?！!].*$/, '').trim();
+      const seg = work.replace(/^[^画]*画/i, '').replace(/[，,。；;？?！!].*$/, '').trim();
       let cand = null;
       if (/正弦/.test(raw)) cand = 'sin(x)';
       else if (/余弦/.test(raw)) cand = 'cos(x)';
@@ -3279,14 +3313,14 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
 
     // 2) 向量
     const vRe = /向量[^\(（]*[\(（]?\s*([-\d.]+)\s*[,，]\s*([-\d.]+)\s*[\)）]?/gi;
-    while ((m = vRe.exec(raw))) { const vx = parseFloat(m[1]), vy = parseFloat(m[2]); if (isFinite(vx) && isFinite(vy)) { spec.items.push({ type: 'vector', x: vx, y: vy, label: '', color: '#ff5b8a' }); hasContent = true; } }
+    while ((m = vRe.exec(work))) { const vx = parseFloat(m[1]), vy = parseFloat(m[2]); if (isFinite(vx) && isFinite(vy)) { spec.items.push({ type: 'vector', x: vx, y: vy, label: '', color: '#ff5b8a' }); hasContent = true; } }
 
     // 3) 点
     const pRe = /点[^\(（]*[\(（]?\s*([-\d.]+)\s*[,，]\s*([-\d.]+)\s*[\)）]?/gi;
-    while ((m = pRe.exec(raw))) { const px = parseFloat(m[1]), py = parseFloat(m[2]); if (isFinite(px) && isFinite(py)) { spec.items.push({ type: 'point', x: px, y: py, label: '', color: '#ffd23d' }); hasContent = true; } }
+    while ((m = pRe.exec(work))) { const px = parseFloat(m[1]), py = parseFloat(m[2]); if (isFinite(px) && isFinite(py)) { spec.items.push({ type: 'point', x: px, y: py, label: '', color: '#ffd23d' }); hasContent = true; } }
 
     // 4) 圆
-    if (/圆/.test(raw)) {
+    if (/圆/.test(work)) {
       let cx = 0, cy = 0, r = 2;
       if (/单位圆/.test(raw)) { cx = 0; cy = 0; r = 1; }
       else { const cRe = /圆[^\(（]*[\(（]?\s*([-\d.]+)\s*[,，]\s*([-\d.]+)\s*[\)）]?(?:[，,]?\s*(?:半径|r)?\s*([-\d.]+))?/i; const cm = cRe.exec(raw); if (cm) { cx = parseFloat(cm[1]); cy = parseFloat(cm[2]); r = cm[3] != null ? parseFloat(cm[3]) : 2; if (!isFinite(cx)) cx = 0; if (!isFinite(cy)) cy = 0; if (!isFinite(r)) r = 2; } }
@@ -3303,7 +3337,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       if (/网格|grid/i.test(raw)) spec.grid = true;
     }
 
-    // 虚线：指令含“虚线 / dash”时，曲线与向量改为虚线绘制（网格与渐近线本就虚线，无需关键词）
+    // 虚线：指令含"虚线 / dash"时，曲线与向量改为虚线绘制（网格与渐近线本就虚线，无需关键词）
     const dashed = /虚线|dash|dashed/i.test(raw);
     if (dashed) for (const it of spec.items) if (it.type === 'fn' || it.type === 'vector') it.dashed = true;
 
@@ -3444,7 +3478,9 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     ctx.save();
     ctx.lineWidth = art.lw || 2; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     ctx.globalAlpha = fade;
-    ctx.strokeStyle = '#e8eaed'; ctx.fillStyle = '#e8eaed';
+    const axc = sp.axisColor || '#e8eaed';
+    const _hexA = (hex, a) => { const h = (hex || '#e8eaed').replace('#', ''); const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h; const r = parseInt(full.slice(0, 2), 16), g = parseInt(full.slice(2, 4), 16), b = parseInt(full.slice(4, 6), 16); return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')'; };
+    ctx.strokeStyle = axc; ctx.fillStyle = axc;
     ctx.font = '12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
 
     const frameP = clamp(p / 0.2, 0, 1);
@@ -3464,7 +3500,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         ctx.restore();
       }
       const OX = sx(0), OY = sy(0);
-      ctx.strokeStyle = '#e8eaed'; ctx.fillStyle = '#e8eaed'; ctx.lineWidth = art.lw || 2;
+      ctx.strokeStyle = axc; ctx.fillStyle = axc; ctx.lineWidth = art.lw || 2;
       // 坐标轴（带箭头）
       _drawArrow(ctx, sx(xmin), OY, sx(xmax), OY);
       _drawArrow(ctx, OX, sy(ymin), OX, sy(ymax));
@@ -3487,9 +3523,9 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       if (sp.quadrants) {
         const cx = (xmin + xmax) / 2, cy = (ymin + ymax) / 2;
         const qs = [['Ⅰ', cx + (xmax - xmin) * 0.32, cy + (ymax - ymin) * 0.32], ['Ⅱ', cx - (xmax - xmin) * 0.32, cy + (ymax - ymin) * 0.32], ['Ⅲ', cx - (xmax - xmin) * 0.32, cy - (ymax - ymin) * 0.32], ['Ⅳ', cx + (xmax - xmin) * 0.32, cy - (ymax - ymin) * 0.32]];
-        ctx.fillStyle = 'rgba(232,234,237,0.45)'; ctx.font = '14px system-ui';
+        ctx.fillStyle = _hexA(axc, 0.45); ctx.font = '14px system-ui';
         for (const q of qs) ctx.fillText(q[0], sx(q[1]), sy(q[2]));
-        ctx.font = '12px system-ui'; ctx.fillStyle = '#e8eaed';
+        ctx.font = '12px system-ui'; ctx.fillStyle = axc;
       }
     }
 
@@ -3540,7 +3576,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
             for (let k = 1; k < samp.length - 1; k++) { const ym = samp[k-1][1], y0 = samp[k][1], yp = samp[k+1][1]; if (isFinite(ym) && isFinite(y0) && isFinite(yp) && (y0 - ym) * (yp - y0) < 0) peaks.push([samp[k][0], y0]); }
             ctx.fillStyle = '#ffd23d';
             for (const pk of peaks) { const X = sx(pk[0]), Y = sy(pk[1]); ctx.beginPath(); ctx.arc(X, Y, 3.5, 0, 2 * Math.PI); ctx.fill(); ctx.fillText(fmtNum(pk[0]), X, Y - 9); }
-            ctx.fillStyle = '#e8eaed';
+            ctx.fillStyle = axc;
           }
         } else if (it.type === 'vector') {
           const aX = (it.ax != null && isFinite(it.ax)) ? it.ax : 0;
@@ -3552,7 +3588,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
           ctx.lineWidth = art.lw || 2;
         } else if (it.type === 'point') {
           const X = sx(it.x), Y = sy(it.y); ctx.fillStyle = it.color || '#ffd23d'; ctx.beginPath(); ctx.arc(X, Y, 3.5, 0, 2 * Math.PI); ctx.fill();
-          if (cP >= 1 && it.label) { ctx.fillStyle = '#e8eaed'; ctx.fillText(it.label, X + 9, Y - 9); }
+          if (cP >= 1 && it.label) { ctx.fillStyle = axc; ctx.fillText(it.label, X + 9, Y - 9); }
         } else if (it.type === 'circle') {
           const X = sx(it.cx), Y = sy(it.cy), R = Math.abs(sc) * it.r;
           ctx.strokeStyle = it.color || '#4bd07a'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(X, Y, R, 0, 2 * Math.PI); ctx.stroke(); ctx.lineWidth = art.lw || 2;
@@ -3691,7 +3727,11 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   // 入口：聊天/画框里说"画草图 / 画 y=... / 画象限 / 分析这道题"
   function mathSketch(text) {
     const spec = parseSketch(text);
-    if (spec) { startSketch(spec); return true; }
+    if (spec) {
+      if (pendingAxisColor && !spec.axisColor) spec.axisColor = pendingAxisColor;   // 取色器兜底，关键词优先
+      pendingAxisColor = null;
+      startSketch(spec); return true;
+    }
     // 解析不出 + 看起来像要"分析题目" → 交给模型出 spec（但仅限数理化题；文科/语言类题不画草图，回退普通问答）
     if (isTauri && isMathPhysQuestion(text) && /题|分析|受力|电路|运动|解方程|几何|根据|物理|斜率|函数图像|草图|怎么画|画什么/.test(text)) {
       addChat('sys', '📐 小火试着分析一下…');
