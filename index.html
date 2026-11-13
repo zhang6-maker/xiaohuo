@@ -262,6 +262,7 @@
     </div>
   </div>
   <div id="screenResultActions" class="actions hidden">
+    <button data-s="translate">🌐 翻译</button>
     <button data-s="sketch">📐 画草图</button>
     <button data-s="again">再问一次</button>
     <button data-s="no">不用了</button>
@@ -281,9 +282,21 @@
   <div data-m="sketch">📐 画草图</div>
   <div data-m="clearsketch" id="ctxClearSketch" class="hidden">🧹 清除草图</div>
   <div data-m="mem">📖 记录本</div>
+  <div data-m="shotmem">📸 截图存记录</div>
   <div data-m="about">ℹ️ 关于</div>
   <div data-m="fullscreen">🖥️ 全屏 / 窗口</div>
   <div data-m="quit">⏻ 退出</div>
+</div>
+
+<!-- 截图存记录：右键菜单「📸 截图存记录」唤出，可加一句备注（可留空），确认即截当前干净屏存入「我的记录」 -->
+<div id="shotMemBox" class="box hidden" style="top:50%;max-width:340px;">
+  <button class="close" id="shotMemClose">×</button>
+  <div style="font-size:13px;color:#cfd2d8;margin:2px 0 8px;">📸 截图存入「我的记录」<br/><span style="color:#9aa0a6;font-size:12px;">截的是当前干净桌面（已自动藏起小火的弹框），可先框选/打开要记的窗口再回来点。</span></div>
+  <textarea id="shotMemNote" placeholder="给这张截图加个备注（可留空）：比如「11-13 调试截图」" style="width:100%;box-sizing:border-box;height:64px;padding:6px 8px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:6px;font-size:13px;resize:none;"></textarea>
+  <div class="actions" style="margin-top:8px;justify-content:flex-end;">
+    <button id="shotMemCancel">取消</button>
+    <button id="shotMemSave" style="background:#2f6b3a;border-color:#3f8a4c;">📝 保存</button>
+  </div>
 </div>
 
 <!-- 换颜色面板：右键菜单「🎨 换颜色」唤出，选身体色（含纯黑便于在黑色界面藏起来） -->
@@ -1085,7 +1098,9 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       '💬 「💬聊天」框里随便打字 → 小火用智谱回复，嘴会跟着动（念念有词）',
       '🚶 它会自动到处溜达，高兴时眼睛追着你看',
       '✊ 抓住小火<b>身体或腿按住拖动</b> → 把整个窗口拖到屏幕任意位置（头顶按住搓=揉、单击=戳、长按/右键=菜单，别搞混）',
-      '✨ 鼠标移开即恢复穿透，不挡桌面点击'
+      '✨ 鼠标移开即恢复穿透，不挡桌面点击',
+      '📸 右键菜单「📸 截图存记录」→ 截一张当前干净桌面（自动藏起小火弹框），可加一句备注，直接存进「我的记录」，事后在「📖 记录本」里翻',
+      '🌐 「👀 看看屏幕」框选完、出结果后，结果栏多了「🌐 翻译」按钮：一键让小火识别并翻译屏幕上的外文（英文/日文等），代码与界面术语也给中文释义'
     ].join('<br>');
     if (box._boxPos) { applyBoxPos(box, box._boxPos); }
     else { box.style.left = '50%'; box.style.top = '40%'; box.style.transform = 'translate(-50%,-50%)'; }
@@ -1107,6 +1122,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     else if (act === 'sketch') { openPaintInput(); const h = document.getElementById('paintHint'); if (h) h.textContent = '📐 画草图：直角坐标系 / 象限 / y=sin(x) / 向量(3,4) / 点(1,2) / 圆 … 直接说就行，离线就能画'; }
     else if (act === 'clearsketch') { clearSketches(); }
     else if (act === 'mem') openMemories();
+    else if (act === 'shotmem') openShotMem();
     else if (act === 'tips') showTips();
     else if (act === 'about') alert('小火 · 桌面火柴人\n透明 Tauri 窗口：骨骼 / 状态机 / 心情 / 表情 / 嘴型。\n长按我（或右键）唤出菜单：搜一搜 / 看看屏幕 / 🎨 换颜色 / 提示 / 💬聊天 / 关于。在「💬聊天」框里打字：画只猫 / 唱首歌 / 看会儿书 / 随便聊，小火都会回应（回复时嘴会动）。\n右键「📐 画草图」或聊天里说「画 y=sin(x) / 画象限 / 向量(3,4)」→ 小火画干净的数学/物理坐标系草图（离线就能画）。\n👆 单击 = 戳我（会恼会躲，多戳缩角落）；🤚 在头顶按住鼠标来回搓 = 揉头哄我（被戳委屈后搓头也能哄好）；✊ 抓住身体或腿按住拖动 = 把整个窗口拖到屏幕任意位置。\n右键「🎨 换颜色」可改身体色并记住（选纯黑在黑色界面就藏起来了）；「👕 换装」可让过节自动穿衣服（万圣/双十一/圣诞/元旦/春节），也能手动预览，衣服只是叠加层、不影响任何动作；搜一搜、看看屏幕会真截屏后拖框选，交给大模型（智谱 GLM-4V）分析。');
     else if (act === 'fullscreen') toggleFullscreen();
@@ -5050,6 +5066,24 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       .catch(err => { const et = apiErrText(err); txt._raw = et; txt.innerHTML = renderRich(et); });
   }
 
+  // 看看屏幕里「🌐 翻译」：用本次已截的屏幕图，让视觉模型识别并翻译图中全部外文
+  async function translateScreen() {
+    const shots = shotsArr();
+    if (!shots.length) { toast('先框选一张屏幕再翻译'); return; }
+    screenText.innerHTML = '🌐 小火正在翻译屏幕上的文字…';
+    screenBox.classList.remove('hidden');
+    screenAskWrap.classList.add('hidden');
+    screenResultActions.classList.remove('hidden');
+    invoke('ask_glm', { imagesB64: shots, prompt: '请识别并翻译图中所有外文（主要是英文，也可能有日文/韩文）为中文。请按图中出现的顺序逐段翻译，并尽量保留原排版层次（如标题、正文、按钮、菜单、报错信息等分别列出）；代码或界面专有名词也请给出中文释义。若图中没有可翻译的文字，请如实说明。用中文回答。' })
+      .then(res => {
+        const text = (typeof res === 'string' ? res : '').trim();
+        if (!text) { screenText.innerHTML = '😵 翻译失败，模型没返回内容，换张图再试。'; return; }
+        screenText._raw = text;
+        screenText.innerHTML = renderRich(text);
+      })
+      .catch(err => { const et = apiErrText(err); screenText._raw = et; screenText.innerHTML = renderRich(et); });
+  }
+
   // 看屏截图后：先给用户输入问题（也可留空直接看），再发问
   function showScreenAsk() {
     screenText.innerHTML = '已截取屏幕区域 📸 想问问小火点啥？还是直接让他看？';
@@ -5086,6 +5120,9 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     } else if (s === 'sketch') {
       // 搜一搜结果框里手动触发画草图（离线确定性图 → 视觉模型 → 文字模型兜底）
       drawSearchSketch();
+    } else if (s === 'translate') {
+      // 看看屏幕里顺手翻译：用已截的屏幕图，让视觉模型识别并翻译外文
+      translateScreen();
     } else if (s === 'again') {
       // 再问一次：回到提问界面
       screenAskWrap.classList.remove('hidden');
@@ -5186,6 +5223,26 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       toast('记录失败：' + apiErrText(e));
     }
   }
+  // 右键菜单「📸 截图存记录」：弹备注小窗；确认后把当前干净桌面截下来存进「我的记录」
+  // （question 存备注，answer 留空；截图已由 recordMemory 内部 captureClean 缩到 ≤1280 再存）
+  function openShotMem() {
+    const box = document.getElementById('shotMemBox');
+    const ta = document.getElementById('shotMemNote');
+    if (ta) ta.value = '';
+    box.style.left = '50%'; box.style.top = '50%';
+    box.style.transform = 'translate(-50%,-50%)';
+    box.classList.remove('hidden');
+    setTimeout(() => { try { ta && ta.focus(); } catch (e) {} }, 30);
+  }
+  async function doShotMem() {
+    const ta = document.getElementById('shotMemNote');
+    const note = (ta && ta.value || '').trim();
+    document.getElementById('shotMemBox').classList.add('hidden'); // 先藏起来，避免被截进记录
+    await recordMemory(note, '');
+  }
+  document.getElementById('shotMemSave').addEventListener('click', doShotMem);
+  document.getElementById('shotMemCancel').addEventListener('click', () => document.getElementById('shotMemBox').classList.add('hidden'));
+  document.getElementById('shotMemClose').addEventListener('click', () => document.getElementById('shotMemBox').classList.add('hidden'));
   function lastChatQ() {
     for (let i = chatHistory.length - 1; i >= 0; i--) if (chatHistory[i].role === 'user') return chatHistory[i].content;
     return '';

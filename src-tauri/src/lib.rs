@@ -132,6 +132,7 @@ pub fn run() {
             let rect_poll = rect.clone();
             std::thread::spawn(move || {
                 let mut last_ignore = true;
+                let mut last_top = true;   // 初始与配置一致（alwaysOnTop:true）；首个空闲帧即撤掉置顶
                 let mut frame = 0u32;
                 loop {
                     std::thread::sleep(std::time::Duration::from_millis(16));
@@ -214,6 +215,18 @@ pub fn run() {
                         last_ignore = want_ignore;
                         if let Some(w) = handle_poll.get_webview_window("main") {
                             let _ = w.set_ignore_cursor_events(want_ignore);
+                        }
+                    }
+
+                    // 置顶策略：仅当真正需要挡在屏幕最前（框选 / 拖拽宠物 / 任一弹框开着）时才 alwaysOnTop；
+                    // 平时（宠物闲逛、鼠标穿透态）主动撤掉置顶，退到普通层级。
+                    // 否则全屏透明 + 永久置顶的窗口会压在 Win+Shift+S / Snipaste / 微信截图 等
+                    // 全屏遮罩选区工具上面，导致用户自己的截图选区拖不动、或把小火的透明层截进去。
+                    let want_top = picking_now || dragging_now || box_open_now;
+                    if want_top != last_top {
+                        last_top = want_top;
+                        if let Some(w) = handle_poll.get_webview_window("main") {
+                            let _ = w.set_always_on_top(want_top);
                         }
                     }
 
