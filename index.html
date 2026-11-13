@@ -422,6 +422,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   const DEG = Math.PI / 180;
   const UP = -Math.PI / 2, DOWN = Math.PI / 2;
   const FIG_SCALE = 0.4;             // 桌面宠物整体缩放（偏小，更贴身；全屏漫游时也更精致）
+  const LIFT_UP = 22;                // 被拎起时宠物上浮的像素高度（与地面影子拉开距离，读作"被提起来"）
 
   // ---------- 骨骼参数 ----------
   const S = {
@@ -564,7 +565,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     crouch: 0, scale: 1, opacity: 1,
     mouthOpen: 0, eyeOpen: 1,
     sad: 0, hug: 0, happy: 0, hop: 0, book: 0, sit: 0, sing: 0, read: 0,
-    think: 0, headTilt: 0,
+    think: 0, headTilt: 0, lift: 0, surprise: 0,
   };
   function poseForState(state, t) {
     const p = { ...BASE };
@@ -815,6 +816,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   let sleepCD = 0, readCD = 0;               // 长休息（睡觉/看书）结束后的白天冷静期截止时间
   let posX = S.rootX;                 // 火柴人当前水平锚点（躲开 / 缩角落都改这个，不再原地晃）
   let posY = S.rootY;                 // 垂直锚点；委屈缩到左下角时改这个
+  let liftFrac = 0;                   // 被拎起程度(0→1)：手动拖拽宠物本体时平滑上浮 + 提起姿态
   let nextPeekAt = performance.now() + rand(3000, 5000);
   let peekStart = -1e9;
   // 漫游：宠物会自己走向随机目标，到了再选下一个，实现"到处跑"
@@ -906,7 +908,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   let pressTimer = null, pressStart = null, longPressFired = false;
   // 揉头交互状态：用"按住+移动"区分于"单击=戳"，避免手势撞车
   let downAt = 0, downX = 0, downY = 0, downOnHead = false, rubActive = false, downMoved = 0;
-  let windowDragging = false, bodyDragCandidate = false, dragStartClient = null;   // 抓住身体/腿拖动整个窗口
+  let windowDragging = false, bodyDragCandidate = false, dragStartClient = null, dragGrab = null;   // 抓住身体/腿：全屏=拖宠物本体，小窗=拖整窗
   // 光标是否在头顶区域（揉头判定用；半径比头略大，便于"搓"到）
   function headAt(x, y) {
     const _bp = poseForState(currState, (performance.now() - start) / 1000);
@@ -927,7 +929,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     pressStart = { x: e.clientX, y: e.clientY };
     downAt = performance.now(); downX = e.clientX; downY = e.clientY; downMoved = 0;
     downOnHead = headAt(x, y); rubActive = false;
-    windowDragging = false; bodyDragCandidate = !downOnHead && !FULLSCREEN;  // 头=揉头；身体/腿=拖动整个窗口（全屏下窗口即整屏，禁用拖窗）
+    windowDragging = false; dragGrab = null; bodyDragCandidate = !downOnHead;  // 头=揉头；身体/腿=拖宠物本体(全屏)或拖整窗(小窗)
     pressTimer = setTimeout(() => {                    // 长按不动 450ms → 唤出菜单
       longPressFired = true; rubActive = false;
       showCtxMenu(x, y);
@@ -943,10 +945,15 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       if (selectedSketch === skDrag.art) updateSketchDelBtn();
       return;
     }
-    // 拖窗进行中：持续把鼠标位移发给 Rust，由 Rust 搬窗口（拖拽期间 Rust 强制关穿透，鼠标不会丢）
-    if (windowDragging && dragStartClient) {
-      const ddx = e.clientX - dragStartClient.x, ddy = e.clientY - dragStartClient.y;
-      if (isTauri) invoke('drag_move', { dx: ddx, dy: ddy }).catch(() => {});
+    // 拖拽进行中：全屏=把宠物本体位置跟随鼠标（偏移在开始时记录）；小窗=仍由 Rust 搬整窗
+    if (windowDragging) {
+      if (FULLSCREEN) {
+        posX = clamp(e.clientX - dragGrab.x, 60, W - 60);
+        posY = clamp(e.clientY - dragGrab.y, 120, H - 30);
+      } else if (dragStartClient) {
+        const ddx = e.clientX - dragStartClient.x, ddy = e.clientY - dragStartClient.y;
+        if (isTauri) invoke('drag_move', { dx: ddx, dy: ddy }).catch(() => {});
+      }
       return;
     }
     if (!pressStart) return;
@@ -958,8 +965,9 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       // 在身体/腿上"按住+拖动"= 拖整窗（头=揉，身体=移窗，用不同部位区分手势，避免撞车）
       if (bodyDragCandidate && !windowDragging) {
         windowDragging = true;
-        dragStartClient = { x: e.clientX, y: e.clientY };
-        if (isTauri) invoke('drag_start').catch(err => { windowDragging = false; dragStartClient = null; console.warn('拖窗启动失败', err); });
+        if (FULLSCREEN) dragGrab = { x: e.clientX - posX, y: e.clientY - posY };   // 记录抓取点偏移，避免宠物瞬移到光标中心
+        else dragStartClient = { x: e.clientX, y: e.clientY };
+        if (isTauri) invoke('drag_start').catch(err => { windowDragging = false; dragGrab = null; dragStartClient = null; console.warn('拖拽启动失败', err); });
         return;
       }
       // 在头顶区域"按住+移动"= 揉头（与"单击=戳"用完全不同的手势区分：戳是点，揉是按住搓）
@@ -975,8 +983,9 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       skDrag = null;
       return;
     }
-    if (windowDragging) {                              // 刚才是拖窗，不算戳
-      windowDragging = false; dragStartClient = null;
+    if (windowDragging) {                              // 刚才是拖拽（宠物本体或小窗），不算戳
+      windowDragging = false; dragGrab = null; dragStartClient = null;
+      if (FULLSCREEN) { roamTX = posX; roamTY = posY; roamPauseUntil = performance.now() + 1500; }  // 放下后在落点先歇一会儿，不立刻跑走
       if (isTauri) invoke('drag_end').catch(() => {});
       return;
     }
@@ -1536,6 +1545,17 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     if (writeTip && currState === 'paint') {
       handR = { x: writeTip.x, y: writeTip.y + 20 * sc };                                   // 手在笔尖下方握笔杆
       elbowPtR = { x: (shoulders.x + handR.x) / 2 - 8 * sc, y: (shoulders.y + handR.y) / 2 + 18 * sc };
+    }
+
+    // 被拎起（lift>0）：双手上举(被抓着)、腿放松微张下垂(悬空晃)，覆盖上述一切手臂/腿部姿态
+    if (pose.lift > 0.01) {
+      const L = pose.lift;
+      const upL = lerp(restL, UP - 0.55, L), upR = lerp(restR, UP + 0.55, L);
+      elbowPtL = point(shoulders, upL, upper); handL = point(elbowPtL, upL - 0.25, fore);
+      elbowPtR = point(shoulders, upR, upper); handR = point(elbowPtR, upR + 0.25, fore);
+      const dL = lerp(hipL, DOWN + 0.10, L), dR = lerp(hipR, DOWN - 0.10, L);
+      kneePtL = point(root, dL, thigh); footL = point(kneePtL, dL - 0.12, shin);
+      kneePtR = point(root, dR, thigh); footR = point(kneePtR, dR + 0.12, shin);
     }
 
     return { root, shoulders, headBottom, head, kneePtL, footL, kneePtR, footR, elbowPtL, handL, elbowPtR, handR };
@@ -2124,15 +2144,20 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const k = buildFigure(pose, t);
     const lieFrac = Math.min(1, lieAngle / TOPPLE_MAX);
 
-    // 阴影（倒地时画成长条，贴着地面；直立时画在脚底）
+    // 阴影（倒地时画成长条，贴着地面；直立时画在脚底；被拎起时影子留在地面并缩小变淡，与浮空的宠物拉开距离）
     ctx.save();
-    ctx.globalAlpha = 0.12 * pose.opacity;
     ctx.fillStyle = '#000';
-    if (lieFrac > 0.05) {
+    if (liftFrac > 0.05) {
+      const gx = (k.footL.x + k.footR.x) / 2, gy = (k.footL.y + k.footR.y) / 2;
+      ctx.globalAlpha = 0.12 * pose.opacity * (1 - 0.55 * liftFrac);
+      ctx.beginPath(); ctx.ellipse(gx, gy + 4 * sc, 56 * sc * (1 - 0.35 * liftFrac), 10 * sc * (1 - 0.35 * liftFrac), 0, 0, Math.PI * 2); ctx.fill();
+    } else if (lieFrac > 0.05) {
       const px = (k.footL.x + k.footR.x) / 2, py = (k.footL.y + k.footR.y) / 2;
       const len = (S.torsoLen + S.neckLen + S.headR + S.thigh + S.shin) * sc;
+      ctx.globalAlpha = 0.12 * pose.opacity;
       ctx.beginPath(); ctx.ellipse(px, py + 4 * sc, len * 0.55, 9 * sc, 0, 0, Math.PI * 2); ctx.fill();
     } else {
+      ctx.globalAlpha = 0.12 * pose.opacity;
       ctx.beginPath(); ctx.ellipse(k.root.x, k.footL.y + 6 * sc, 56 * sc, 10 * sc, 0, 0, Math.PI * 2); ctx.fill();
     }
     ctx.restore();
@@ -2141,6 +2166,11 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     ctx.globalAlpha = pose.opacity;
     ctx.strokeStyle = S.color; ctx.lineWidth = S.lineW * sc;
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    // 被拎起：整只人向上浮起一点点 + 轻微左右晃（像被提着悬空），与地面影子拉开距离
+    if (liftFrac > 0.001) {
+      ctx.translate(0, -liftFrac * LIFT_UP);
+      ctx.rotate(Math.sin(now * 0.009) * 0.05 * liftFrac);
+    }
     // 深度睡眠：睡着一会儿后整只人绕脚底翻倒躺平（倒地睡）
     if (lieAngle > 0.001) {
       const px = (k.footL.x + k.footR.x) / 2, py = (k.footL.y + k.footR.y) / 2;
@@ -2164,6 +2194,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     let mo = 0.06;
     if (pose.sing > 0.5) mo = 0.2 + 0.55 * Math.abs(Math.sin(t * 7));     // 唱歌：嘴随节奏张合
     else if (now < speakingUntil) mo = 0.12 + 0.8 * Math.abs(Math.sin(t * 15));
+    else if (pose.surprise > 0.5) mo = 0.22;                              // 被拎起：小幅张嘴(惊讶)
     if (now - pokeFlash < 180) mo = Math.max(mo, 0.5);   // 被戳瞬间张嘴惊呼，强化"变脸"
     drawMouth(k.head, mo, pose.sad, pose.happy, pose.sing, pose.angry);
 
@@ -4554,7 +4585,10 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     lieAngle += (targetLie - lieAngle) * 0.05;
 
     // 位置/心情行为：委屈缩角落(hide) 或 鼠标靠近躲开(mood<-30)
-    if (currState === 'hide') {
+    // 手动拖拽宠物本体（全屏）时跳过自动走位，位置由鼠标直接驱动
+    if (windowDragging && FULLSCREEN) {
+      // 拖拽中：不跑自动逻辑（漫游/躲避/写字走位），posX/posY 已在 mousemove 里被鼠标驱动
+    } else if (currState === 'hide') {
       if (mood >= -30) {
         setState('idle');                       // 心情回升到 -30 以上，自己走出来
       } else {
@@ -4656,6 +4690,9 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const _bodyColor = S.color;
     if (now < angryUntil) S.color = ANGRY_COLOR;   // 愤怒：身体（火柴人线条）变红几秒
     stepWrites(now);                              // 推进写字动画并更新笔尖 writeTip（须在 draw 前，供 buildFigure 取笔尖）
+    // 手动拖拽宠物：平滑过渡"被拎起"程度（提起=1，放下=0）；仅全屏拖宠物本体时上浮 + 提起姿态
+    liftFrac += (((windowDragging && FULLSCREEN) ? 1 : 0) - liftFrac) * 0.28;
+    if (liftFrac > 0.001) { pose.lift = liftFrac; pose.surprise = liftFrac; }
     draw(pose, t, now);
     if (now < angryUntil) S.color = _bodyColor;
     if (lyricTimer && !lyricsBox.classList.contains('hidden')) positionLyrics();   // 唱歌时歌词气泡跟随头顶
