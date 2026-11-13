@@ -653,6 +653,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     }
   }
   function setState(s, dur) {
+    if (s === 'hide') return;   // 兜底：禁止进入"缩角落"隐藏态。当前菜单/戳击都无主动隐藏入口，
+                                // 此状态只会让宠物"点一下就消失"，故直接拦截，杜绝任何回归触发。
     if (s === currState) return;
     const wasSleep = currState === 'sleep', wasRead = currState === 'read';
     // 一次长休息结束（睡/读 → 其他状态）：进入白天冷静期，隔 120–240 分钟才允许再次"长休息"（sleep/read 共用，避免刚睡醒又看/刚看完又睡）
