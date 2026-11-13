@@ -1492,10 +1492,10 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const thighAngR = lerp(hipR, 0.35, sitAmt);
     const shinAngL  = lerp(hipL - kneeL, 0, sitAmt);
     const shinAngR  = lerp(hipR + kneeR, Math.PI, sitAmt);
-    const kneePtL = point(root, thighAngL, thigh);
-    const footL = point(kneePtL, shinAngL, shin);
-    const kneePtR = point(root, thighAngR, thigh);
-    const footR = point(kneePtR, shinAngR, shin);
+    let kneePtL = point(root, thighAngL, thigh);
+    let footL = point(kneePtL, shinAngL, shin);
+    let kneePtR = point(root, thighAngR, thigh);
+    let footR = point(kneePtR, shinAngR, shin);
 
     // ---------- 手臂：上臂 + 前臂（带手肘） ----------
     const aPhase = pose.armFreq ? Math.sin(t * pose.armFreq) : 0;
