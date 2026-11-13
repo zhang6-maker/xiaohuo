@@ -2163,10 +2163,12 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     ctx.globalAlpha = pose.opacity;
     ctx.strokeStyle = S.color; ctx.lineWidth = S.lineW * sc;
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    // 被拎起：整只人向上浮起一点点 + 轻微左右晃（像被提着悬空），与地面影子拉开距离
+    // 被拎起：整只人向上浮起一点点 + 以头顶为支点轻轻左右晃（像被提着悬空），与地面影子拉开距离
+    // 支点改到头顶(而非画布左上角)，并放慢变柔，避免"被吊在角落甩"的怪异抖动
     if (liftFrac > 0.001) {
+      const liftAng = Math.sin(now * 0.004) * 0.04 * liftFrac;
+      ctx.translate(k.head.x, k.head.y); ctx.rotate(liftAng); ctx.translate(-k.head.x, -k.head.y);
       ctx.translate(0, -liftFrac * LIFT_UP);
-      ctx.rotate(Math.sin(now * 0.009) * 0.05 * liftFrac);
     }
     // 深度睡眠：睡着一会儿后整只人绕脚底翻倒躺平（倒地睡）
     if (lieAngle > 0.001) {
