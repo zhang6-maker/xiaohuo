@@ -1545,14 +1545,17 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     }
 
     // 被拎起（lift>0）：双手上举(被抓着)、腿放松微张下垂(悬空晃)，覆盖上述一切手臂/腿部姿态
+    // 但躺平(lieFrac 大)时压低该效果——睡着被拖动不该"躺着举手"，只整体上浮、保持躺姿；站直才被拎起
     if (pose.lift > 0.01) {
-      const L = pose.lift;
-      const upL = lerp(restL, UP - 0.55, L), upR = lerp(restR, UP + 0.55, L);
-      elbowPtL = point(shoulders, upL, upper); handL = point(elbowPtL, upL - 0.25, fore);
-      elbowPtR = point(shoulders, upR, upper); handR = point(elbowPtR, upR + 0.25, fore);
-      const dL = lerp(hipL, DOWN + 0.10, L), dR = lerp(hipR, DOWN - 0.10, L);
-      kneePtL = point(root, dL, thigh); footL = point(kneePtL, dL - 0.12, shin);
-      kneePtR = point(root, dR, thigh); footR = point(kneePtR, dR + 0.12, shin);
+      const L = pose.lift * (1 - lieFrac);
+      if (L > 0.001) {
+        const upL = lerp(restL, UP - 0.55, L), upR = lerp(restR, UP + 0.55, L);
+        elbowPtL = point(shoulders, upL, upper); handL = point(elbowPtL, upL - 0.25, fore);
+        elbowPtR = point(shoulders, upR, upper); handR = point(elbowPtR, upR + 0.25, fore);
+        const dL = lerp(hipL, DOWN + 0.10, L), dR = lerp(hipR, DOWN - 0.10, L);
+        kneePtL = point(root, dL, thigh); footL = point(kneePtL, dL - 0.12, shin);
+        kneePtR = point(root, dR, thigh); footR = point(kneePtR, dR + 0.12, shin);
+      }
     }
 
     return { root, shoulders, headBottom, head, kneePtL, footL, kneePtR, footR, elbowPtL, handL, elbowPtR, handR };
@@ -2243,7 +2246,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     }
 
     // 看书：把书托到下巴/胸口前（双手举着），微微上翘朝向脸，安静阅读（不唱歌）
-    if (pose.book > 0.5) {
+    // 被拎起(pose.lift 生效)时不画书：手已被 lift 分支举过头顶，书会浮在胸口悬空，故拖动看书时书消失
+    if (pose.book > 0.5 && pose.lift < 0.01) {
       const bx = k.root.x + 8 * sc, by = k.shoulders.y + 34 * sc;   // 书在胸前、下巴正下方（不压脸）
       const bw = 36 * sc, bh = 26 * sc;
       ctx.save();
