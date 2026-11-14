@@ -12,7 +12,7 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, GetSystemMetrics, GetWindowRect, GetForegroundWindow, GetWindowThreadProcessId,
-    SM_CXSCREEN, SM_CYSCREEN,
+    GetClassNameW, SM_CXSCREEN, SM_CYSCREEN,
 };
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
@@ -215,8 +215,9 @@ pub fn run() {
                     // 置顶策略 v2（修「一点击别的窗口小火就跑到页面后面」）：
                     // 平时（闲逛/穿透态）【必须】常驻置顶——否则一点击浏览器/应用，那个窗口被激活
                     // 就盖到小火上面，小火没丢、只是被挡在"页面后面"看不见。
-                    // 唯一例外：最前台是截图/框选类工具(Snipaste/Win+Shift+S/ShareX…)时撤掉置顶，
-                    // 避免把小火透明层截进截图、或挡住选区拖拽；工具一关立即恢复置顶。
+                    // 唯一例外：最前台是截图类工具时撤掉置顶，避免把小火透明层截进截图、或挡住选区拖拽；工具一关立即恢复置顶。
+                    // 已覆盖：Snipaste / Win+Shift+S / 旧版截图 / ShareX，以及 微信(Alt+A) / QQ(Ctrl+Alt+A) 内置截图
+                    // （按截图 overlay 窗口类名识别，而非按进程名，避免聚焦聊天窗口时误撤置顶）。
                     let own_hwnd = handle_poll
                         .get_webview_window("main")
                         .and_then(|w| w.hwnd().ok());
@@ -846,7 +847,29 @@ fn foreground_is_screenshot_tool(own: HWND) -> bool {
             "snippingtool.exe", // 旧版截图工具
             "sharex.exe",       // ShareX
         ];
-        TOOLS.contains(&name.as_str())
+        if TOOLS.contains(&name.as_str()) {
+            return true;
+        }
+        // 微信 / QQ 内置截图：捕获 overlay 窗属于主进程(WeChat.exe/QQ.exe)，
+        // 不能按进程名整进程撤置顶（否则聚焦聊天窗口时小火也会被压到后面）。
+        // 改为按【截图 overlay 窗口类名】精准识别：
+        //   - QQ 截图 overlay 类名已确证为 "QQScreenCapture Window Class"；
+        //   - 微信截图 overlay 类名多为 "WeChat_Screenshot_Wnd"（含 screenshot）。
+        // 仅在进程是 微信/QQ 时做类名匹配；聊天主窗(WeChatMainWndForPC 等)不含这些关键字，不会误伤。
+        let mut cbuf = [0u16; 256];
+        let clen = GetClassNameW(fg, &mut cbuf);
+        let class_l = if clen > 0 {
+            String::from_utf16_lossy(&cbuf[..clen as usize]).to_lowercase()
+        } else {
+            String::new()
+        };
+        if name == "wechat.exe" && class_l.contains("screenshot") {
+            return true;
+        }
+        if name == "qq.exe" && class_l.contains("screencapture") {
+            return true;
+        }
+        false
     }
 }
 
