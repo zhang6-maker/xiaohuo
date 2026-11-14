@@ -1442,18 +1442,60 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     document.body.appendChild(a); a.click(); a.remove();
     toast('⬇️ 已导出 ' + (item.name || '画作') + '.png');
   }
-  // 让小火「模仿笔画」：把存好的笔迹按原顺序重绘一遍（animate=逐笔动画，像小火在画）
+  // 让小火「模仿笔画」：把存好的笔迹按原顺序重绘一遍（animate=逐笔动画，像小火在画）。
+  // 不打開画笔框/工具栏——用一块独立的临时浮层 canvas 画在他面前，
+  // 归一化到和他自己画的画同尺寸(~150px 框)，画完停留一会后自动淡出消失（与他其他画作行为一致）。
   function replayStrokes(strokes, opts) {
     opts = opts || {};
-    brushResize(); brushStrokes = []; brushClearSurface(); brushBox.classList.remove('hidden');
-    const token = ++brushReplayToken; brushReplaying = true;
-    const step = i => {
-      if (token !== brushReplayToken) return;
-      if (i >= strokes.length) { brushReplaying = false; return; }
-      brushStrokes.push(strokes[i]); brushDrawStroke(strokes[i]);
-      setTimeout(() => step(i + 1), opts.animate ? 90 : 0);
+    if (!strokes || !strokes.length) return;
+    const BOX = 170;                                   // 和他自己画(归一化 150 框)同量级
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const s of strokes) for (const p of (s.pts || [])) {
+      if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
+      if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+    }
+    if (!isFinite(minX)) return;
+    const bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY);
+    const scale = (BOX * 0.82) / Math.max(bw, bh);     // 留 9% 边距
+    const ox = (minX + maxX) / 2, oy = (minY + maxY) / 2;
+    const norm = strokes.map(s => ({
+      color: s.color || '#2b2b2f', erase: !!s.erase,
+      size: Math.max(1.5, Math.min(7, (s.size || 3) * scale)),
+      pts: (s.pts || []).map(p => [ (p[0] - ox) * scale, (p[1] - oy) * scale ])
+    }));
+    const dpr = window.devicePixelRatio || 1;
+    const cv = document.createElement('canvas');
+    cv.width = Math.round(BOX * dpr); cv.height = Math.round(BOX * dpr);
+    const cxp = (typeof posX === 'number' ? posX : 0) + 96, cyp = (typeof posY === 'number' ? posY : 0) + 36 - 50; // 和小火自己画的画同中心
+    cv.style.cssText = `position:fixed;left:${Math.round(cxp - BOX / 2)}px;top:${Math.round(cyp - BOX / 2)}px;width:${BOX}px;height:${BOX}px;z-index:120;pointer-events:none;transition:opacity .8s;opacity:1;`;
+    document.body.appendChild(cv);
+    const ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    let killed = false;
+    const drawOne = s => {
+      if (!s.pts.length) return;
+      ctx.save();
+      ctx.globalCompositeOperation = s.erase ? 'destination-out' : 'source-over';
+      ctx.strokeStyle = s.color; ctx.fillStyle = s.color; ctx.lineWidth = s.size;
+      ctx.beginPath();
+      ctx.moveTo(s.pts[0][0] + BOX / 2, s.pts[0][1] + BOX / 2);
+      for (let i = 1; i < s.pts.length; i++) ctx.lineTo(s.pts[i][0] + BOX / 2, s.pts[i][1] + BOX / 2);
+      if (s.pts.length === 1) { ctx.arc(s.pts[0][0] + BOX / 2, s.pts[0][1] + BOX / 2, Math.max(0.5, s.size / 2), 0, Math.PI * 2); ctx.fill(); }
+      else ctx.stroke();
+      ctx.restore();
     };
-    step(0);
+    let si = 0;
+    const step = () => {
+      if (killed) return;
+      if (si >= norm.length) {                         // 画完 → 停留一会后淡出消失（与他其他画作一致）
+        setTimeout(() => { if (killed) return; cv.style.opacity = '0'; setTimeout(() => { if (!killed) { killed = true; cv.remove(); } }, 850); }, 8200);
+        return;
+      }
+      drawOne(norm[si]); si++;
+      setTimeout(step, opts.animate ? 120 : 0);
+    };
+    step();
   }
 
   document.addEventListener('click', e => {
