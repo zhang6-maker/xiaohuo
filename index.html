@@ -379,7 +379,7 @@
 
 <!-- 全屏画笔层：右键「🖌️ 画笔」唤出，直接在屏幕上画；绘制时整窗可交互，关闭即恢复穿透 -->
 <div id="brushBox" class="box hidden" style="inset:0;max-width:none;width:100%;height:100%;background:transparent;border:none;box-shadow:none;padding:0;pointer-events:none;z-index:300;">
-  <button class="close" style="top:10px;right:16px;font-size:20px;color:#fff;background:rgba(40,40,46,.7);border-radius:50%;padding:2px 9px;">×</button>
+  <button class="close" style="top:10px;right:16px;font-size:20px;color:#fff;background:rgba(40,40,46,.7);border-radius:50%;padding:2px 9px;pointer-events:auto;z-index:302;">×</button>
   <canvas id="brushPad" style="position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;touch-action:none;display:block;pointer-events:auto;"></canvas>
   <div id="brushBar" style="position:fixed;left:50%;top:12px;transform:translateX(-50%);pointer-events:auto;display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:rgba(28,28,32,.92);border:1px solid #3a3a40;border-radius:12px;padding:8px 12px;box-shadow:0 6px 24px rgba(0,0,0,.4);max-width:94vw;z-index:301;">
     <div class="swatches" id="brushSwatches" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
@@ -5647,6 +5647,15 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       BOX_IDS.forEach(id => { const el = document.getElementById(id); if (el && !el.classList.contains('hidden')) el.classList.add('hidden'); });
       if (sbEl && !sbEl.classList.contains('hidden')) hideShotBar(); // 走 hideShotBar 同步 shotBarOpen，避免窗口卡在不穿透态
     }
+  });
+
+  // 通用关闭兜底：任意 .box 内的 .close（×）点击即隐藏该 box。
+  // 防止个别框的 × 因层级/pointer-events 问题点不动；与各处显式监听不冲突（都是 add('hidden')，幂等）。
+  document.addEventListener('click', e => {
+    const x = e.target.closest && e.target.closest('.close');
+    if (!x) return;
+    const box = x.closest('.box');
+    if (box) box.classList.add('hidden');
   });
 
   // 诊断面板：Ctrl+Shift+D 开关。把"前端 boxOpen"与"Rust 实际 want_ignore(穿透?)/box_open"并排显示，
