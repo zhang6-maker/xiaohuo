@@ -281,6 +281,7 @@
   <div data-m="chat">💬 聊天</div>
   <div data-m="sketch">📐 画草图</div>
   <div data-m="brush">🖌️ 画笔</div>
+  <div data-m="strokelib">📚 笔画库</div>
   <div data-m="clearsketch" id="ctxClearSketch" class="hidden">🧹 清除草图</div>
   <div data-m="mem">📖 记录本</div>
   <div data-m="shotmem">📸 截图存记录</div>
@@ -376,26 +377,36 @@
   <div class="actions"><span style="font-size:12px;color:#9aa0a6;margin-right:4px;">坐标轴</span><select id="paintAxisColor" style="background:#2b2b30;color:#f3f3f5;border:1px solid #4a4a52;border-radius:6px;padding:4px 6px;font-size:12px;max-width:92px;"><option value="">默认灰</option><option value="#ff5b5b">红</option><option value="#ff9f43">橙</option><option value="#ffd23d">黄</option><option value="#4bd07a">绿</option><option value="#3dd6d6">青</option><option value="#6ab0ff">蓝</option><option value="#b18cff">紫</option><option value="#ff8fc7">粉</option><option value="#2a2a2e">黑</option><option value="#ffffff">白</option></select><button id="paintGo">画！</button></div>
 </div>
 
-<!-- 画笔面板：右键菜单「🖌️ 画笔」唤出，让用户自己在画板上涂，可选颜色 + 笔粗，并可让小火评价 -->
-<div id="brushBox" class="box hidden" style="top:12px;max-width:416px;">
-  <button class="close">×</button>
-  <div style="font-size:13px;color:#cfd2d8;margin:2px 0 8px;">🖌️ 自己画点什么（画笔）</div>
-  <canvas id="brushPad" width="384" height="240" style="border:1px solid #4a4a52;border-radius:8px;background:#fff;cursor:crosshair;touch-action:none;display:block;user-select:none;"></canvas>
-  <div class="swatches" id="brushSwatches" style="margin-top:10px;"></div>
-  <div class="row">
+<!-- 全屏画笔层：右键「🖌️ 画笔」唤出，直接在屏幕上画；绘制时整窗可交互，关闭即恢复穿透 -->
+<div id="brushBox" class="box hidden" style="inset:0;max-width:none;width:100%;height:100%;background:transparent;border:none;box-shadow:none;padding:0;pointer-events:none;z-index:300;">
+  <button class="close" style="top:10px;right:16px;font-size:20px;color:#fff;background:rgba(40,40,46,.7);border-radius:50%;padding:2px 9px;">×</button>
+  <canvas id="brushPad" style="position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;touch-action:none;display:block;pointer-events:auto;"></canvas>
+  <div id="brushBar" style="position:fixed;left:50%;top:12px;transform:translateX(-50%);pointer-events:auto;display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:rgba(28,28,32,.92);border:1px solid #3a3a40;border-radius:12px;padding:8px 12px;box-shadow:0 6px 24px rgba(0,0,0,.4);max-width:94vw;z-index:301;">
+    <div class="swatches" id="brushSwatches" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
     <span style="font-size:12px;color:#9aa0a6;">自定义</span>
-    <input type="color" id="brushPicker" value="#2b2b2f" />
-    <span style="font-size:12px;color:#9aa0a6;margin-left:10px;">粗细</span>
-    <input type="range" id="brushSize" min="1" max="24" value="4" style="flex:1;accent-color:#6ab0ff;min-width:80px;" />
+    <input type="color" id="brushPicker" value="#2b2b2f" style="width:34px;height:26px;border:none;background:none;cursor:pointer;padding:0;" />
+    <span style="font-size:12px;color:#9aa0a6;">粗细</span>
+    <input type="range" id="brushSize" min="1" max="40" value="4" style="width:92px;accent-color:#6ab0ff;" />
+    <button id="brushEraser" style="background:#2b2b30;border:1px solid #4a4a52;color:#f3f3f5;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px;">🧽 橡皮</button>
+    <button id="brushClear" style="background:#5a3030;border:1px solid #7a4040;color:#f3f3f5;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px;">🧹 清除</button>
+    <button id="brushSave" style="background:#2b4a6b;border:1px solid #3f6a8c;color:#f3f3f5;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px;">💾 保存</button>
+    <label style="font-size:12px;color:#cfd2d8;display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="brushEval" checked /> 评价</label>
+    <button id="brushDone" style="background:#2f6b3a;border:1px solid #3f8a4c;color:#f3f3f5;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px;">完成</button>
   </div>
-  <label class="row" style="margin-top:8px;cursor:pointer;">
-    <input type="checkbox" id="brushEval" checked />
-    <span style="font-size:13px;color:#cfd2d8;">让小火评价这幅画</span>
-  </label>
-  <div class="actions" style="margin-top:10px;justify-content:flex-end;">
-    <button id="brushClear" style="background:#5a3030;border-color:#7a4040;">🧹 清除</button>
-    <button id="brushDone" style="background:#2f6b3a;border-color:#3f8a4c;">完成</button>
+  <div id="brushNameRow" hidden style="position:fixed;left:50%;top:66px;transform:translateX(-50%);pointer-events:auto;display:flex;gap:8px;align-items:center;background:rgba(28,28,32,.95);border:1px solid #3a3a40;border-radius:10px;padding:8px 12px;z-index:301;">
+    <span style="font-size:12px;color:#cfd2d8;">给这幅画起个名字（如 孔雀）：</span>
+    <input id="brushName" style="background:#1c1c20;border:1px solid #4a4a52;color:#f3f3f5;border-radius:6px;padding:5px 8px;font-size:13px;width:150px;" placeholder="孔雀" />
+    <button id="brushNameOk" style="background:#2f6b3a;border:1px solid #3f8a4c;color:#f3f3f5;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px;">确认</button>
+    <button id="brushNameCancel" style="background:#3a3a42;border:1px solid #55555f;color:#f3f3f5;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px;">取消</button>
   </div>
+</div>
+
+<!-- 笔画库：存放用户画作笔迹，可「照着画」让小火模仿，可删除，可导出干净 PNG（不含界面） -->
+<div id="strokeLibBox" class="box hidden" style="top:12px;max-width:420px;max-height:80vh;overflow-y:auto;">
+  <button class="close">×</button>
+  <div style="font-size:13px;color:#cfd2d8;margin:2px 0 10px;">📚 笔画库（让小火照着你画的画）</div>
+  <div id="strokeLibList" style="display:flex;flex-direction:column;gap:10px;"></div>
+  <div id="strokeLibEmpty" style="font-size:12px;color:#9aa0a6;">还没有存过画～ 右键「🖌️ 画笔」画完点「💾 保存」起个名即可。</div>
 </div>
 
 <!-- 聊天框（菜单「💬 聊天」唤出）：一个输入框统管 唱歌 / 看书 / 画画 / 回复，打字触发 -->
@@ -1150,6 +1161,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     else if (act === 'chat') openChatBox();
     else if (act === 'sketch') { openPaintInput(); const h = document.getElementById('paintHint'); if (h) h.textContent = '📐 画草图：直角坐标系 / 象限 / y=sin(x) / 向量(3,4) / 点(1,2) / 圆 … 直接说就行，离线就能画'; }
     else if (act === 'brush') openBrushBox();
+    else if (act === 'strokelib') openStrokeLib();
     else if (act === 'clearsketch') { clearSketches(); }
     else if (act === 'mem') openMemories();
     else if (act === 'shotmem') openShotMem();
@@ -1245,7 +1257,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   makeDraggable(writeColorBox);
   setWriteInk(writeInk);   // 启动时同步选中态
 
-  // ---------- 画笔面板（用户自己画；与「📐 画草图」区分：那是小火画）----------
+  // ---------- 画笔（全屏直接在屏幕上画；与「📐 画草图」区分：那是小火画数学图）----------
   const brushBox = document.getElementById('brushBox');
   const brushPad = document.getElementById('brushPad');
   const brushCtx = brushPad.getContext('2d');
@@ -1253,29 +1265,125 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   const brushPicker = document.getElementById('brushPicker');
   const brushSize = document.getElementById('brushSize');
   const brushEval = document.getElementById('brushEval');
-  let brushColor = '#2b2b2f', brushDrawing = false, brushLast = null;
+  let brushColor = '#2b2b2f', brushDpr = 1, brushDrawing = false, brushLast = null;
+  let brushStrokes = [];        // 当前这一幅画的全部笔画（矢量，用于保存/重绘/模仿）
+  let brushCur = null, brushErase = false, brushReplaying = false, brushReplayToken = 0;
+  const STROKE_KEY = 'xiaohuo_strokes';
   const BRUSH_COLORS = ['#2b2b2f', '#000000', '#ffffff', '#ff5b5b', '#4da3ff', '#4bd07a', '#ffd24d', '#ff7eb6', '#9b6bff'];
-  function setBrushColor(c) { c = c || '#2b2b2f'; brushColor = c; brushSwatches.querySelectorAll('.swatch').forEach(s => s.classList.toggle('sel', s.dataset.c === c)); brushPicker.value = c; }
-  BRUSH_COLORS.forEach(c => { const s = document.createElement('div'); s.className = 'swatch'; s.dataset.c = c; s.style.background = c; s.title = c; s.addEventListener('click', () => setBrushColor(c)); brushSwatches.appendChild(s); });
-  function brushPos(e) { const r = brushPad.getBoundingClientRect(); return { x: (e.clientX - r.left) * (brushPad.width / r.width), y: (e.clientY - r.top) * (brushPad.height / r.height) }; }
-  brushPad.addEventListener('mousedown', e => { brushDrawing = true; brushLast = brushPos(e); });
-  brushPad.addEventListener('mousemove', e => {
-    if (!brushDrawing) return;
-    const p = brushPos(e);
-    brushCtx.strokeStyle = brushColor; brushCtx.lineWidth = +brushSize.value; brushCtx.lineCap = 'round'; brushCtx.lineJoin = 'round';
-    brushCtx.beginPath(); brushCtx.moveTo(brushLast.x, brushLast.y); brushCtx.lineTo(p.x, p.y); brushCtx.stroke();
-    brushLast = p;
-  });
-  window.addEventListener('mouseup', () => { brushDrawing = false; brushLast = null; });
-  brushPicker.addEventListener('input', e => setBrushColor(e.target.value));
-  document.getElementById('brushClear').addEventListener('click', () => brushCtx.clearRect(0, 0, brushPad.width, brushPad.height));
-  brushBox.querySelector('.close').addEventListener('click', () => brushBox.classList.add('hidden'));
-  function openBrushBox() {
-    setBrushColor(brushColor);
-    brushBox.style.left = '50%'; brushBox.style.top = '12px'; brushBox.style.transform = 'translateX(-50%)';
-    brushBox.classList.remove('hidden');
+
+  function brushResize() {
+    brushDpr = window.devicePixelRatio || 1;
+    const w = window.innerWidth, h = window.innerHeight;
+    brushPad.width = Math.round(w * brushDpr); brushPad.height = Math.round(h * brushDpr);
+    brushPad.style.width = w + 'px'; brushPad.style.height = h + 'px';
+    brushCtx.setTransform(brushDpr, 0, 0, brushDpr, 0, 0);  // 之后坐标都用 CSS 像素
   }
-  // 让小火评价：直接把画板图发给视觉模型（用「小火点评画作」提示词，不走 searchPrompt 解题），结果复用 screenBox 显示
+  function brushClearSurface() { brushCtx.clearRect(0, 0, brushPad.width, brushPad.height); }
+  function brushDrawStroke(s) {
+    if (!s.pts.length) return;
+    brushCtx.save();
+    brushCtx.globalCompositeOperation = s.erase ? 'destination-out' : 'source-over';
+    brushCtx.strokeStyle = s.color; brushCtx.fillStyle = s.color; brushCtx.lineWidth = s.size;
+    brushCtx.lineCap = 'round'; brushCtx.lineJoin = 'round';
+    brushCtx.beginPath();
+    brushCtx.moveTo(s.pts[0][0], s.pts[0][1]);
+    for (let i = 1; i < s.pts.length; i++) brushCtx.lineTo(s.pts[i][0], s.pts[i][1]);
+    if (s.pts.length === 1) { brushCtx.arc(s.pts[0][0], s.pts[0][1], Math.max(0.5, s.size / 2), 0, Math.PI * 2); brushCtx.fill(); }
+    else brushCtx.stroke();
+    brushCtx.restore();
+  }
+  function brushPos(e) { const r = brushPad.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+  function brushStart(e) {
+    if (brushReplaying) return;
+    brushDrawing = true;
+    const p = brushPos(e);
+    brushCur = { color: brushColor, size: +brushSize.value, erase: brushErase, pts: [p] };
+    brushStrokes.push(brushCur); brushDrawStroke(brushCur); brushLast = p;
+  }
+  function brushMove(e) {
+    if (!brushDrawing || !brushCur || brushReplaying) return;
+    const p = brushPos(e);
+    brushCur.pts.push(p);
+    brushCtx.save();
+    brushCtx.globalCompositeOperation = brushCur.erase ? 'destination-out' : 'source-over';
+    brushCtx.strokeStyle = brushCur.color; brushCtx.lineWidth = brushCur.size;
+    brushCtx.lineCap = 'round'; brushCtx.lineJoin = 'round';
+    brushCtx.beginPath(); brushCtx.moveTo(brushLast[0], brushLast[1]); brushCtx.lineTo(p[0], p[1]); brushCtx.stroke();
+    brushCtx.restore();
+    brushLast = p;
+  }
+  function brushEnd() { brushDrawing = false; brushCur = null; brushLast = null; }
+  brushPad.addEventListener('mousedown', brushStart);
+  brushPad.addEventListener('mousemove', brushMove);
+  window.addEventListener('mouseup', brushEnd);
+  brushPad.addEventListener('touchstart', e => { e.preventDefault(); const t = e.touches[0]; brushStart({ clientX: t.clientX, clientY: t.clientY }); }, { passive: false });
+  brushPad.addEventListener('touchmove', e => { e.preventDefault(); const t = e.touches[0]; brushMove({ clientX: t.clientX, clientY: t.clientY }); }, { passive: false });
+  brushPad.addEventListener('touchend', brushEnd);
+
+  function setBrushColor(c) {
+    c = c || '#2b2b2f'; brushColor = c; brushErase = false;
+    brushSwatches.querySelectorAll('.swatch').forEach(s => s.classList.toggle('sel', s.dataset.c === c));
+    brushPicker.value = c;
+    const er = document.getElementById('brushEraser'); er.style.background = '#2b2b30'; er.classList.remove('sel');
+  }
+  BRUSH_COLORS.forEach(c => {
+    const s = document.createElement('div'); s.className = 'swatch'; s.dataset.c = c; s.style.background = c; s.title = c;
+    s.addEventListener('click', () => setBrushColor(c)); brushSwatches.appendChild(s);
+  });
+  brushPicker.addEventListener('input', e => setBrushColor(e.target.value));
+  const brushEraserBtn = document.getElementById('brushEraser');
+  brushEraserBtn.addEventListener('click', function () {
+    brushErase = !brushErase;
+    this.style.background = brushErase ? '#3a5a8c' : '#2b2b30';
+    if (brushErase) brushSwatches.querySelectorAll('.swatch').forEach(s => s.classList.remove('sel'));
+  });
+  document.getElementById('brushClear').addEventListener('click', () => { brushStrokes = []; brushClearSurface(); });
+  brushBox.querySelector('.close').addEventListener('click', closeBrush);
+  function closeBrush() { brushBox.classList.add('hidden'); brushReplaying = false; brushReplayToken++; }
+  function openBrushBox() { brushResize(); setBrushColor(brushColor); brushStrokes = []; brushClearSurface(); brushBox.classList.remove('hidden'); }
+
+  function loadStrokes() { try { return JSON.parse(localStorage.getItem(STROKE_KEY) || '[]'); } catch (e) { return []; } }
+  function saveStrokes(a) { try { localStorage.setItem(STROKE_KEY, JSON.stringify(a)); } catch (e) {} }
+  function brushShrunk(max) {
+    max = max || 1280;
+    const k = Math.min(1, max / Math.max(brushPad.width, brushPad.height));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(brushPad.width * k)); c.height = Math.max(1, Math.round(brushPad.height * k));
+    c.getContext('2d').drawImage(brushPad, 0, 0, c.width, c.height);
+    return c.toDataURL('image/png');
+  }
+  function brushThumb() {
+    const max = 200, k = Math.min(1, max / Math.max(brushPad.width, brushPad.height));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(brushPad.width * k)); c.height = Math.max(1, Math.round(brushPad.height * k));
+    c.getContext('2d').drawImage(brushPad, 0, 0, c.width, c.height);
+    return c.toDataURL('image/png');
+  }
+  function openSaveDialog() {
+    if (!brushStrokes.length) { toast('先画点什么再保存～'); return; }
+    document.getElementById('brushNameRow').hidden = false;
+    const inp = document.getElementById('brushName'); inp.value = ''; setTimeout(() => inp.focus(), 30);
+  }
+  function commitSave() {
+    const name = (document.getElementById('brushName').value || '').trim() || ('画作 ' + new Date().toLocaleDateString());
+    const arr = loadStrokes();
+    arr.unshift({ name, strokes: JSON.parse(JSON.stringify(brushStrokes)), thumb: brushThumb(), ts: Date.now() });
+    saveStrokes(arr);
+    document.getElementById('brushNameRow').hidden = true;
+    toast('💾 已存进笔画库：' + name);
+  }
+  document.getElementById('brushSave').addEventListener('click', openSaveDialog);
+  document.getElementById('brushNameOk').addEventListener('click', commitSave);
+  document.getElementById('brushNameCancel').addEventListener('click', () => { document.getElementById('brushNameRow').hidden = true; });
+  document.getElementById('brushName').addEventListener('keydown', e => { if (e.key === 'Enter') commitSave(); });
+  document.getElementById('brushDone').addEventListener('click', () => {
+    const wantEval = brushEval.checked;
+    closeBrush();
+    if (!wantEval || !isTauri) return;
+    evaluateDrawing(brushShrunk());
+  });
+
+  // 让小火评价：把这幅画发给视觉模型（「小火点评画作」提示词，不走解题），结果复用 screenBox
   function evaluateDrawing(b64) {
     if (!isTauri) { toast('评价需要桌面版（能连模型）'); return; }
     const prompt = '你是一个桌面宠物「小火」，性格温和又有点毒舌。用户刚画了一幅画（图片就是用户的画作）。请像朋友一样点评：先肯定亮点，再给一两点可爱的小建议。用中文，简短（3-5 句），语气亲切像小火本人在点评；不要写成解题/讲解格式，不要使用 LaTeX 公式。';
@@ -1287,13 +1395,66 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       .then(res => { const text = (typeof res === 'string' ? res : '').trim(); if (!text) { screenText.innerHTML = '😵 小火这次没评价出来，换张画再试试～'; return; } screenText._raw = text; screenText.innerHTML = renderRich(text); })
       .catch(err => { const et = apiErrText(err); screenText._raw = et; screenText.innerHTML = renderRich(et); });
   }
-  document.getElementById('brushDone').addEventListener('click', () => {
-    const wantEval = brushEval.checked;
-    brushBox.classList.add('hidden');
-    if (!wantEval || !isTauri) return;
-    const b64 = brushPad.toDataURL('image/png');
-    evaluateDrawing(b64);
-  });
+
+  // 笔画库：列出存过的画，可「照着画」让小火模仿、可删除、可导出干净 PNG（不含界面）
+  const strokeLibBox = document.getElementById('strokeLibBox');
+  const strokeLibList = document.getElementById('strokeLibList');
+  const strokeLibEmpty = document.getElementById('strokeLibEmpty');
+  function openStrokeLib() {
+    const arr = loadStrokes();
+    strokeLibList.innerHTML = '';
+    strokeLibEmpty.style.display = arr.length ? 'none' : 'block';
+    arr.forEach((item, idx) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:10px;align-items:center;background:#1c1c20;border:1px solid #33333a;border-radius:10px;padding:8px;';
+      const img = document.createElement('img'); img.src = item.thumb || ''; img.style.cssText = 'width:64px;height:40px;object-fit:cover;border-radius:6px;background:#fff;flex:none;';
+      const name = document.createElement('div'); name.textContent = item.name; name.style.cssText = 'flex:1;font-size:13px;color:#e6e8ec;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      const bDraw = document.createElement('button'); bDraw.textContent = '🖌️ 照着画'; bDraw.style.cssText = 'background:#2f6b3a;border:1px solid #3f8a4c;color:#fff;border-radius:6px;padding:5px 9px;cursor:pointer;font-size:12px;flex:none;';
+      bDraw.addEventListener('click', () => { strokeLibBox.classList.add('hidden'); toast('小火照着你画过的「' + item.name + '」画一遍～'); replayStrokes(item.strokes, { animate: true }); });
+      const bExp = document.createElement('button'); bExp.textContent = '⬇️'; bExp.title = '导出 PNG'; bExp.style.cssText = 'background:#2b4a6b;border:1px solid #3f6a8c;color:#fff;border-radius:6px;padding:5px 9px;cursor:pointer;font-size:12px;flex:none;';
+      bExp.addEventListener('click', () => exportStrokePng(item));
+      const bDel = document.createElement('button'); bDel.textContent = '🗑️'; bDel.title = '删除'; bDel.style.cssText = 'background:#5a3030;border:1px solid #7a4040;color:#fff;border-radius:6px;padding:5px 9px;cursor:pointer;font-size:12px;flex:none;';
+      bDel.addEventListener('click', () => { const a = loadStrokes(); a.splice(idx, 1); saveStrokes(a); openStrokeLib(); });
+      row.append(img, name, bDraw, bExp, bDel);
+      strokeLibList.appendChild(row);
+    });
+    strokeLibBox.classList.remove('hidden');
+  }
+  function exportStrokePng(item) {
+    let maxX = 0, maxY = 0;
+    for (const s of item.strokes) for (const p of s.pts) { if (p[0] > maxX) maxX = p[0]; if (p[1] > maxY) maxY = p[1]; }
+    const pad = 24;
+    const c = document.createElement('canvas');
+    c.width = Math.ceil(maxX + pad * 2) || 400; c.height = Math.ceil(maxY + pad * 2) || 300;
+    const ctx = c.getContext('2d'); ctx.translate(pad, pad);
+    for (const s of item.strokes) {
+      if (!s.pts.length) continue;
+      ctx.save();
+      ctx.globalCompositeOperation = s.erase ? 'destination-out' : 'source-over';
+      ctx.strokeStyle = s.color; ctx.fillStyle = s.color; ctx.lineWidth = s.size; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.beginPath(); ctx.moveTo(s.pts[0][0], s.pts[0][1]);
+      for (let i = 1; i < s.pts.length; i++) ctx.lineTo(s.pts[i][0], s.pts[i][1]);
+      if (s.pts.length === 1) { ctx.arc(s.pts[0][0], s.pts[0][1], Math.max(0.5, s.size / 2), 0, Math.PI * 2); ctx.fill(); }
+      else ctx.stroke();
+      ctx.restore();
+    }
+    const a = document.createElement('a'); a.href = c.toDataURL('image/png'); a.download = (item.name || 'drawing') + '.png';
+    document.body.appendChild(a); a.click(); a.remove();
+    toast('⬇️ 已导出 ' + (item.name || '画作') + '.png');
+  }
+  // 让小火「模仿笔画」：把存好的笔迹按原顺序重绘一遍（animate=逐笔动画，像小火在画）
+  function replayStrokes(strokes, opts) {
+    opts = opts || {};
+    brushResize(); brushStrokes = []; brushClearSurface(); brushBox.classList.remove('hidden');
+    const token = ++brushReplayToken; brushReplaying = true;
+    const step = i => {
+      if (token !== brushReplayToken) return;
+      if (i >= strokes.length) { brushReplaying = false; return; }
+      brushStrokes.push(strokes[i]); brushDrawStroke(strokes[i]);
+      setTimeout(() => step(i + 1), opts.animate ? 90 : 0);
+    };
+    step(0);
+  }
 
   document.addEventListener('click', e => {
     if (!document.getElementById('ctxMenu').contains(e.target)) document.getElementById('ctxMenu').classList.add('hidden');
@@ -1438,7 +1599,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   // 新增弹框只需改这一处；ctxMenu 虽不是 .box，但同样是「开着的浮层」，一并登记。
   const BOX_IDS = [
     'chatBox', 'answerBox', 'screenBox', 'memBox', 'tipsBox',
-    'paintBox', 'colorBox', 'writeColorBox', 'outfitBox', 'ctxMenu', 'brushBox',
+    'paintBox', 'colorBox', 'writeColorBox', 'outfitBox', 'ctxMenu', 'brushBox', 'strokeLibBox',
   ];
   // 启动自检：DOM 里带 × 的 .box 都应已登记。漏了就直接报警，
   // 别等某天出现「Esc 关不掉新弹框 / 穿透不恢复 / 截图带着弹框」再回头找。
@@ -4431,6 +4592,18 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       if (/草图/.test(v)) {
         addChat('sys', '📐 想画什么草图？告诉我具体内容，比如「画 y=sin(x)」「向量(3,4)」「画圆」～');
         openPaintInput();
+        return;
+      }
+    }
+    // 笔画库「照着画」：说"画孔雀/照着我画的孔雀画"→ 存过就重绘模仿；没存过则看是否明确要"照着画"
+    const drawM = v.match(/(?:照着我画的|我画过的|照着画|笔画库|画)\s*([一-龥A-Za-z0-9]{1,12})/);
+    if (drawM) {
+      const noun = drawM[1].replace(/[吧呀啊呢哦嘛]+$/, '');
+      const libHit = loadStrokes().find(it => it.name === noun || it.name.includes(noun) || noun.includes(it.name));
+      if (libHit) { addChat('pet', '我照着你画过的「' + libHit.name + '」给你画一遍～'); replayStrokes(libHit.strokes, { animate: true }); return; }
+      // 没存过：只有明确说"照着画/我画过/笔画库"才提示先画；普通"画X"放行给原有画画流程
+      if (/(照着我画的|我画过的|照着画|笔画库)/.test(v)) {
+        addChat('pet', '我还没存过「' + noun + '」呢～你先右键「🖌️ 画笔」画一遍，点💾保存起个名，下次说「画' + noun + '」或「照着我画的' + noun + '画」我就能照着画啦');
         return;
       }
     }
