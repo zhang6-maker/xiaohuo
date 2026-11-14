@@ -115,14 +115,14 @@
   #shotBar #shotCancel:hover { background: #6e3a3a; }
   #sketchDelBtn:hover { background: #d24a4a; }
   /* 换颜色面板：色板 */
-  :is(#colorBox, #writeColorBox) .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
-  :is(#colorBox, #writeColorBox) .swatch {
+  :is(#colorBox, #writeColorBox, #brushBox) .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
+  :is(#colorBox, #writeColorBox, #brushBox) .swatch {
     width: 30px; height: 30px; border-radius: 6px; cursor: pointer;
     border: 2px solid transparent; box-shadow: 0 0 0 1px rgba(255,255,255,.15);
   }
-  :is(#colorBox, #writeColorBox) .swatch.sel { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.55); }
-  :is(#colorBox, #writeColorBox) .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-  :is(#colorBox, #writeColorBox) input[type=color] { width: 38px; height: 28px; border: none; background: none; cursor: pointer; padding: 0; }
+  :is(#colorBox, #writeColorBox, #brushBox) .swatch.sel { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.55); }
+  :is(#colorBox, #writeColorBox, #brushBox) .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  :is(#colorBox, #writeColorBox, #brushBox) input[type=color] { width: 38px; height: 28px; border: none; background: none; cursor: pointer; padding: 0; }
   /* 换装面板：色板（服装选项） */
   #outfitBox .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
   #outfitBox .swatch {
@@ -280,6 +280,7 @@
   <div data-m="tips">💡 提示</div>
   <div data-m="chat">💬 聊天</div>
   <div data-m="sketch">📐 画草图</div>
+  <div data-m="brush">🖌️ 画笔</div>
   <div data-m="clearsketch" id="ctxClearSketch" class="hidden">🧹 清除草图</div>
   <div data-m="mem">📖 记录本</div>
   <div data-m="shotmem">📸 截图存记录</div>
@@ -373,6 +374,28 @@
   <div id="paintHint" style="margin-bottom:8px;font-size:12px;color:#9aa0a6;">让小火画点什么：画树 / 画太阳 / 画花 / 或说「画 y=sin(x)」「画象限」「向量(3,4)」让他画数学草图（离线就能画）</div>
   <input id="paintText" type="text" placeholder="画树" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:6px;font-size:13px;" />
   <div class="actions"><span style="font-size:12px;color:#9aa0a6;margin-right:4px;">坐标轴</span><select id="paintAxisColor" style="background:#2b2b30;color:#f3f3f5;border:1px solid #4a4a52;border-radius:6px;padding:4px 6px;font-size:12px;max-width:92px;"><option value="">默认灰</option><option value="#ff5b5b">红</option><option value="#ff9f43">橙</option><option value="#ffd23d">黄</option><option value="#4bd07a">绿</option><option value="#3dd6d6">青</option><option value="#6ab0ff">蓝</option><option value="#b18cff">紫</option><option value="#ff8fc7">粉</option><option value="#2a2a2e">黑</option><option value="#ffffff">白</option></select><button id="paintGo">画！</button></div>
+</div>
+
+<!-- 画笔面板：右键菜单「🖌️ 画笔」唤出，让用户自己在画板上涂，可选颜色 + 笔粗，并可让小火评价 -->
+<div id="brushBox" class="box hidden" style="top:12px;max-width:416px;">
+  <button class="close">×</button>
+  <div style="font-size:13px;color:#cfd2d8;margin:2px 0 8px;">🖌️ 自己画点什么（画笔）</div>
+  <canvas id="brushPad" width="384" height="240" style="border:1px solid #4a4a52;border-radius:8px;background:#fff;cursor:crosshair;touch-action:none;display:block;user-select:none;"></canvas>
+  <div class="swatches" id="brushSwatches" style="margin-top:10px;"></div>
+  <div class="row">
+    <span style="font-size:12px;color:#9aa0a6;">自定义</span>
+    <input type="color" id="brushPicker" value="#2b2b2f" />
+    <span style="font-size:12px;color:#9aa0a6;margin-left:10px;">粗细</span>
+    <input type="range" id="brushSize" min="1" max="24" value="4" style="flex:1;accent-color:#6ab0ff;min-width:80px;" />
+  </div>
+  <label class="row" style="margin-top:8px;cursor:pointer;">
+    <input type="checkbox" id="brushEval" checked />
+    <span style="font-size:13px;color:#cfd2d8;">让小火评价这幅画</span>
+  </label>
+  <div class="actions" style="margin-top:10px;justify-content:flex-end;">
+    <button id="brushClear" style="background:#5a3030;border-color:#7a4040;">🧹 清除</button>
+    <button id="brushDone" style="background:#2f6b3a;border-color:#3f8a4c;">完成</button>
+  </div>
 </div>
 
 <!-- 聊天框（菜单「💬 聊天」唤出）：一个输入框统管 唱歌 / 看书 / 画画 / 回复，打字触发 -->
@@ -1126,6 +1149,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     else if (act === 'outfit') openOutfitBox();
     else if (act === 'chat') openChatBox();
     else if (act === 'sketch') { openPaintInput(); const h = document.getElementById('paintHint'); if (h) h.textContent = '📐 画草图：直角坐标系 / 象限 / y=sin(x) / 向量(3,4) / 点(1,2) / 圆 … 直接说就行，离线就能画'; }
+    else if (act === 'brush') openBrushBox();
     else if (act === 'clearsketch') { clearSketches(); }
     else if (act === 'mem') openMemories();
     else if (act === 'shotmem') openShotMem();
@@ -1220,6 +1244,57 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   writeInkPicker.addEventListener('input', e => setWriteInk(e.target.value));
   makeDraggable(writeColorBox);
   setWriteInk(writeInk);   // 启动时同步选中态
+
+  // ---------- 画笔面板（用户自己画；与「📐 画草图」区分：那是小火画）----------
+  const brushBox = document.getElementById('brushBox');
+  const brushPad = document.getElementById('brushPad');
+  const brushCtx = brushPad.getContext('2d');
+  const brushSwatches = document.getElementById('brushSwatches');
+  const brushPicker = document.getElementById('brushPicker');
+  const brushSize = document.getElementById('brushSize');
+  const brushEval = document.getElementById('brushEval');
+  let brushColor = '#2b2b2f', brushDrawing = false, brushLast = null;
+  const BRUSH_COLORS = ['#2b2b2f', '#000000', '#ffffff', '#ff5b5b', '#4da3ff', '#4bd07a', '#ffd24d', '#ff7eb6', '#9b6bff'];
+  function setBrushColor(c) { c = c || '#2b2b2f'; brushColor = c; brushSwatches.querySelectorAll('.swatch').forEach(s => s.classList.toggle('sel', s.dataset.c === c)); brushPicker.value = c; }
+  BRUSH_COLORS.forEach(c => { const s = document.createElement('div'); s.className = 'swatch'; s.dataset.c = c; s.style.background = c; s.title = c; s.addEventListener('click', () => setBrushColor(c)); brushSwatches.appendChild(s); });
+  function brushPos(e) { const r = brushPad.getBoundingClientRect(); return { x: (e.clientX - r.left) * (brushPad.width / r.width), y: (e.clientY - r.top) * (brushPad.height / r.height) }; }
+  brushPad.addEventListener('mousedown', e => { brushDrawing = true; brushLast = brushPos(e); });
+  brushPad.addEventListener('mousemove', e => {
+    if (!brushDrawing) return;
+    const p = brushPos(e);
+    brushCtx.strokeStyle = brushColor; brushCtx.lineWidth = +brushSize.value; brushCtx.lineCap = 'round'; brushCtx.lineJoin = 'round';
+    brushCtx.beginPath(); brushCtx.moveTo(brushLast.x, brushLast.y); brushCtx.lineTo(p.x, p.y); brushCtx.stroke();
+    brushLast = p;
+  });
+  window.addEventListener('mouseup', () => { brushDrawing = false; brushLast = null; });
+  brushPicker.addEventListener('input', e => setBrushColor(e.target.value));
+  document.getElementById('brushClear').addEventListener('click', () => brushCtx.clearRect(0, 0, brushPad.width, brushPad.height));
+  brushBox.querySelector('.close').addEventListener('click', () => brushBox.classList.add('hidden'));
+  function openBrushBox() {
+    setBrushColor(brushColor);
+    brushBox.style.left = '50%'; brushBox.style.top = '12px'; brushBox.style.transform = 'translateX(-50%)';
+    brushBox.classList.remove('hidden');
+  }
+  // 让小火评价：直接把画板图发给视觉模型（用「小火点评画作」提示词，不走 searchPrompt 解题），结果复用 screenBox 显示
+  function evaluateDrawing(b64) {
+    if (!isTauri) { toast('评价需要桌面版（能连模型）'); return; }
+    const prompt = '你是一个桌面宠物「小火」，性格温和又有点毒舌。用户刚画了一幅画（图片就是用户的画作）。请像朋友一样点评：先肯定亮点，再给一两点可爱的小建议。用中文，简短（3-5 句），语气亲切像小火本人在点评；不要写成解题/讲解格式，不要使用 LaTeX 公式。';
+    screenText.innerHTML = '🤔 小火正在看你的画…';
+    screenBox.style.left = '50%'; screenBox.style.top = '12px'; screenBox.style.transform = 'translateX(-50%)';
+    screenBox.classList.remove('hidden');
+    screenAskWrap.classList.add('hidden'); screenResultActions.classList.remove('hidden');
+    invoke('ask_glm', { imagesB64: [b64], prompt })
+      .then(res => { const text = (typeof res === 'string' ? res : '').trim(); if (!text) { screenText.innerHTML = '😵 小火这次没评价出来，换张画再试试～'; return; } screenText._raw = text; screenText.innerHTML = renderRich(text); })
+      .catch(err => { const et = apiErrText(err); screenText._raw = et; screenText.innerHTML = renderRich(et); });
+  }
+  document.getElementById('brushDone').addEventListener('click', () => {
+    const wantEval = brushEval.checked;
+    brushBox.classList.add('hidden');
+    if (!wantEval || !isTauri) return;
+    const b64 = brushPad.toDataURL('image/png');
+    evaluateDrawing(b64);
+  });
+
   document.addEventListener('click', e => {
     if (!document.getElementById('ctxMenu').contains(e.target)) document.getElementById('ctxMenu').classList.add('hidden');
   });
@@ -1363,7 +1438,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   // 新增弹框只需改这一处；ctxMenu 虽不是 .box，但同样是「开着的浮层」，一并登记。
   const BOX_IDS = [
     'chatBox', 'answerBox', 'screenBox', 'memBox', 'tipsBox',
-    'paintBox', 'colorBox', 'writeColorBox', 'outfitBox', 'ctxMenu',
+    'paintBox', 'colorBox', 'writeColorBox', 'outfitBox', 'ctxMenu', 'brushBox',
   ];
   // 启动自检：DOM 里带 × 的 .box 都应已登记。漏了就直接报警，
   // 别等某天出现「Esc 关不掉新弹框 / 穿透不恢复 / 截图带着弹框」再回头找。
