@@ -88,27 +88,14 @@ pub fn run() {
                 // 真穿透：默认 ignore=true，透明窗不挡桌面点击
                 let _ = w.set_ignore_cursor_events(true);
 
-                // 默认全屏透明层：铺满主屏，宠物可在整屏漫游。
-                // 穿透默认开启（下方 set_ignore_cursor_events(true)），只有悬停宠物时才接收点击，不挡桌面。
-                if let Ok(Some(mon)) = w.current_monitor() {
-                    let sf = mon.scale_factor();
-                    let lw = mon.size().width as f64 / sf;        // 物理宽 / dpr = 逻辑宽
-                    let lh = mon.size().height as f64 / sf;       // 物理高 / dpr = 逻辑高
-                    let _ = w.set_size(tauri::LogicalSize::new(lw, lh));
-                    let _ = w.set_position(tauri::LogicalPosition::new(0.0, 0.0));
-                    // 兜底：setup 阶段 set_size/set_position 偶发时机偏早失效，延迟 400ms 再设一次
-                    let wb = w.clone();
-                    std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(400));
-                        if let Ok(Some(mon2)) = wb.current_monitor() {
-                            let sf2 = mon2.scale_factor();
-                            let lw2 = mon2.size().width as f64 / sf2;
-                            let lh2 = mon2.size().height as f64 / sf2;
-                            let _ = wb.set_size(tauri::LogicalSize::new(lw2, lh2));
-                            let _ = wb.set_position(tauri::LogicalPosition::new(0.0, 0.0));
-                        }
-                    });
-                }
+                // 默认全屏透明层：铺满【所有显示器】（虚拟屏并集），宠物可在任意屏漫游，避免副屏"消失"
+                fill_virtual_screen(&w);
+                // 兜底：setup 阶段 set_size/set_position 偶发时机偏早失效，延迟 400ms 再设一次
+                let wb = w.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(400));
+                    fill_virtual_screen(&wb);
+                });
             }
 
             // 框选态标志，供轮询线程读取
@@ -765,6 +752,36 @@ async fn ask_sketch(app: tauri::AppHandle, text: String) -> Result<String, Strin
     .await
 }
 
+/// 让窗口铺满【所有显示器】（虚拟屏并集），而不是只盖主屏。
+/// 用各显示器的逻辑矩形求并集：左上角可能是负坐标（有显示器在主屏左/上方），Tauri 逻辑坐标支持负值。
+/// 这样小火在任意显示器上都可见。注意：跨不同 DPI 的显示器时，单窗口只能用一种 DPI 渲染，
+/// 接缝处可能有轻微缩放偏差——但远比"副屏完全看不到小火"好。
+fn fill_virtual_screen(w: &tauri::WebviewWindow) {
+    let mut min_x = f64::MAX;
+    let mut min_y = f64::MAX;
+    let mut max_x = f64::MIN;
+    let mut max_y = f64::MIN;
+    if let Ok(mons) = w.available_monitors() {
+        for m in mons {
+            let sf = m.scale_factor();
+            let p = m.position();
+            let s = m.size();
+            let lx = p.x as f64 / sf;
+            let ly = p.y as f64 / sf;
+            let lw = s.width as f64 / sf;
+            let lh = s.height as f64 / sf;
+            min_x = min_x.min(lx);
+            min_y = min_y.min(ly);
+            max_x = max_x.max(lx + lw);
+            max_y = max_y.max(ly + lh);
+        }
+    }
+    if max_x > min_x && max_y > min_y {
+        let _ = w.set_size(tauri::LogicalSize::new(max_x - min_x, max_y - min_y));
+        let _ = w.set_position(tauri::LogicalPosition::new(min_x, min_y));
+    }
+}
+
 /// 进入/退出全屏框选：true=把主窗口全屏置顶并完全可交互；false=还原小窗并恢复穿透。
 #[tauri::command]
 fn toggle_pick(full: bool, app: tauri::AppHandle) {
@@ -783,14 +800,8 @@ fn toggle_pick(full: bool, app: tauri::AppHandle) {
             let _ = w.set_ignore_cursor_events(false);
             eprintln!("[pick] 进入全屏框选: {}x{} (dpr {})", sw, sh, sf);
         } else {
-            // 还原全屏透明层（与启动一致）：铺满主屏 + 恢复穿透；不改 decorations/alwaysOnTop（配置本就是 false/true）
-            if let Ok(Some(mon)) = w.current_monitor() {
-                let msf = mon.scale_factor();
-                let lw = mon.size().width as f64 / msf;
-                let lh = mon.size().height as f64 / msf;
-                let _ = w.set_size(tauri::LogicalSize::new(lw, lh));
-                let _ = w.set_position(tauri::LogicalPosition::new(0.0, 0.0));
-            }
+            // 还原全屏透明层（与启动一致）：铺满所有显示器 + 恢复穿透；不改 decorations/alwaysOnTop（配置本就是 false/true）
+            fill_virtual_screen(&w);
             // 只有"没有任何弹框"时才恢复穿透。搜一搜/看屏退出后紧接着要显示结果框，
             // 若这里无条件开穿透，结果框上的 × / 📝记忆 会点不到，且轮询的 last_ignore
             // 缓存会因此失同步、永不纠正。有框时保持可交互，交给轮询/自愈统一决定。
