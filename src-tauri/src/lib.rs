@@ -4,15 +4,20 @@ use base64::Engine;
 use tauri::Emitter;
 use tauri::Listener;
 use tauri::Manager;
-use windows::Win32::Foundation::{POINT, RECT};
+use windows::Win32::Foundation::{POINT, RECT, HWND, CloseHandle};
 use windows::Win32::Graphics::Gdi::{
     BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetDC,
     ReleaseDC, SelectObject, DIB_RGB_COLORS, SRCCOPY, BITMAPINFO, BITMAPINFOHEADER, HBITMAP, HDC,
     HGDIOBJ,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetCursorPos, GetSystemMetrics, GetWindowRect, SM_CXSCREEN, SM_CYSCREEN,
+    GetCursorPos, GetSystemMetrics, GetWindowRect, GetForegroundWindow, GetWindowThreadProcessId,
+    SM_CXSCREEN, SM_CYSCREEN,
 };
+use windows::Win32::System::Threading::{
+    OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+};
+use windows::core::PWSTR;
 use std::io::Write;
 
 /// 框选态标志：进入"看屏/搜题"全屏框选时置 true，期间窗口必须完全可交互（否则框选点不到）
@@ -119,7 +124,9 @@ pub fn run() {
             let rect_poll = rect.clone();
             std::thread::spawn(move || {
                 let mut last_ignore = true;
-                let mut last_top = true;   // 初始与配置一致（alwaysOnTop:true）；首个空闲帧即撤掉置顶
+                let mut last_top = true;   // 初始与配置一致（alwaysOnTop:true）
+                let mut last_fg_hwnd: Option<HWND> = None; // 缓存最前台窗口，变化时才重判截图工具
+                let mut last_fg_is_ss = false;
                 let mut frame = 0u32;
                 loop {
                     std::thread::sleep(std::time::Duration::from_millis(16));
@@ -205,11 +212,25 @@ pub fn run() {
                         }
                     }
 
-                    // 置顶策略：仅当真正需要挡在屏幕最前（框选 / 拖拽宠物 / 任一弹框开着）时才 alwaysOnTop；
-                    // 平时（宠物闲逛、鼠标穿透态）主动撤掉置顶，退到普通层级。
-                    // 否则全屏透明 + 永久置顶的窗口会压在 Win+Shift+S / Snipaste / 微信截图 等
-                    // 全屏遮罩选区工具上面，导致用户自己的截图选区拖不动、或把小火的透明层截进去。
-                    let want_top = picking_now || dragging_now || box_open_now;
+                    // 置顶策略 v2（修「一点击别的窗口小火就跑到页面后面」）：
+                    // 平时（闲逛/穿透态）【必须】常驻置顶——否则一点击浏览器/应用，那个窗口被激活
+                    // 就盖到小火上面，小火没丢、只是被挡在"页面后面"看不见。
+                    // 唯一例外：最前台是截图/框选类工具(Snipaste/Win+Shift+S/ShareX…)时撤掉置顶，
+                    // 避免把小火透明层截进截图、或挡住选区拖拽；工具一关立即恢复置顶。
+                    let own_hwnd = handle_poll
+                        .get_webview_window("main")
+                        .and_then(|w| w.hwnd().ok());
+                    // 仅在最前台窗口变化时重新判定，避免每帧都查进程名（省开销）
+                    let is_ss = if let Some(hw) = own_hwnd {
+                        if Some(hw) != last_fg_hwnd {
+                            last_fg_hwnd = Some(hw);
+                            last_fg_is_ss = foreground_is_screenshot_tool(hw);
+                        }
+                        last_fg_is_ss
+                    } else {
+                        false
+                    };
+                    let want_top = picking_now || dragging_now || box_open_now || !is_ss;
                     if want_top != last_top {
                         last_top = want_top;
                         if let Some(w) = handle_poll.get_webview_window("main") {
@@ -779,6 +800,53 @@ fn fill_virtual_screen(w: &tauri::WebviewWindow) {
     if max_x > min_x && max_y > min_y {
         let _ = w.set_size(tauri::LogicalSize::new(max_x - min_x, max_y - min_y));
         let _ = w.set_position(tauri::LogicalPosition::new(min_x, min_y));
+    }
+}
+
+/// 判断当前"最前台窗口"是否来自截图/框选类工具。用于置顶策略的精准旁路：
+/// 这类工具激活时临时撤掉小火的置顶，否则会把小火的透明层截进截图、或挡住选区拖拽。
+/// 工具一关（前台回到普通窗口）立即恢复置顶。own = 小火自己的 hwnd，前台是它自己时直接返回 false。
+fn foreground_is_screenshot_tool(own: HWND) -> bool {
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg == own {
+            return false; // 前台就是小火自己
+        }
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(fg, Some(&mut pid));
+        if pid == 0 {
+            return false;
+        }
+        let hproc = match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+            Ok(h) => h,
+            Err(_) => return false,
+        };
+        let mut buf = [0u16; 260];
+        let mut size: u32 = buf.len() as u32;
+        let name = if QueryFullProcessImageNameW(
+            hproc,
+            PROCESS_NAME_WIN32,
+            PWSTR(buf.as_mut_ptr()),
+            &mut size,
+        )
+        .is_ok()
+        {
+            String::from_utf16_lossy(&buf[..size as usize])
+                .rsplit('\\')
+                .next()
+                .unwrap_or("")
+                .to_lowercase()
+        } else {
+            String::new()
+        };
+        let _ = CloseHandle(hproc);
+        const TOOLS: [&str; 4] = [
+            "snipaste.exe",     // Snipaste
+            "screensketch.exe", // Win+Shift+S 现代截图
+            "snippingtool.exe", // 旧版截图工具
+            "sharex.exe",       // ShareX
+        ];
+        TOOLS.contains(&name.as_str())
     }
 }
 
