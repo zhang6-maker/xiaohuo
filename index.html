@@ -1588,7 +1588,22 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     noteCtx.restore();
     noteLast = rel;
   }
-  function noteEnd() { noteDrawing = false; noteCur = null; noteLast = null; }
+  let notePinTimer = null;
+  function noteEnd() {
+    noteDrawing = false; noteCur = null; noteLast = null;
+    if (!noteEditMode || !noteActive) return;
+    if (!noteActive.tpl) {
+      // 落笔后自动钉住：这个功能本身就是"跟随笔记"，不该还要用户多点一下才知道要钉
+      clearTimeout(notePinTimer);
+      notePinTimer = setTimeout(() => {
+        if (noteEditMode && noteActive && !noteActive.tpl) notePin();
+      }, 700);
+    } else if (noteActive.tpl) {
+      // 已在跟随的笔记又加了一笔：只更新掩膜（模板仍用当初那张干净底图，不重新截，避免把笔迹截进模板）
+      noteActive.mask = noteBuildMask(noteActive, noteActive.tpl.gw, noteActive.tpl.gh);
+      noteSave();
+    }
+  }
   notePad.addEventListener('mousedown', noteStart);
   notePad.addEventListener('mousemove', noteMove);
   window.addEventListener('mouseup', noteEnd);
@@ -1671,9 +1686,16 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       targets.push(notePad, noteBar, noteHint);
       const c = noteBox.querySelector('.close'); if (c) targets.push(c);
     }
+    // 小火本体会动：只有它压在取样区域上时才临时隐掉，否则不隐（避免每 0.9 秒闪一下）。
+    // 不处理的话，本体的像素会污染模板/待匹配区域，把分数拉低 → 误判跟丢。
+    try {
+      const px0 = posX - 150, py0 = posY - 190;
+      const overlap = !(x + w < px0 || x > px0 + 300 || y + h < py0 || y > py0 + 230);
+      if (overlap) { const st = document.getElementById('stage'); if (st) targets.push(st); }
+    } catch (e) {}
     const prev = targets.map(el => el.style.visibility);
     targets.forEach(el => { el.style.visibility = 'hidden'; });
-    if (hideUi) await new Promise(r => setTimeout(r, 45));
+    if (hideUi || targets.length) await new Promise(r => setTimeout(r, 45));
     let b64 = '';
     try {
       // 传物理像素；返回图再按 CSS 尺寸降采样，坐标体系始终是 CSS 像素
@@ -1862,7 +1884,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     noteBox.classList.remove('hidden');
     const allHidden = noteGroups.length > 0 && noteGroups.every(g => g.collapsed);
     noteToggleBtn.textContent = allHidden ? '👁 显示全部' : '🚫 隐藏全部';
-    noteHint.textContent = '在要记的内容上划一笔 → 点「📌 钉住并跟随」，之后内容上下左右滚动它都会跟着走；点已有笔记可整体改色/粗细。内容滚出屏幕会自动隐藏。';
+    noteHint.textContent = '在要记的内容上划一笔就会自动钉住并跟随（也可点「📌 钉住并跟随」重新钉）；之后内容上下左右滚动它都会跟着走；点已有笔记可整体改色/粗细；内容滚出屏幕会自动隐藏。';
     setNoteColor(noteColor);
     noteRedraw();
     syncBoxOpen();
@@ -1870,6 +1892,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   function closeNoteBox() {
     noteEditMode = false;
     noteDrawing = false; noteCur = null;
+    clearTimeout(notePinTimer);
     noteGroups = noteGroups.filter(g => g.strokes && g.strokes.length);
     noteActive = null;
     notePad.style.pointerEvents = 'none';
@@ -6827,12 +6850,17 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
 
   // ---------- 关闭健壮性：Esc 关掉所有弹框；点弹框外部即关闭（清单统一用 BOX_IDS） ----------
   // ctxMenu 已并入 BOX_IDS，不再单独处理：点外关闭的 !el.contains(t) 判断对菜单同样成立。
+  // 【统一关闭入口】noteBox 必须走 closeNoteBox()：它会复位 noteEditMode / pointerEvents / 保存，
+  // 否则只加 hidden 会让 noteEditMode 永久停在 true，跟随轮询被挡住 → 「没有跟随」。
+  function closeBoxById(id) {
+    const el = document.getElementById(id);
+    if (!el || el.classList.contains('hidden')) return;
+    if (id === 'noteBox') { try { closeNoteBox(); } catch (e) {} return; }
+    el.classList.add('hidden');
+  }
   window.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
-      BOX_IDS.forEach(id => {
-        const el = document.getElementById(id);
-        if (el && !el.classList.contains('hidden')) el.classList.add('hidden');
-      });
+      BOX_IDS.forEach(id => closeBoxById(id));
     }
   });
   document.addEventListener('mousedown', e => {
@@ -6843,9 +6871,12 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const floats = BOX_IDS.map(id => document.getElementById(id)).filter(el => el && !el.classList.contains('hidden'));
     const sbEl = document.getElementById('shotBar');
     if (sbEl && !sbEl.classList.contains('hidden')) floats.push(sbEl);
-    const onFloat = floats.some(el => el.contains(t));
+    // 跟随笔记的笔迹层在 noteBox 外层（关掉工具条后笔迹仍要在），
+    // 所以必须把 notePad 也算作「框内」，否则画一笔就被判成点外 → 工具条直接消失。
+    const noteEditing = noteBox && !noteBox.classList.contains('hidden');
+    const onFloat = floats.some(el => el.contains(t)) || (noteEditing && notePad && notePad.contains(t));
     if (!onFloat) {
-      BOX_IDS.forEach(id => { const el = document.getElementById(id); if (el && !el.classList.contains('hidden')) el.classList.add('hidden'); });
+      BOX_IDS.forEach(id => closeBoxById(id));
       if (sbEl && !sbEl.classList.contains('hidden')) hideShotBar(); // 走 hideShotBar 同步 shotBarOpen，避免窗口卡在不穿透态
     }
   });
