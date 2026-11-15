@@ -1,48 +1,79 @@
-离线朗读引擎 · 第三方组件与许可声明
+内置朗读引擎 · 第三方组件与许可声明
 =====================================
 
-本目录包含小火「语言学习」内置离线朗读引擎，用于在本机 Windows 未安装对应
-语种系统语音包时，按目标语种正确发音（例如把 "300" 读成 three hundred、
-日语按日语音读，而不是交给中文嗓音念）。
+小火「语言学习」的朗读功能随程序内置了两套离线语音引擎，均在本机运行：
+不联网、不上传朗读文本、不需要 API Key、不依赖 Windows 已安装的语音包。
+本文件列出各组件的来源与许可，供再分发时遵守。
 
-组件
-----
-1. eSpeak NG 1.52.0（文本转语音引擎，编译为 WebAssembly）
+A. 英语神经语音（自然音质，默认用于英语朗读）
+---------------------------------------------
+1. Piper 声学模型 en_US-kathleen-low（ONNX，60.2 MB）
+   许可：CC0 1.0 Universal（公共领域贡献）
+   条款：https://creativecommons.org/publicdomain/zero/1.0/
+   来源：https://huggingface.co/rhasspy/piper-voices
+         en/en_US/kathleen/low/en_US-kathleen-low.onnx
+         （同目录 MODEL_CARD 明确标注 "License: CC0"）
+   说明：允许商业使用、修改与再分发，无署名要求。
+   ⚠️ 特意选用 CC0 模型：Piper voices 中部分英语模型（如 en_US-lessac-low
+   基于 Blizzard 2013 Lessac 数据集、en_US-ryan-low 为 CC BY-NC-SA 4.0）
+   带「仅限研究 / 禁止商业 / 禁止再分发」限制，不适合随公开软件分发，
+   因此本程序**未包含**这些模型。
+
+2. piper-tts-web 1.1.2（PiperWebEngine / OnnxWebRuntime / PhonemizeWebRuntime）
+   许可：MIT
+   上游：https://github.com/Poket-Jony/piper-tts-web
+   获取：https://registry.npmjs.org/piper-tts-web/-/piper-tts-web-1.1.2.tgz
+   说明：public/piper/piper-tts-web.js 取自该包，未作修改。
+
+3. ONNX Runtime Web 1.31.1（ort-wasm-simd-threaded.wasm）
+   许可：MIT
+   上游：https://github.com/microsoft/onnxruntime
+   说明：由 piper-tts-web 随包提供；本程序以单线程（numThreads=1）运行，
+   无需 COOP/COEP 跨源隔离配置。
+
+4. piper_phonemize.wasm / piper_phonemize.data（文本→音素）
+   来源：Piper 项目的音素化器（https://github.com/rhasspy/piper-phonemize）
+   说明：该组件链接 eSpeak NG，按 GPL-3.0-or-later 处理；许可证全文见
+   同目录 LICENSE-GPL-3.0.txt。
+
+B. 多语种兜底引擎（其余语种，机械音）
+-------------------------------------
+5. eSpeak NG 1.52.0（编译为 WebAssembly）
    许可：GPL-3.0-or-later
    上游：https://github.com/espeak-ng/espeak-ng
-   本目录 data/ 下的词典数据（*_dict.gz）、core.bin.gz、manifest.json
-   均派生自 eSpeak NG 的 espeak-ng-data。
+   说明：public/espeak/data/ 下的词典（*_dict.gz）、core.bin.gz、
+   manifest.json 均派生自 eSpeak NG 的 espeak-ng-data。
 
-2. @spelling-creator/spellophone 0.2.1
-   （eSpeak NG 的 WebAssembly / JavaScript 封装，提供 createEspeak、
-   synthesize、encodeWav 等接口）
+6. @spelling-creator/spellophone 0.2.1（eSpeak NG 的 WASM/JS 封装）
    许可：GPL-3.0-or-later
    上游：https://github.com/Spelling-Creator/spellophone
    获取：https://registry.npmjs.org/@spelling-creator/spellophone/-/spellophone-0.2.1.tgz
-   本目录 spellophone.iife.js、espeak-ng.wasm 来自该 npm 包，未作修改。
+   说明：public/espeak/ 下 spellophone.iife.js、espeak-ng.wasm 取自该包，
+   未作修改。
 
 许可证全文见同目录 LICENSE-GPL-3.0.txt（GNU GPL v3，2007-06-29）。
 
 许可说明（重要）
 --------------
-上述组件以 GPL-3.0-or-later 授权。小火主程序本身为 MIT 许可；此处随程序
-分发的是**独立的第三方组件**（作为独立 WASM 模块与数据文件聚合分发，运行时
-由页面动态加载），GPL 义务仅及于该组件本身及其修改版，不改变小火主程序的
-MIT 许可。
+小火主程序本身为 MIT 许可。A 组中的 CC0 / MIT 组件允许商业使用与再分发；
+B 组 GPL 组件作为**独立的第三方 WASM 模块与数据文件聚合分发**（运行时由
+页面动态加载），GPL 义务仅及于该组件本身及其修改版，不改变小火主程序的
+MIT 许可。按 GPL-3.0 第 6 条，接收方有权获得 B 组组件的完整对应源代码，
+可通过上述上游地址或 npm registry 取得。
 
-按 GPL-3.0 第 6 条，接收方有权获得上述组件的完整对应源代码。可通过前述
-上游地址获取；如需本程序所用版本的精确源码副本，请联系项目维护者，
-或直接从 npm registry 下载该版本 tarball（含 wasm 构建产物与数据），
-并依上游仓库说明取得 eSpeak NG 对应版本源码。
+使用范围与已知限制
+------------------
+- 英语：默认走 A 组神经模型，音质接近真人；首次朗读需加载模型约 3–10 秒，
+  之后约 1 秒出声。加载失败会自动回退到系统嗓音 / B 组引擎。
+- 日语、韩语、法/德/西等：走系统嗓音（若本机装了对应语音包），否则由
+  B 组 eSpeak NG 按目标语种合成——是规则式机械音，且日语汉字无读音数据
+  （假名可正常朗读，复杂汉字词可能读成 "Chinese letter"）。
+- Piper 的日语模型采用 OpenJTalk 音素集，当前运行时只带 eSpeak 音素化器，
+  无法直接使用，故日语未提供神经语音（已实测会卡死）。
+- 用户在「朗读嗓音」下拉中可随时手动切换到「内置离线引擎」强制完全离线。
 
-使用范围
+技术说明
 --------
-仅用于语言学习的朗读兜底。完全离线运行：不联网、不上传任何文本、不需要
-API Key、不依赖 Windows 系统语音包。系统装了对应语种嗓音时，程序会优先
-使用系统嗓音（音质更自然），本引擎仅作兜底。
-
-已知限制
---------
-eSpeak NG 是规则式合成，音质为机械音；日语汉字无读音数据（假名可正常朗读），
-复杂的汉字词可能读成 "Chinese letter"。想要自然读音请安装 Windows 对应
-语音包（设置 → 时间和语言 → 语音）。
+所有资源位于程序内嵌的 public/piper/ 与 public/espeak/，由 Tauri 打包进
+可执行文件，运行时通过 document.baseURI 解析为绝对 URL 动态加载，
+不向任何外部服务器发起请求。

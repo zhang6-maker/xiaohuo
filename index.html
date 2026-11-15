@@ -5720,6 +5720,45 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     };
     au.play().catch(() => {});
   }
+  // ---- 内置英语神经语音（Piper VITS + ONNX Runtime Web，完全离线） ----
+  // 微软在 WebView2 里禁用了在线自然语音，本机又没有日语等语种的本地嗓音；
+  // 靠系统嗓音永远会有语种掉进机械音。英语改为随程序内置的神经声学模型合成，
+  // 音质接近真人、不联网、不用 key、不依赖系统装了什么。
+  const PIPER_BASE = new URL('piper/', document.baseURI).href;
+  let _piperP = null, _piperHinted = false;
+  function getPiper() {
+    if (_piperP) return _piperP;
+    _piperP = (async () => {
+      const mod = await import(/* @vite-ignore */ PIPER_BASE + 'piper-tts-web.js');
+      const voiceProvider = {
+        destroy() {},
+        async fetch() {
+          const cfg = await (await fetch(PIPER_BASE + 'models/en.json')).json();
+          const blob = await (await fetch(PIPER_BASE + 'models/en.onnx')).blob();
+          return [cfg, URL.createObjectURL(blob)];
+        }
+      };
+      // generate() 不会调用 expressionRuntime，传空实现避免它去联网加载表情模型
+      const noExpression = { destroy() {}, generate() { return Promise.resolve({}); } };
+      return new mod.PiperWebEngine({
+        onnxRuntime: new mod.OnnxWebRuntime({ basePath: PIPER_BASE + 'onnx/', numThreads: 1 }),
+        phonemizeRuntime: new mod.PhonemizeWebRuntime({ basePath: PIPER_BASE + 'piper/' }),
+        expressionRuntime: noExpression,
+        voiceProvider
+      });
+    })();
+    return _piperP;
+  }
+  function playBlobAudio(blob) {
+    const url = URL.createObjectURL(blob);
+    const au = new Audio(url);
+    _espAudio = au;
+    au.onended = au.onerror = () => {
+      URL.revokeObjectURL(url);
+      if (_espAudio === au) _espAudio = null;
+    };
+    return au.play();
+  }
   // 如实显示 WebView2 实际检测到的嗓音（不再靠猜），并说明在线语音会联网
   function updateVoiceHint() {
     loadVoices();
@@ -5746,9 +5785,10 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       const natural = arr.filter(v => /natural/i.test(v.name || '')).length;
       return (LANG_NAMES[lc] || lc) + ' ' + arr.length + '个' + (natural ? '（含' + natural + '个自然语音）' : '');
     });
-    let msg = '检测到 ' + _voices.length + ' 个嗓音：' + parts.join('、') + '。';
-    msg += '自动挑该语种里最好听的（自然语音优先）；标「在线」的会把朗读文本发给微软，想完全离线就在下拉选「内置离线引擎」。';
-    msg += ' 一个都没有的语种才用内置引擎。';
+    let msg = '检测到 ' + _voices.length + ' 个系统嗓音：' + parts.join('、') + '。';
+    msg += '英语默认用内置的神经语音模型（自然音质、完全离线，首次约 3–10 秒加载）。';
+    msg += '其他语种：自动挑系统里最好听的；标「在线」的会把文本发给微软；一个都没有才用内置离线引擎（机械音）。';
+    msg += '想强制完全离线，可在下拉选「内置离线引擎」。';
     langVoiceHint.textContent = msg;
   }
   async function speak(text, langCode) {
@@ -5764,10 +5804,32 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       updateVoiceHint();
     }
     const choice = chosenVoice(lang);
+    // ② 英语自动模式 → 内置神经语音（不依赖 WebView2 嗓音，也不联网）。
+    //    用户手动指定了嗓音、或选了「内置离线引擎」时，尊重他的选择。
+    if (lang === 'en' && choice.mode === 'auto') {
+      if (!_piperHinted) {
+        _piperHinted = true;
+        toast('首次朗读正在准备内置英语神经语音（约 3–10 秒，之后秒开）…');
+        if (langVoiceHint) langVoiceHint.textContent = '⏳ 首次加载内置英语神经语音模型…（之后约 1 秒出声，完全离线、不联网）';
+      }
+      try {
+        const eng = await getPiper();
+        if (seq !== _speakSeq) return;
+        const r = await eng.generate(text, 'en_US-kathleen-low', 0);
+        if (seq !== _speakSeq) return;
+        await playBlobAudio(r.file);
+        if (langVoiceHint && langVoiceHint.textContent.startsWith('⏳')) updateVoiceHint();
+        return;
+      } catch (e) {
+        _piperP = null;   // 允许下次重试
+        if (langVoiceHint) langVoiceHint.textContent = '⚠ 内置英语神经语音加载失败，已回退到系统嗓音/离线引擎。';
+        toast('内置英语神经语音没起来，已回退：' + (e && e.message ? e.message : e));
+      }
+    }
     let v = null;
     if (choice.mode === 'fixed') v = choice.voice;
     else if (choice.mode === 'auto') v = findVoice(lang);
-    // ② 用系统/在线嗓音朗读（真人录音或神经自然语音，音质远好于机械合成）
+    // ③ 用系统/在线嗓音朗读（真人录音或神经自然语音，音质远好于机械合成）
     if (v) {
       try {
         const u = new SpeechSynthesisUtterance(text);
@@ -5781,7 +5843,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         return;
       } catch (e) {}
     }
-    // ③ 该语种一个嗓音都没有 → 绝不回落到中文嗓音，用内置离线引擎按目标语种合成
+    // ④ 该语种一个嗓音都没有 → 绝不回落到中文嗓音，用内置离线引擎按目标语种合成
     if (!_espHinted) {
       _espHinted = true;
       toast('该语种没有可用嗓音，正在准备内置离线引擎（首次约 1–2 秒）…');

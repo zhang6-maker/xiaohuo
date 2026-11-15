@@ -26,7 +26,7 @@
 | 🖼️ 点评画作 | 把你的涂鸦发给模型，让它点评 / 批改。 |
 | ✍️ 屏幕写字 | 聊天框输入「在屏幕上写我爱你」，它会**按真实笔顺一笔一划把字写出**（内置 9574 字离线笔顺库，是真书写不是描边轮廓），**火柴人右手会精准握笔、笔尖跟着手逐笔移动，姿态像真在写字**；线条细、像手写；字色可自选（右键「✍️ 字色」选色并记住，或说「用红色写…」），不设置时跟随身体色；一批字固定一个色，写字过程不会被烟花/画画改掉；多条留言向下堆叠互不重叠；**默认停留约 1 分钟**自动消失，可加「停留X分钟/秒」指定时长（最长 2 小时）。中文走真笔顺，数字与常用标点也内置手写笔画、同样逐笔书写且手跟笔尖；英文字母/表情等仍回退为同色文本。**超过约 12 字（如整篇《出师表》）会温柔拒绝，不再静默截断写残缺片段**。 |
 
-| 🗣️ 语言学习 | 右键「🗣️ 语言学习」打开学习框：粘贴或框选屏幕外文 → 朗读 + 翻译（智谱 `ask_glm` 纯文本）+ 逐词 chips，点单词即听标准音，每个单词可 🎤 跟读（本地 MediaRecorder 录音回放对比，不联网识别）；可「💾 保存」当前外文+译文到本地，之后从「📚 已存」随时「📖 再听一遍」「👀 看译文」「🗑️ 删除」（localStorage，纯本地）。**朗读开箱即用**：系统装了对应语种嗓音就用系统嗓音（自然音质），没装则自动用内置的离线 eSpeak NG WASM 引擎按目标语种合成（`300` 读 three hundred、日语按日语音读，绝不串成中文），完全离线、不联网、不上传、不用 key；语言学习框实时显示当前用哪条路。装系统语音包只为获得更自然的读音，不是必需。 |
+| 🗣️ 语言学习 | 右键「🗣️ 语言学习」打开学习框：粘贴或框选屏幕外文 → 朗读 + 翻译（智谱 `ask_glm` 纯文本）+ 逐词 chips，点单词即听标准音，每个单词可 🎤 跟读（本地 MediaRecorder 录音回放对比，不联网识别）；可「💾 保存」当前外文+译文到本地，之后从「📚 已存」随时「📖 再听一遍」「👀 看译文」「🗑️ 删除」（localStorage，纯本地）。**朗读引擎**：英语默认走程序内置的 Piper VITS 神经声学模型（CC0 公共领域 `en_US-kathleen-low` + ONNX Runtime Web，本机离线合成、音质接近真人、`300` 读 three hundred，首次加载约 3–10 秒）；日语/其它语种优先 Windows 已装嗓音，没装则由内置 eSpeak NG（GPL）兜底（机械音、不串中文）。「朗读嗓音」下拉可手动指定或强制完全离线。日语 Piper 模型需 OpenJTalk 音素化器，当前运行时不支持，故暂无日语神经语音。详见 `public/espeak/NOTICE.txt`。 |
 
 对应的五个后端命令（`src-tauri/src/lib.rs`）：`toggle_pick`（全屏框选）、`capture_screen`（截屏）、`ask_glm`（看图问答）、`ask_draw`（画简笔画）、`critique_draw`（点评画作）。
 
@@ -165,7 +165,7 @@ xiaohuo/
 ├── package.json / vite.config.js / index.html   # 前端（Vite）配置与入口
 ├── web/               # 前端源码（Canvas 火柴人 + UI）
 ├── src/               # 前端抽出的模块（fetchWithTimeout / templates）
-├── public/            # 静态资源（hanzi-data.json 笔顺库、espeak/ 离线朗读引擎）
+├── public/            # 静态资源（hanzi-data.json 笔顺库、espeak/ 多语种兜底引擎、piper/ 英语神经语音模型）
 └── src-tauri/         # Rust 后端（Cargo.toml / tauri.conf.json / src / icons / capabilities）
 ```
 
@@ -177,10 +177,16 @@ xiaohuo/
 
 小火主程序为 **MIT**（见 `LICENSE`）——可自由学习、修改、再分发，包括商用，只需保留版权声明。
 
-**第三方组件例外**：`public/espeak/` 内的离线朗读引擎（eSpeak NG 1.52.0 及其 WebAssembly 封装 `@spelling-creator/spellophone` 0.2.1）为 **GPL-3.0-or-later**，作为独立 WASM 模块与数据文件聚合分发、运行时动态加载，GPL 义务仅及于该组件本身，不改变主程序的 MIT 许可。许可证全文、上游地址与源码获取方式见 `public/espeak/NOTICE.txt` 与 `public/espeak/LICENSE-GPL-3.0.txt`。
+**第三方组件例外**：
 
-**该引擎的用途**：Windows 未装对应语种语音包时，「语言学习」的朗读用它按目标语种离线合成（否则英文 `300` 会被中文嗓音念成「三百」、日文会被念成中文腔）。完全离线、不联网、不上传文本、不需要 API Key；系统装了对应嗓音时仍优先用系统嗓音。
+| 组件 | 用途 | 许可 |
+| --- | --- | --- |
+| `public/piper/models/en.onnx`（Piper `en_US-kathleen-low`） | 英语神经语音模型 | **CC0 1.0**（公共领域，可商用与再分发） |
+| `public/piper/piper-tts-web.js`、`public/piper/onnx/` | PiperWebEngine / ONNX Runtime Web | **MIT** |
+| `public/espeak/`（eSpeak NG 1.52.0 + `@spelling-creator/spellophone` 0.2.1） | 多语种离线兜底朗读 | **GPL-3.0-or-later** |
 
-## 免责
+GPL 组件作为独立 WASM 模块与数据文件聚合分发、运行时动态加载，GPL 义务仅及于该组件本身，不改变主程序的 MIT 许可。许可证全文、上游地址与源码获取方式见 `public/espeak/NOTICE.txt` 与 `public/espeak/LICENSE-GPL-3.0.txt`。
 
-这是一个个人玩具项目，按"原样"提供，不作任何担保。使用第三方大模型服务产生的费用由你自己承担，请遵守智谱开放平台的服务条款。
+**为什么英语模型特意选 CC0**：Piper voices 里部分英语模型带限制——`en_US-lessac-low` 基于 Blizzard 2013 Lessac 数据集（Research Licence Agreement，仅限研究、明确禁止再分发）、`en_US-ryan-low` 为 CC BY-NC-SA 4.0（非商用），都不适合随公开 Release 分发，因此本程序**未包含**这些模型。
+
+**内置引擎的用途**：微软在 WebView2 里禁用了在线自然语音服务，本机又常缺日语等语种的本地嗓音，光靠系统嗓音一定会掉进机械音；内置英语神经模型因此成为英语朗读的默认路径。完全离线：不联网、不上传朗读文本、不需要 API Key。
