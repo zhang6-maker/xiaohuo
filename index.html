@@ -1480,7 +1480,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   const noteToggleBtn = document.getElementById('noteToggle');
   const NOTE_KEY = 'xiaohuo_notes_v1';
   const NOTE_DS = 2;              // 模板降采样倍数：2 → 精度约 2px，速度与准度平衡
-  const NOTE_SCORE = 0.75;        // ZNCC 阈值：实测真匹配≈1.0、无关内容≤0.63，取 0.75 留余量
+  const NOTE_SCORE = 0.78;        // ZNCC 阈值：实测真匹配≈1.0、无关内容≤0.63，取 0.75 留余量
   let noteDpr = 1, noteColor = '#ffd24d', noteErase = false;
   let noteGroups = [], noteActive = null;
   let noteDrawing = false, noteCur = null, noteLast = null;
@@ -1656,7 +1656,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     });
   }
   // 掩膜：把自己画的线（外扩）标成"不参与匹配"，避免笔迹干扰、也不需要隐藏笔迹
-  function noteBuildMask(g, gw, gh) {
+  function noteBuildMask(g, gw, gh, blanks) {
     const c = document.createElement('canvas'); c.width = gw; c.height = gh;
     const cx = c.getContext('2d', { willReadFrequently: true });
     cx.fillStyle = '#000'; cx.fillRect(0, 0, gw, gh);
@@ -1676,26 +1676,50 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const d = cx.getImageData(0, 0, gw, gh).data;
     const mask = new Uint8Array(gw * gh);
     for (let i = 0, j = 0; i < d.length; i += 4, j++) mask[j] = d[i] > 127 ? 0 : 1;
+    // blanks：额外挖掉的矩形（模板降采样坐标）——小火本体等"会动的东西"不参与匹配
+    if (blanks && blanks.length) {
+      for (const b of blanks) {
+        const x0 = Math.max(0, Math.floor(b[0])), y0 = Math.max(0, Math.floor(b[1]));
+        const x1 = Math.min(gw, Math.ceil(b[0] + b[2])), y1 = Math.min(gh, Math.ceil(b[1] + b[3]));
+        for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) mask[y * gw + x] = 0;
+      }
+    }
     return mask;
+  }
+  // 自检校正：以锚点为中心再匹配一次，把锚点对齐到内容真实位置。
+  // 这一步消掉 DPI 换算/取整带来的系统性偏移（"笔记总是偏一点"就是它），返回匹配度。
+  async function noteCalibrate(g) {
+    if (!g || !g.tpl || !g.anchor) return 0;
+    const twPx = g.tpl.gw * NOTE_DS, thPx = g.tpl.gh * NOTE_DS;
+    const exp = Math.max(60, Math.round(twPx * 0.35), Math.round(thPx * 0.8));
+    const SW = window.innerWidth, SH = window.innerHeight;
+    const x0 = Math.max(0, Math.round(g.anchor[0] - exp));
+    const y0 = Math.max(0, Math.round(g.anchor[1] - exp));
+    const x1 = Math.min(SW, Math.round(g.anchor[0] + twPx + exp));
+    const y1 = Math.min(SH, Math.round(g.anchor[1] + thPx + exp));
+    const rw = x1 - x0, rh = y1 - y0;
+    if (rw < twPx + 6 || rh < thPx + 6) return 0;
+    const b64 = await noteCapture(x0, y0, rw, rh, false);
+    if (!b64) return 0;
+    let reg; try { reg = await noteGray(b64, rw, rh); } catch (e) { return 0; }
+    const m = noteMatch(reg.gray, reg.gw, reg.gh, g.tpl, g.mask);
+    if (m.score >= 0.85) g.anchor = [x0 + m.x * NOTE_DS, y0 + m.y * NOTE_DS];
+    return m.score;
   }
   async function noteCapture(x, y, w, h, hideUi) {
     const k = await noteEnsureScale();
-    // 只有「钉住」时才隐藏（要拿干净底图做模板）；跟随期间靠 mask 排除自己画的线，不隐藏 → 不闪
+    // 只在「钉住」时隐藏（要拿干净底图做模板）；跟随期间不隐藏任何东西 → 不闪。
+    // 【重要】绝不隐藏小火本体(#stage)：隐藏后那块露出的是下层桌面/窗口，模板与实时帧时序对不齐，
+    // 会让匹配漂移（表现为"跟随错误"），而且每轮隐藏 45ms 就是"人物一闪一闪"。
+    // 本体占的区域改为在模板 mask 里挖掉（notePin 传入 blanks），之后它怎么动都不参与比较。
     const targets = [];
     if (hideUi) {
       targets.push(notePad, noteBar, noteHint);
       const c = noteBox.querySelector('.close'); if (c) targets.push(c);
     }
-    // 小火本体会动：只有它压在取样区域上时才临时隐掉，否则不隐（避免每 0.9 秒闪一下）。
-    // 不处理的话，本体的像素会污染模板/待匹配区域，把分数拉低 → 误判跟丢。
-    try {
-      const px0 = posX - 150, py0 = posY - 190;
-      const overlap = !(x + w < px0 || x > px0 + 300 || y + h < py0 || y > py0 + 230);
-      if (overlap) { const st = document.getElementById('stage'); if (st) targets.push(st); }
-    } catch (e) {}
     const prev = targets.map(el => el.style.visibility);
     targets.forEach(el => { el.style.visibility = 'hidden'; });
-    if (hideUi || targets.length) await new Promise(r => setTimeout(r, 45));
+    if (hideUi) await new Promise(r => setTimeout(r, 45));
     let b64 = '';
     try {
       // 传物理像素；返回图再按 CSS 尺寸降采样，坐标体系始终是 CSS 像素
@@ -1732,7 +1756,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       return (sumIT - sumI * sumT / n) / Math.sqrt(varI * varT);
     };
     let best = -2, bx = 0, by = 0;
-    const st = (maxX > 40 || maxY > 40) ? 3 : 1;
+    const st = (maxX > 40 || maxY > 40) ? 2 : 1;
     for (let y = 0; y <= maxY; y += st) for (let x = 0; x <= maxX; x += st) {
       const s = scoreAt(x, y); if (s > best) { best = s; bx = x; by = y; }
     }
@@ -1790,10 +1814,25 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       return;
     }
     g.tpl = tpl;
-    g.mask = noteBuildMask(g, tpl.gw, tpl.gh);
+    // 小火本体若压在模板范围内：把那一块从掩膜里挖掉（不隐藏本体 → 不闪；挖掉 → 它怎么动都不影响匹配）
+    const blanks = [];
+    try {
+      const bx = posX - 150, by = posY - 190, bw = 300, bh = 230;
+      const ix0 = Math.max(x, bx), iy0 = Math.max(y, by);
+      const ix1 = Math.min(x + w, bx + bw), iy1 = Math.min(y + h, by + bh);
+      if (ix1 > ix0 && iy1 > iy0) {
+        blanks.push([(ix0 - x) / NOTE_DS, (iy0 - y) / NOTE_DS, (ix1 - ix0) / NOTE_DS, (iy1 - iy0) / NOTE_DS]);
+      }
+    } catch (e) {}
+    blanks.forEach(b => { /* 位置在模板降采样坐标 */ });
+    g.mask = noteBuildMask(g, tpl.gw, tpl.gh, blanks);
     g.visible = true; g.fails = 0; g.collapsed = false;
+    // 立刻自检校正：把锚点对齐到"内容真实位置"，消掉 DPI 换算误差（否则笔记整体偏一点）
+    let sc = 0;
+    try { sc = await noteCalibrate(g); } catch (e) {}
     noteRedraw(); noteSave(); noteFollowStart();
-    toast('📌 已钉住：现在它会跟着这段内容走；内容滚出屏幕会自动隐藏');
+    if (sc && sc < 0.6) toast('⚠ 这块内容看着不太稳（匹配度 ' + sc.toFixed(2) + '，可能在播放视频/动画），跟随可能不准；换个静态文字区域会稳很多');
+    else toast('📌 已钉住（匹配度 ' + (sc ? sc.toFixed(2) : '—') + '）：滚动内容它会跟着走，滚出屏幕会自动隐藏');
   }
   async function noteFollowOnce() {
     if (noteFollowBusy || !noteGroups.length || !isTauri) return;
@@ -1818,12 +1857,16 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         try { reg = await noteGray(b64, rw, rh); } catch (e) { continue; }
         const m = noteMatch(reg.gray, reg.gw, reg.gh, g.tpl, g.mask);
         if (m.score >= NOTE_SCORE) {
+          // 只在高置信度时移动：避免阈值边缘反复横跳、越跟越歪
           const nx = x0 + m.x * NOTE_DS, ny = y0 + m.y * NOTE_DS;
           if (Math.abs(nx - g.anchor[0]) > 0.4 || Math.abs(ny - g.anchor[1]) > 0.4) changed = true;
           g.anchor = [nx, ny]; g.visible = true; g.fails = 0;
+        } else if (m.score >= 0.6) {
+          // 中间地带：内容大概还在视野里，只是有噪声（半透明/动画/模糊）→ 保持原位、不计失败
+          g.fails = 0;
         } else {
           g.fails = (g.fails || 0) + 1;
-          if (g.fails >= 2 && g.visible) { g.visible = false; changed = true; }
+          if (g.fails >= 3 && g.visible) { g.visible = false; changed = true; }
         }
       }
       if (changed) noteRedraw();
