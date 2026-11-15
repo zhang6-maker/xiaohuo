@@ -5587,7 +5587,53 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     if (/[一-龥]/.test(t)) return 'zh';
     return 'en';
   }
-  // 在语言学习框里实时显示本机可用的朗读语音，并标记下拉里「未安装」的语种
+  // ---- 内置离线 TTS 兜底（eSpeak NG 1.52 / WASM，GPL-3.0-or-later） ----
+  // 系统没装某语种嗓音时，绝不交给别的语种嗓音念（会把 300 念成「三百」、日文念成中文腔），
+  // 改由 eSpeak 按目标语种自己的音素规则合成 WAV 播放。资源在 public/espeak/，完全离线、不联网、不用 key。
+  const ESPEAK_VOICE = { en:'en-us', ja:'ja', ko:'ko', fr:'fr', de:'de', es:'es', zh:'cmn' };
+  let _espLibP = null, _espP = null, _espAudio = null, _speakSeq = 0, _espHinted = false;
+  // 资源一律用基于 document.baseURI 的绝对 URL：Tauri custom-protocol 下
+  // 页面地址不是普通 http 根，相对路径容易解析到别处（30MB hanzi-data.json 用相对路径可行，但 wasm/glue 更敏感）。
+  const ESP_BASE = new URL('espeak/', document.baseURI).href;
+  function loadEspeakLib() {
+    if (window.Spellophone) return Promise.resolve();
+    if (_espLibP) return _espLibP;
+    _espLibP = new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = ESP_BASE + 'spellophone.iife.js';
+      s.onload = () => window.Spellophone ? res() : rej(new Error('离线引擎未挂载'));
+      s.onerror = () => rej(new Error('离线引擎脚本加载失败'));
+      document.head.appendChild(s);
+    });
+    return _espLibP;
+  }
+  function getEspeak() {
+    if (_espP) return _espP;
+    _espP = (async () => {
+      await loadEspeakLib();
+      return await window.Spellophone.createEspeak({
+        dataUrl: ESP_BASE + 'data/',
+        wasmUrl: ESP_BASE + 'espeak-ng.wasm',
+        languages: ['en','ja','ko','fr','de','es','cmn']
+      });
+    })();
+    return _espP;
+  }
+  function stopSpeak() {
+    try { if (typeof window.speechSynthesis !== 'undefined') window.speechSynthesis.cancel(); } catch (e) {}
+    if (_espAudio) { try { _espAudio.pause(); } catch (e) {} _espAudio = null; }
+  }
+  function playEspeakWav(bytes) {
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }));
+    const au = new Audio(url);
+    _espAudio = au;
+    au.onended = au.onerror = () => {
+      URL.revokeObjectURL(url);
+      if (_espAudio === au) _espAudio = null;
+    };
+    au.play().catch(() => {});
+  }
+  // 在语言学习框里实时显示本机系统嗓音 + 内置离线引擎兜底状态
   function updateVoiceHint() {
     if (!_voices.length) loadVoices();
     const have = voiceLangSet();
@@ -5596,35 +5642,50 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         if (opt.value === 'auto') { opt.textContent = '自动检测'; continue; }
         const ok = have.has(opt.value);
         const base = LANG_NAMES[opt.value] || opt.value;
-        opt.textContent = ok ? base : base + '（未装语音包）';
-        opt.style.color = ok ? '' : '#e6a23c';
+        opt.textContent = ok ? base : base + '（内置引擎）';
+        opt.style.color = ok ? '' : '#8ab4f8';
       }
     }
     if (!langVoiceHint) return;
     const all = ['en','ja','ko','fr','de','es','zh'];
     const okList = all.filter(c => have.has(c)).map(c => LANG_NAMES[c]);
     const missList = all.filter(c => !have.has(c)).map(c => LANG_NAMES[c]);
-    let msg = '本机可朗读：' + (okList.length ? okList.join('、') : '无');
-    if (missList.length) msg += '；缺：' + missList.join('、') + '（Windows 设置→时间和语言→语音/语言包 安装后可用）';
+    let msg = '本机系统嗓音：' + (okList.length ? okList.join('、') : '无');
+    msg += '；其余语种（' + (missList.length ? missList.join('、') : '无') + '）由内置离线引擎朗读，开箱即用、不联网。';
+    msg += ' 想要更自然的读音，可在 Windows 设置→时间和语言→语音 安装对应语音包（装完自动优先用系统嗓音）。';
     langVoiceHint.textContent = msg;
   }
-  function speak(text, langCode) {
-    if (!text || typeof window.speechSynthesis === 'undefined') return;
+  async function speak(text, langCode) {
+    if (!text) return;
     const lang = (langCode && langCode !== 'auto') ? langCode : guessLang(text);
+    const seq = ++_speakSeq;
+    stopSpeak();
+    // ① 系统装了该语种嗓音 → 优先用（音质自然）
+    const v = (typeof window.speechSynthesis !== 'undefined') ? findVoice(lang) : null;
+    if (v) {
+      try {
+        const u = new SpeechSynthesisUtterance(text);
+        u.voice = v; u.lang = v.lang;
+        window.speechSynthesis.speak(u);
+        return;
+      } catch (e) {}
+    }
+    // ② 没装 → 绝不回落到中文嗓音，用内置离线引擎按目标语种合成
+    if (!_espHinted) {
+      _espHinted = true;
+      toast('本机没装该语种系统嗓音，正在准备内置离线引擎（首次约 1–2 秒）…');
+      if (langVoiceHint) langVoiceHint.textContent = '⏳ 首次准备内置离线朗读引擎…（之后秒开，完全离线、不联网）';
+    }
     try {
-      window.speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text);
-      const v = findVoice(lang);
-      if (v) { u.voice = v; u.lang = v.lang; }
-      else {
-        // 本机没装该语种语音包：仍按语种朗读（引擎尽力），并提示安装
-        u.lang = lang;
-        const want = LANG_NAMES[lang] || lang;
-        const have = [...voiceLangSet()].map(c => LANG_NAMES[c] || c).join('、') || '无';
-        toast(`本机没装「${want}」朗读语音包，可能读不准（当前可用：${have}）。可在 Windows 设置 → 时间和语言 → 语音 安装「${want}」语音后重试。`);
-      }
-      window.speechSynthesis.speak(u);
-    } catch (e) {}
+      const eng = await getEspeak();
+      if (_espHinted && langVoiceHint && langVoiceHint.textContent.startsWith('⏳')) updateVoiceHint();
+      if (seq !== _speakSeq) return;              // 期间又点了别的，丢弃这次
+      const r = eng.synthesize(text, { voice: ESPEAK_VOICE[lang] || 'en-us' });
+      if (seq !== _speakSeq) return;
+      playEspeakWav(window.Spellophone.encodeWav(r.samples, r.sampleRate));
+    } catch (e) {
+      toast('离线朗读没起来：' + (e && e.message ? e.message : e));
+    }
   }
 
   // 朗读原文
