@@ -309,6 +309,12 @@
       <option value="zh">中文（外译中）</option>
     </select>
   </div>
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+    <label style="font-size:12px;color:#9aa0a6;white-space:nowrap;">朗读嗓音</label>
+    <select id="langVoice" style="flex:1;padding:5px 8px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:6px;font-size:12px;">
+      <option value="auto">自动（优先本地真人嗓音）</option>
+    </select>
+  </div>
   <textarea id="langSrcText" placeholder="把要学的外文粘贴到这里；或点「📸 从屏幕取词」直接框选屏幕上的外文…" style="width:100%;box-sizing:border-box;height:88px;padding:6px 8px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:6px;font-size:13px;resize:vertical;"></textarea>
   <div class="actions" style="margin-top:8px;flex-wrap:wrap;">
     <button id="langRead">📖 朗读原文</button>
@@ -5549,32 +5555,113 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     langBox.style.transform = 'translate(-50%,-50%)';
     setTimeout(() => { try { langSrcText.focus(); } catch (e) {} }, 30);
     updateVoiceHint();
+    // 打开框就主动拉取嗓音列表（getVoices 异步 + WebView2 的 voiceschanged 不保证触发）
+    voicesReady().then(() => { populateVoiceSelect(); updateVoiceHint(); });
   }
   makeDraggable(langBox);
   langBox.querySelector('.close').addEventListener('click', () => langBox.classList.add('hidden'));
 
-  // ---- TTS 朗读（WebView2 自带 speechSynthesis，离线即可出声） ----
+  // ---- TTS 朗读 ----
+  // 关键坑：speechSynthesis.getVoices() 是异步的，初始化时通常返回空数组，
+  // 而 WebView2 里 onvoiceschanged 不保证触发。若只在初始化读一次，_voices 永远是空，
+  // 于是明明有真人嗓音也会被迫走内置 eSpeak 机械音。改为朗读前主动轮询直到就绪。
   const LANG_NAMES = { en:'英语', ja:'日语', ko:'韩语', fr:'法语', de:'德语', es:'西班牙语', zh:'中文', auto:'外语' };
-  let _voices = [];
-  function loadVoices() { try { _voices = window.speechSynthesis.getVoices() || []; } catch (e) { _voices = []; } }
-  loadVoices();
-  if (typeof window.speechSynthesis !== 'undefined' && 'onvoiceschanged' in window.speechSynthesis) {
-    window.speechSynthesis.onvoiceschanged = () => { loadVoices(); updateVoiceHint(); };
+  const langVoiceSel = document.getElementById('langVoice');
+  let _voices = [], _voicesReadyP = null;
+  function loadVoices() {
+    try { _voices = window.speechSynthesis.getVoices() || []; } catch (e) { _voices = []; }
+    return _voices;
   }
-  // 本机实际可用的 TTS 语种（两位码集合）
+  function voicesReady(timeoutMs = 2500) {
+    if (typeof window.speechSynthesis === 'undefined') return Promise.resolve([]);
+    loadVoices();
+    if (_voices.length) return Promise.resolve(_voices);
+    if (_voicesReadyP) return _voicesReadyP;
+    _voicesReadyP = new Promise(resolve => {
+      const t0 = Date.now();
+      const tick = () => {
+        loadVoices();
+        if (_voices.length || Date.now() - t0 > timeoutMs) {
+          _voicesReadyP = null; resolve(_voices); return;
+        }
+        setTimeout(tick, 100);
+      };
+      tick();
+    });
+    return _voicesReadyP;
+  }
+  loadVoices();
+  if (typeof window.speechSynthesis !== 'undefined') {
+    try {
+      window.speechSynthesis.addEventListener('voiceschanged', () => {
+        loadVoices(); populateVoiceSelect(); updateVoiceHint();
+      });
+    } catch (e) {}
+  }
   function voiceLangSet() {
-    if (!_voices.length) loadVoices();
+    loadVoices();
     const s = new Set();
     _voices.forEach(v => { if (v.lang) s.add(v.lang.toLowerCase().slice(0, 2)); });
     return s;
   }
-  // 找匹配某语种的 voice；找不到返回 null（绝不回落到别的语种，避免把外语读成中文）
+  // 同语种内按音质排序：Natural(神经) > 本地真人 > 普通在线 > 其它。
+  // 绝不跨语种回落（避免英文 300 被中文嗓音念成「三百」）。
+  function voiceQuality(v) {
+    const n = (v.name || '').toLowerCase();
+    const l = (v.lang || '').toLowerCase();
+    let s = 0;
+    if (n.includes('natural')) s += 100;       // 微软神经自然语音，音质最好
+    if (n.includes('online')) s += 20;
+    if (v.localService) s += 10;               // 本地真人录音，离线可用
+    // 同分优先本土地变体：fr-FR 胜 fr-CA、es-ES 胜 es-MX、en-US 胜 en-IN 等
+    const HOME = { 'en-us':1, 'ja-jp':1, 'ko-kr':1, 'fr-fr':1, 'de-de':1, 'es-es':1, 'zh-cn':1 };
+    if (HOME[l]) s += 30;
+    return s;
+  }
   function findVoice(langCode) {
-    if (!_voices.length) loadVoices();
+    loadVoices();
     if (!_voices.length) return null;
     const lc = (langCode || '').toLowerCase();
-    return _voices.find(v => v.lang && v.lang.toLowerCase() === lc)
-        || _voices.find(v => v.lang && v.lang.toLowerCase().startsWith(lc));
+    const cand = _voices.filter(v => v.lang && (v.lang.toLowerCase() === lc || v.lang.toLowerCase().startsWith(lc)));
+    if (!cand.length) return null;
+    cand.sort((a, b) => voiceQuality(b) - voiceQuality(a));
+    return cand[0];
+  }
+  function voiceKey(v) { return v.voiceURI || v.name || ''; }
+  // 把 WebView2 实际检测到的嗓音列进下拉，用户可自己挑（不再由程序替他猜）
+  function populateVoiceSelect() {
+    if (!langVoiceSel) return;
+    loadVoices();
+    const prev = langVoiceSel.value;
+    langVoiceSel.innerHTML = '';
+    const add = (val, text, style) => {
+      const o = document.createElement('option');
+      o.value = val; o.textContent = text;
+      if (style) o.style.color = style;
+      langVoiceSel.appendChild(o);
+    };
+    add('auto', '自动（挑该语种最好听的嗓音）');
+    const byLang = {};
+    _voices.forEach(v => {
+      const lc = (v.lang || '??').toLowerCase().slice(0, 2);
+      (byLang[lc] = byLang[lc] || []).push(v);
+    });
+    Object.keys(byLang).sort().forEach(lc => {
+      byLang[lc].sort((a, b) => voiceQuality(b) - voiceQuality(a)).forEach(v => {
+        const tag = (LANG_NAMES[lc] || lc) + ' · ' + (v.localService ? '本地' : '在线');
+        add(voiceKey(v), tag + ' · ' + (v.name || '').replace(/Online|Natural|Microsoft|\(|\)|-/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 32));
+      });
+    });
+    add('espeak', '内置离线引擎（机械音 · 完全不联网）', '#8ab4f8');
+    langVoiceSel.value = Array.from(langVoiceSel.options).some(o => o.value === prev) ? prev : 'auto';
+  }
+  function chosenVoice(lang) {
+    if (!langVoiceSel) return { mode: 'auto' };
+    const val = langVoiceSel.value;
+    if (val === 'espeak') return { mode: 'espeak' };
+    if (val === 'auto') return { mode: 'auto' };
+    const v = _voices.find(x => voiceKey(x) === val);
+    return v ? { mode: 'fixed', voice: v } : { mode: 'auto' };
   }
   // auto 时启发式判断文本语种（默认英文；纯字母/数字绝不误判成中文）
   function guessLang(text) {
@@ -5633,26 +5720,35 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     };
     au.play().catch(() => {});
   }
-  // 在语言学习框里实时显示本机系统嗓音 + 内置离线引擎兜底状态
+  // 如实显示 WebView2 实际检测到的嗓音（不再靠猜），并说明在线语音会联网
   function updateVoiceHint() {
-    if (!_voices.length) loadVoices();
-    const have = voiceLangSet();
+    loadVoices();
     if (langSrcSel && langSrcSel.options) {
+      const have = voiceLangSet();
       for (const opt of langSrcSel.options) {
         if (opt.value === 'auto') { opt.textContent = '自动检测'; continue; }
-        const ok = have.has(opt.value);
-        const base = LANG_NAMES[opt.value] || opt.value;
-        opt.textContent = ok ? base : base + '（内置引擎）';
-        opt.style.color = ok ? '' : '#8ab4f8';
+        opt.textContent = LANG_NAMES[opt.value] || opt.value;
+        opt.style.color = have.has(opt.value) ? '' : '#8ab4f8';
       }
     }
     if (!langVoiceHint) return;
-    const all = ['en','ja','ko','fr','de','es','zh'];
-    const okList = all.filter(c => have.has(c)).map(c => LANG_NAMES[c]);
-    const missList = all.filter(c => !have.has(c)).map(c => LANG_NAMES[c]);
-    let msg = '本机系统嗓音：' + (okList.length ? okList.join('、') : '无');
-    msg += '；其余语种（' + (missList.length ? missList.join('、') : '无') + '）由内置离线引擎朗读，开箱即用、不联网。';
-    msg += ' 想要更自然的读音，可在 Windows 设置→时间和语言→语音 安装对应语音包（装完自动优先用系统嗓音）。';
+    if (!_voices.length) {
+      langVoiceHint.textContent = '⏳ 正在读取系统嗓音…（getVoices 异步，首次约 1–2 秒）';
+      return;
+    }
+    const byLang = {};
+    _voices.forEach(v => {
+      const lc = (v.lang || '??').toLowerCase().slice(0, 2);
+      (byLang[lc] = byLang[lc] || []).push(v);
+    });
+    const parts = Object.keys(byLang).sort().map(lc => {
+      const arr = byLang[lc];
+      const natural = arr.filter(v => /natural/i.test(v.name || '')).length;
+      return (LANG_NAMES[lc] || lc) + ' ' + arr.length + '个' + (natural ? '（含' + natural + '个自然语音）' : '');
+    });
+    let msg = '检测到 ' + _voices.length + ' 个嗓音：' + parts.join('、') + '。';
+    msg += '自动挑该语种里最好听的（自然语音优先）；标「在线」的会把朗读文本发给微软，想完全离线就在下拉选「内置离线引擎」。';
+    msg += ' 一个都没有的语种才用内置引擎。';
     langVoiceHint.textContent = msg;
   }
   async function speak(text, langCode) {
@@ -5660,26 +5756,41 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const lang = (langCode && langCode !== 'auto') ? langCode : guessLang(text);
     const seq = ++_speakSeq;
     stopSpeak();
-    // ① 系统装了该语种嗓音 → 优先用（音质自然）
-    const v = (typeof window.speechSynthesis !== 'undefined') ? findVoice(lang) : null;
+    // ① 等嗓音列表真正就绪（关键：不能只依赖初始化那一次异步调用）
+    if (typeof window.speechSynthesis !== 'undefined') {
+      await voicesReady();
+      if (seq !== _speakSeq) return;
+      populateVoiceSelect();
+      updateVoiceHint();
+    }
+    const choice = chosenVoice(lang);
+    let v = null;
+    if (choice.mode === 'fixed') v = choice.voice;
+    else if (choice.mode === 'auto') v = findVoice(lang);
+    // ② 用系统/在线嗓音朗读（真人录音或神经自然语音，音质远好于机械合成）
     if (v) {
       try {
         const u = new SpeechSynthesisUtterance(text);
-        u.voice = v; u.lang = v.lang;
+        u.voice = v; u.lang = v.lang || lang;
+        u.rate = 1; u.pitch = 1; u.volume = 1;
         window.speechSynthesis.speak(u);
+        if (!_voiceHinted) {
+          _voiceHinted = true;
+          if (!v.localService) toast('正在用微软在线自然语音（音质最好，但会把这句文本发给微软）。想完全离线：下拉选「内置离线引擎」。');
+        }
         return;
       } catch (e) {}
     }
-    // ② 没装 → 绝不回落到中文嗓音，用内置离线引擎按目标语种合成
+    // ③ 该语种一个嗓音都没有 → 绝不回落到中文嗓音，用内置离线引擎按目标语种合成
     if (!_espHinted) {
       _espHinted = true;
-      toast('本机没装该语种系统嗓音，正在准备内置离线引擎（首次约 1–2 秒）…');
+      toast('该语种没有可用嗓音，正在准备内置离线引擎（首次约 1–2 秒）…');
       if (langVoiceHint) langVoiceHint.textContent = '⏳ 首次准备内置离线朗读引擎…（之后秒开，完全离线、不联网）';
     }
     try {
       const eng = await getEspeak();
-      if (_espHinted && langVoiceHint && langVoiceHint.textContent.startsWith('⏳')) updateVoiceHint();
-      if (seq !== _speakSeq) return;              // 期间又点了别的，丢弃这次
+      if (langVoiceHint && langVoiceHint.textContent.startsWith('⏳')) updateVoiceHint();
+      if (seq !== _speakSeq) return;
       const r = eng.synthesize(text, { voice: ESPEAK_VOICE[lang] || 'en-us' });
       if (seq !== _speakSeq) return;
       playEspeakWav(window.Spellophone.encodeWav(r.samples, r.sampleRate));
@@ -5687,6 +5798,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       toast('离线朗读没起来：' + (e && e.message ? e.message : e));
     }
   }
+  let _voiceHinted = false;
 
   // 朗读原文
   document.getElementById('langRead').addEventListener('click', () => {
