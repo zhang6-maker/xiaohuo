@@ -462,24 +462,32 @@
 <!-- 跟随笔记：透明笔迹层常驻（不吃鼠标，不影响桌面点击）；编辑时才可画 -->
 <canvas id="notePad" style="position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:290;display:block;"></canvas>
 <div id="noteBox" class="box hidden" style="inset:0;max-width:none;width:100%;height:100%;background:transparent;border:none;box-shadow:none;padding:0;pointer-events:none;z-index:300;">
-  <button class="close" style="top:10px;right:16px;font-size:20px;color:#fff;background:rgba(40,40,46,.7);border-radius:50%;padding:2px 9px;pointer-events:auto;z-index:302;">×</button>
-  <div id="noteBar" style="position:fixed;left:50%;top:12px;transform:translateX(-50%);pointer-events:auto;display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:rgba(28,28,32,.92);border:1px solid #3a3a40;border-radius:12px;padding:8px 12px;box-shadow:0 6px 24px rgba(0,0,0,.4);max-width:94vw;z-index:301;">
-    <span style="font-size:12px;color:#9aa0a6;">🖋️ 跟随笔记</span>
-    <div class="swatches" id="noteSwatches" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
-    <input type="color" id="notePicker" value="#ffd24d" style="width:34px;height:26px;border:none;background:none;cursor:pointer;padding:0;" />
-    <span style="font-size:12px;color:#9aa0a6;">粗细</span>
-    <input type="range" id="noteSize" min="1" max="40" value="4" style="width:86px;accent-color:#6ab0ff;" />
-    <button id="noteEraser" style="background:#2b2b30;border:1px solid #4a4a52;color:#f3f3f5;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px;">🧽 橡皮</button>
-    <button id="notePin" style="background:#2b4a6b;border:1px solid #3f6a8c;color:#f3f3f5;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px;">📌 钉住并跟随</button>
-    <button id="noteToggle" style="background:#2b2b30;border:1px solid #4a4a52;color:#f3f3f5;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px;">🚫 隐藏全部</button>
-    <button id="noteDel" style="background:#3a3a42;border:1px solid #55555f;color:#f3f3f5;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px;">🗑 删除当前</button>
-    <button id="noteArch" style="background:#2b4a6b;border:1px solid #3f6a8c;color:#f3f3f5;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px;">📥 存档当前</button>
-    <button id="noteArchAll" style="background:#2b4a6b;border:1px solid #3f6a8c;color:#f3f3f5;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px;">📥 存档全部</button>
-    <button id="noteClear" style="background:#5a3030;border:1px solid #7a4040;color:#f3f3f5;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px;">🧹 全部清除</button>
-    <button id="noteDone" style="background:#2f6b3a;border:1px solid #3f8a4c;color:#f3f3f5;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px;">完成</button>
+  <!-- 左侧工具条：只放画笔属性，保证一行放得下，不再换行被提示条遮住 -->
+  <div id="noteBar" style="position:fixed;left:10px;top:10px;pointer-events:auto;display:flex;flex-wrap:nowrap;gap:6px;align-items:center;background:rgba(28,28,32,.95);border:1px solid #3a3a40;border-radius:10px;padding:6px 9px;box-shadow:0 6px 20px rgba(0,0,0,.45);max-width:calc(100vw - 272px);overflow:hidden;z-index:303;">
+    <span style="font-size:12px;color:#9aa0a6;white-space:nowrap;">🖋️ 跟随笔记</span>
+    <div class="swatches" id="noteSwatches" style="display:flex;flex-wrap:nowrap;gap:5px;"></div>
+    <input type="color" id="notePicker" value="#ffd24d" style="width:30px;height:24px;border:none;background:none;cursor:pointer;padding:0;flex:none;" />
+    <span style="font-size:11px;color:#9aa0a6;white-space:nowrap;">粗细</span>
+    <input type="range" id="noteSize" min="1" max="40" value="4" style="width:64px;accent-color:#6ab0ff;flex:none;" />
+    <button id="noteEraser" style="background:#2b2b30;border:1px solid #4a4a52;color:#f3f3f5;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:12px;white-space:nowrap;flex:none;">🧽</button>
+    <button id="notePin" style="background:#2b4a6b;border:1px solid #3f6a8c;color:#f3f3f5;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:12px;white-space:nowrap;flex:none;">📌 重钉</button>
+    <button id="noteDone" style="background:#2f6b3a;border:1px solid #3f8a4c;color:#f3f3f5;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;white-space:nowrap;flex:none;">完成</button>
+    <button class="close" style="position:static;font-size:16px;color:#fff;background:rgba(60,60,68,.9);border-radius:6px;padding:1px 8px;cursor:pointer;flex:none;">×</button>
   </div>
-  <div id="noteHint" style="position:fixed;left:50%;top:66px;transform:translateX(-50%);pointer-events:none;font-size:12px;color:#cfd2d8;background:rgba(28,28,32,.9);border:1px solid #3a3a40;border-radius:8px;padding:6px 10px;max-width:90vw;z-index:301;line-height:1.5;"></div>
-  <div id="noteList" style="position:fixed;right:12px;top:56px;width:236px;max-height:66vh;overflow:auto;pointer-events:auto;background:rgba(28,28,32,.95);border:1px solid #3a3a40;border-radius:10px;padding:8px;font-size:12px;z-index:301;line-height:1.5;"></div>
+  <!-- 右侧面板：选择 / 批量 / 列表。放在最上层，绝不与提示条重叠 -->
+  <div id="noteListTop" style="position:fixed;right:10px;top:10px;width:246px;pointer-events:auto;background:rgba(28,28,32,.96);border:1px solid #3a3a40;border-radius:10px;padding:7px 8px;z-index:304;font-size:12px;">
+    <div style="color:#9aa0a6;margin-bottom:6px;">选择一条 → 再操作</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;">
+      <button id="noteToggle" style="background:#2b2b30;border:1px solid #4a4a52;color:#f3f3f5;border-radius:6px;padding:4px 6px;cursor:pointer;font-size:11px;">🚫 隐藏全部</button>
+      <button id="noteArch" style="background:#2b4a6b;border:1px solid #3f6a8c;color:#f3f3f5;border-radius:6px;padding:4px 6px;cursor:pointer;font-size:11px;">📥 存档选中</button>
+      <button id="noteDel" style="background:#5a3030;border:1px solid #7a4040;color:#f3f3f5;border-radius:6px;padding:4px 6px;cursor:pointer;font-size:11px;">🗑 删除选中</button>
+      <button id="noteArchAll" style="background:#2b4a6b;border:1px solid #3f6a8c;color:#f3f3f5;border-radius:6px;padding:4px 6px;cursor:pointer;font-size:11px;">📥 存档全部</button>
+      <button id="noteClear" style="background:#3a3a42;border:1px solid #55555f;color:#f3f3f5;border-radius:6px;padding:4px 6px;cursor:pointer;font-size:11px;grid-column:1 / span 2;">🧹 全部清除</button>
+    </div>
+  </div>
+  <div id="noteList" style="position:fixed;right:10px;top:118px;bottom:46px;width:246px;overflow:auto;pointer-events:auto;background:rgba(28,28,32,.96);border:1px solid #3a3a40;border-radius:10px;padding:8px;font-size:12px;z-index:304;line-height:1.5;"></div>
+  <!-- 提示条挪到屏幕底部，pointer-events:none 且不与任何按钮重叠 -->
+  <div id="noteHint" style="position:fixed;left:50%;bottom:12px;transform:translateX(-50%);pointer-events:none;font-size:12px;color:#cfd2d8;background:rgba(28,28,32,.94);border:1px solid #3a3a40;border-radius:8px;padding:6px 12px;max-width:76vw;z-index:302;line-height:1.5;text-align:center;"></div>
 </div>
 
 <!-- 笔画库：存放用户画作笔迹，可「照着画」让小火模仿，可删除，可导出干净 PNG（不含界面） -->
@@ -1479,6 +1487,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   const noteBar = document.getElementById('noteBar');
   const noteHint = document.getElementById('noteHint');
   const noteListEl = document.getElementById('noteList');
+  const noteListTopEl = document.getElementById('noteListTop');
   const noteSwatches = document.getElementById('noteSwatches');
   const notePicker = document.getElementById('notePicker');
   const noteSizeEl = document.getElementById('noteSize');
@@ -1653,7 +1662,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const ds = Math.max(1, Math.round(NOTE_DS_CSS * k));
     const targets = [];
     if (hideUi) {
-      targets.push(notePad, noteBar, noteHint, noteListEl);
+      targets.push(notePad, noteBar, noteHint, noteListEl, noteListTopEl);
       const c = noteBox.querySelector('.close'); if (c) targets.push(c);
     }
     const prev = targets.map(el => el && el.style.visibility);
@@ -1849,7 +1858,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
           g.fails = 0;   // 中间地带：保持不动、不计失败（有噪声但内容还在）
         } else {
           g.fails = (g.fails || 0) + 1;
-          if (g.fails >= 3 && g.visible) { g.visible = false; changed = true; }
+          if (g.fails >= 12 && g.visible) { g.visible = false; changed = true; }
         }
       }
       if (changed) noteRedraw();
@@ -2015,12 +2024,15 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     noteResize();
     noteEditMode = true;
     noteActive = null;
+    // 【关键】每次打开编辑框都强制把笔记显示出来：清掉「隐藏全部」的 collapsed
+    // 和「跟丢自动隐藏」的 visible=false，否则用户会遇到"一打开什么都没有"，
+    // 误以为笔迹默认隐藏。
+    noteGroups.forEach(g => { g.collapsed = false; g.visible = true; g.fails = 0; });
     notePad.style.pointerEvents = 'auto';
     notePad.style.cursor = 'crosshair';
     noteBox.classList.remove('hidden');
-    const allHidden = noteGroups.length > 0 && noteGroups.every(g => g.collapsed);
-    noteToggleBtn.textContent = allHidden ? '👁 显示全部' : '🚫 隐藏全部';
-    noteHint.textContent = '在要记的内容上划一笔就会自动钉住并跟随；右侧列表可选「选中 / 📥 存档 / 🗑 删除」；存档的笔记在「📖 记录本」里。';
+    noteToggleBtn.textContent = '🚫 隐藏全部';
+    noteHint.textContent = '在要记的内容上划一笔，约 0.7 秒自动钉住并跟随——笔迹会一直显示在屏幕上，不需要存档。右侧列表选中一条后，可「📥 存档选中 / 🗑 删除选中」；存档的笔记在「📖 记录本」里。';
     setNoteColor(noteColor);
     noteRedraw(); noteRenderList();
     syncBoxOpen();
