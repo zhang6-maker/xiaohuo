@@ -286,6 +286,7 @@
   <div data-m="mem">📖 记录本</div>
   <div data-m="shotmem">📸 截图存记录</div>
   <div data-m="lang">🗣️ 语言学习</div>
+  <div data-m="langsaved">📚 已存词句</div>
   <div data-m="about">ℹ️ 关于</div>
   <div data-m="fullscreen">🖥️ 全屏 / 窗口</div>
   <div data-m="quit">⏻ 退出</div>
@@ -313,6 +314,8 @@
     <button id="langRead">📖 朗读原文</button>
     <button id="langTransBtn">🌐 翻译</button>
     <button id="langPick">📸 从屏幕取词</button>
+    <button id="langSave">💾 保存</button>
+    <button id="langSavedOpen">📚 已存</button>
   </div>
   <div id="langTrans" class="hidden" style="margin-top:8px;max-height:160px;overflow:auto;font-size:13px;line-height:1.6;color:#f3f3f5;background:#232329;border:1px solid #3a3a42;border-radius:8px;padding:8px 10px;white-space:pre-wrap;"></div>
   <div id="langWords" class="hidden" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;"></div>
@@ -325,6 +328,13 @@
     <div id="langFollowPlay" style="margin-top:8px;"></div>
     <div id="langFollowHint" style="font-size:12px;color:#9aa0a6;margin-top:6px;">点 🔊 正确发音 听标准读音，再点 🎤 跟读 录下你读的，松手后点播放对比。</div>
   </div>
+</div>
+
+<div id="langSavedBox" class="box hidden" style="width:92%;max-width:440px;max-height:86%;overflow:auto;">
+  <button class="close">×</button>
+  <div style="font-size:13px;color:#cfd2d8;margin:2px 0 8px;">📚 已保存的词句 · 点 📖 再听一遍</div>
+  <div id="langSavedList" style="display:flex;flex-direction:column;gap:8px;"></div>
+  <div id="langSavedEmpty" style="font-size:12px;color:#9aa0a6;">还没有保存的内容。在「🗣️ 语言学习」里粘贴或取词后点「💾 保存」即可。</div>
 </div>
 
 <!-- 截图存记录：右键菜单「📸 截图存记录」唤出，可加一句备注（可留空），确认即截当前干净屏存入「我的记录」 -->
@@ -1200,6 +1210,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     else if (act === 'brush') openBrushBox();
     else if (act === 'strokelib') openStrokeLib();
     else if (act === 'lang') openLangBox();
+    else if (act === 'langsaved') openLangSavedBox();
     else if (act === 'clearsketch') { clearSketches(); }
     else if (act === 'mem') openMemories();
     else if (act === 'shotmem') openShotMem();
@@ -1679,7 +1690,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   // 新增弹框只需改这一处；ctxMenu 虽不是 .box，但同样是「开着的浮层」，一并登记。
   const BOX_IDS = [
     'chatBox', 'answerBox', 'screenBox', 'memBox', 'tipsBox',
-    'paintBox', 'colorBox', 'writeColorBox', 'outfitBox', 'ctxMenu', 'brushBox', 'strokeLibBox', 'langBox',
+    'paintBox', 'colorBox', 'writeColorBox', 'outfitBox', 'ctxMenu', 'brushBox', 'strokeLibBox', 'langBox', 'langSavedBox',
   ];
   // 启动自检：DOM 里带 × 的 .box 都应已登记。漏了就直接报警，
   // 别等某天出现「Esc 关不掉新弹框 / 穿透不恢复 / 截图带着弹框」再回头找。
@@ -5619,6 +5630,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       const text = (typeof res === 'string' ? res : '').trim();
       if (!text) { langTrans.textContent = '😵 翻译失败，模型没返回内容。'; return; }
       langTrans.innerHTML = renderRich(text);
+      lastTransText = text;
       buildWordChips(t, lang);
     } catch (e) { langTrans.textContent = '翻译失败：' + apiErrText(e); }
   });
@@ -5688,6 +5700,93 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       langFollowRecBtn.textContent = '🎤 跟读';
       langFollowRecBtn.style.background = '';
     }
+  });
+
+  // ---- 保存 / 已存词句：把当前外文+译文存下来，之后可随时再听（纯本地 localStorage） ----
+  const langSavedBox = document.getElementById('langSavedBox');
+  const langSavedList = document.getElementById('langSavedList');
+  const langSavedEmpty = document.getElementById('langSavedEmpty');
+  const LANG_SAVE_KEY = 'xiaohuo_lang_saves';
+  let lastTransText = '';
+  function loadLangSaves() {
+    try { const a = JSON.parse(localStorage.getItem(LANG_SAVE_KEY) || '[]'); return Array.isArray(a) ? a : []; }
+    catch (e) { return []; }
+  }
+  function saveLangSaves(arr) {
+    try { localStorage.setItem(LANG_SAVE_KEY, JSON.stringify(arr)); } catch (e) {}
+  }
+  function openLangSavedBox() {
+    langSavedBox.classList.remove('hidden');
+    langSavedBox.style.left = '50%'; langSavedBox.style.top = '42%';
+    langSavedBox.style.transform = 'translate(-50%,-50%)';
+    renderLangSaves();
+  }
+  makeDraggable(langSavedBox);
+  langSavedBox.querySelector('.close').addEventListener('click', () => langSavedBox.classList.add('hidden'));
+  function renderLangSaves() {
+    const arr = loadLangSaves();
+    langSavedList.innerHTML = '';
+    langSavedEmpty.style.display = arr.length ? 'none' : 'block';
+    arr.forEach(item => {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'padding:10px;background:#232329;border:1px solid #3a3a42;border-radius:8px;';
+      const head = document.createElement('div');
+      head.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;';
+      const badge = document.createElement('span');
+      badge.textContent = (LANG_NAMES[item.lang] || '外语');
+      badge.style.cssText = 'font-size:11px;color:#cfd2d8;background:#2b2b30;border:1px solid #4a4a52;border-radius:10px;padding:1px 8px;';
+      const time = document.createElement('span');
+      time.textContent = item.ts || '';
+      time.style.cssText = 'font-size:11px;color:#9aa0a6;margin-left:auto;';
+      head.appendChild(badge); head.appendChild(time);
+      const src = document.createElement('div');
+      src.style.cssText = 'font-size:14px;color:#f3f3f5;white-space:pre-wrap;line-height:1.5;word-break:break-word;';
+      src.textContent = item.src;
+      const btns = document.createElement('div');
+      btns.style.cssText = 'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;';
+      const listen = document.createElement('button');
+      listen.textContent = '📖 再听一遍';
+      listen.addEventListener('click', () => speak(item.src, item.lang));
+      btns.appendChild(listen);
+      const del = document.createElement('button');
+      del.textContent = '🗑️ 删除';
+      del.addEventListener('click', () => {
+        saveLangSaves(loadLangSaves().filter(x => x.id !== item.id));
+        renderLangSaves();
+      });
+      btns.appendChild(del);
+      wrap.appendChild(head); wrap.appendChild(src);
+      if (item.trans) {
+        const trans = document.createElement('div');
+        trans.style.cssText = 'display:none;margin-top:6px;font-size:13px;color:#cdd3da;white-space:pre-wrap;line-height:1.5;background:#1d1d22;border:1px solid #33333b;border-radius:6px;padding:6px 8px;';
+        trans.textContent = item.trans;
+        const toggle = document.createElement('button');
+        toggle.textContent = '👀 看译文';
+        toggle.addEventListener('click', () => {
+          if (trans.style.display === 'none') { trans.style.display = 'block'; toggle.textContent = '🙈 收起译文'; }
+          else { trans.style.display = 'none'; toggle.textContent = '👀 看译文'; }
+        });
+        btns.insertBefore(toggle, del);
+        wrap.appendChild(trans);
+      }
+      wrap.appendChild(btns);
+      langSavedList.appendChild(wrap);
+    });
+  }
+  document.getElementById('langSavedOpen').addEventListener('click', openLangSavedBox);
+  document.getElementById('langSave').addEventListener('click', () => {
+    const t = langSrcText.value.trim();
+    if (!t) { toast('先粘贴或取一段外文再保存'); return; }
+    const lang = langSrcSel.value;
+    const arr = loadLangSaves();
+    if (arr.some(x => x.src === t && x.lang === lang)) { toast('这段已经保存过了'); return; }
+    arr.unshift({
+      id: 'ls_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+      src: t, lang: lang, trans: lastTransText || '',
+      ts: new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+    });
+    saveLangSaves(arr);
+    toast('已保存，可在「📚 已存」里随时再听');
   });
 
   // ---------- 记忆本：记录「问题 + 截图 + 回答」，随时翻阅 ----------
