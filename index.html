@@ -318,12 +318,14 @@
   <textarea id="langSrcText" placeholder="把要学的外文粘贴到这里；或点「📸 从屏幕取词」直接框选屏幕上的外文…" style="width:100%;box-sizing:border-box;height:88px;padding:6px 8px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:6px;font-size:13px;resize:vertical;"></textarea>
   <div class="actions" style="margin-top:8px;flex-wrap:wrap;">
     <button id="langRead">📖 朗读原文</button>
+    <button id="langStop" title="停止当前朗读">⏹ 停止</button>
     <button id="langTransBtn">🌐 翻译</button>
     <button id="langPick">📸 从屏幕取词</button>
     <button id="langSave">💾 保存</button>
     <button id="langSavedOpen">📚 已存</button>
   </div>
   <div id="langVoiceHint" style="font-size:11px;color:#9aa0a6;margin-top:4px;line-height:1.4;"></div>
+  <div id="langSpeakBadge" class="hidden" style="margin-top:8px;padding:8px 10px;border-radius:8px;font-size:13px;line-height:1.5;"></div>
   <div id="langTrans" class="hidden" style="margin-top:8px;max-height:160px;overflow:auto;font-size:13px;line-height:1.6;color:#f3f3f5;background:#232329;border:1px solid #3a3a42;border-radius:8px;padding:8px 10px;white-space:pre-wrap;"></div>
   <div id="langWords" class="hidden" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;"></div>
   <div id="langFollow" class="hidden" style="margin-top:10px;padding:10px;background:#232329;border:1px solid #3a3a42;border-radius:8px;">
@@ -5559,7 +5561,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     voicesReady().then(() => { populateVoiceSelect(); updateVoiceHint(); });
   }
   makeDraggable(langBox);
-  langBox.querySelector('.close').addEventListener('click', () => langBox.classList.add('hidden'));
+  langBox.querySelector('.close').addEventListener('click', () => { ++_speakSeq; stopSpeak(); langBox.classList.add('hidden'); });
 
   // ---- TTS 朗读 ----
   // 关键坑：speechSynthesis.getVoices() 是异步的，初始化时通常返回空数组，
@@ -5706,9 +5708,37 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     })();
     return _espP;
   }
+  // 朗读状态提示条：机械音/兜底引擎朗读时必须显眼地告诉用户"这不是标准发音"，避免误导。
+  const langSpeakBadge = document.getElementById('langSpeakBadge');
+  function showSpeakBadge(text, warn) {
+    if (!langSpeakBadge) return;
+    langSpeakBadge.classList.remove('hidden');
+    if (warn) {
+      langSpeakBadge.style.background = '#3a2a12';
+      langSpeakBadge.style.border = '1px solid #8a6d1f';
+      langSpeakBadge.style.color = '#ffd97a';
+      langSpeakBadge.textContent = '⚠️ ' + text;
+    } else {
+      langSpeakBadge.style.background = '#12261f';
+      langSpeakBadge.style.border = '1px solid #1f5a43';
+      langSpeakBadge.style.color = '#8fe3bd';
+      langSpeakBadge.textContent = '🔊 ' + text;
+    }
+  }
+  function hideSpeakBadge() {
+    if (langSpeakBadge) langSpeakBadge.classList.add('hidden');
+  }
   function stopSpeak() {
     try { if (typeof window.speechSynthesis !== 'undefined') window.speechSynthesis.cancel(); } catch (e) {}
     if (_espAudio) { try { _espAudio.pause(); } catch (e) {} _espAudio = null; }
+    hideSpeakBadge();
+  }
+  // 停止按钮：掐断 seq 让正在 await 的 Piper/eSpeak 加载在完成后直接 return，
+  // 否则点停止后模型加载完仍会突然出声。
+  function stopAllSpeak() {
+    ++_speakSeq;
+    stopSpeak();
+    toast('已停止朗读');
   }
   function playEspeakWav(bytes) {
     const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }));
@@ -5717,6 +5747,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     au.onended = au.onerror = () => {
       URL.revokeObjectURL(url);
       if (_espAudio === au) _espAudio = null;
+      hideSpeakBadge();
     };
     au.play().catch(() => {});
   }
@@ -5756,6 +5787,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     au.onended = au.onerror = () => {
       URL.revokeObjectURL(url);
       if (_espAudio === au) _espAudio = null;
+      hideSpeakBadge();
     };
     return au.play();
   }
@@ -5817,6 +5849,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         if (seq !== _speakSeq) return;
         const r = await eng.generate(text, 'en_US-kathleen-low', 0);
         if (seq !== _speakSeq) return;
+        showSpeakBadge('英语 · 内置神经语音（自然音质 · 离线）', false);
         await playBlobAudio(r.file);
         if (langVoiceHint && langVoiceHint.textContent.startsWith('⏳')) updateVoiceHint();
         return;
@@ -5835,6 +5868,10 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         const u = new SpeechSynthesisUtterance(text);
         u.voice = v; u.lang = v.lang || lang;
         u.rate = 1; u.pitch = 1; u.volume = 1;
+        u.onend = u.onerror = () => { if (seq === _speakSeq) hideSpeakBadge(); };
+        const vname = (v.name || '').slice(0, 30);
+        if (!v.localService) showSpeakBadge(LANG_NAMES[lang] + ' · 在线嗓音「' + vname + '」（文本会发给微软）', true);
+        else showSpeakBadge(LANG_NAMES[lang] + ' · 本地嗓音「' + vname + '」', false);
         window.speechSynthesis.speak(u);
         if (!_voiceHinted) {
           _voiceHinted = true;
@@ -5855,6 +5892,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       if (seq !== _speakSeq) return;
       const r = eng.synthesize(text, { voice: ESPEAK_VOICE[lang] || 'en-us' });
       if (seq !== _speakSeq) return;
+      showSpeakBadge((LANG_NAMES[lang] || '该语种') + ' · 机械合成音（发音生硬、非真人，仅供参考）', true);
       playEspeakWav(window.Spellophone.encodeWav(r.samples, r.sampleRate));
     } catch (e) {
       toast('离线朗读没起来：' + (e && e.message ? e.message : e));
@@ -5868,6 +5906,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     if (!t) { toast('先粘贴或取一段外文'); return; }
     speak(t, langSrcSel.value);
   });
+  // 停止朗读：掐断三条播放路径 + 中断正在加载的模型，并隐藏状态条
+  document.getElementById('langStop').addEventListener('click', stopAllSpeak);
 
   // ---- 从屏幕取词：框选屏幕外文 → 视觉模型只识别原文回填 ----
   document.getElementById('langPick').addEventListener('click', () => {
