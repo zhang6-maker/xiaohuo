@@ -317,6 +317,7 @@
     <button id="langSave">💾 保存</button>
     <button id="langSavedOpen">📚 已存</button>
   </div>
+  <div id="langVoiceHint" style="font-size:11px;color:#9aa0a6;margin-top:4px;line-height:1.4;"></div>
   <div id="langTrans" class="hidden" style="margin-top:8px;max-height:160px;overflow:auto;font-size:13px;line-height:1.6;color:#f3f3f5;background:#232329;border:1px solid #3a3a42;border-radius:8px;padding:8px 10px;white-space:pre-wrap;"></div>
   <div id="langWords" class="hidden" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;"></div>
   <div id="langFollow" class="hidden" style="margin-top:10px;padding:10px;background:#232329;border:1px solid #3a3a42;border-radius:8px;">
@@ -5540,50 +5541,88 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   const langFollowPlay = document.getElementById('langFollowPlay');
   const langFollowHint = document.getElementById('langFollowHint');
   const langFollowRecBtn = document.getElementById('langFollowRec');
+  const langVoiceHint = document.getElementById('langVoiceHint');
 
   function openLangBox() {
     langBox.classList.remove('hidden');
     langBox.style.left = '50%'; langBox.style.top = '40%';
     langBox.style.transform = 'translate(-50%,-50%)';
     setTimeout(() => { try { langSrcText.focus(); } catch (e) {} }, 30);
+    updateVoiceHint();
   }
   makeDraggable(langBox);
   langBox.querySelector('.close').addEventListener('click', () => langBox.classList.add('hidden'));
 
   // ---- TTS 朗读（WebView2 自带 speechSynthesis，离线即可出声） ----
+  const LANG_NAMES = { en:'英语', ja:'日语', ko:'韩语', fr:'法语', de:'德语', es:'西班牙语', zh:'中文', auto:'外语' };
   let _voices = [];
   function loadVoices() { try { _voices = window.speechSynthesis.getVoices() || []; } catch (e) { _voices = []; } }
   loadVoices();
   if (typeof window.speechSynthesis !== 'undefined' && 'onvoiceschanged' in window.speechSynthesis) {
-    window.speechSynthesis.onvoiceschanged = loadVoices;
+    window.speechSynthesis.onvoiceschanged = () => { loadVoices(); updateVoiceHint(); };
   }
-  // 按语种前缀挑 voice；auto 时启发式判断文本语种
-  function pickVoice(langCode) {
+  // 本机实际可用的 TTS 语种（两位码集合）
+  function voiceLangSet() {
+    if (!_voices.length) loadVoices();
+    const s = new Set();
+    _voices.forEach(v => { if (v.lang) s.add(v.lang.toLowerCase().slice(0, 2)); });
+    return s;
+  }
+  // 找匹配某语种的 voice；找不到返回 null（绝不回落到别的语种，避免把外语读成中文）
+  function findVoice(langCode) {
     if (!_voices.length) loadVoices();
     if (!_voices.length) return null;
-    if (langCode && langCode !== 'auto') {
-      const v = _voices.find(v => v.lang && v.lang.toLowerCase().startsWith(langCode.toLowerCase()));
-      if (v) return v;
+    const lc = (langCode || '').toLowerCase();
+    return _voices.find(v => v.lang && v.lang.toLowerCase() === lc)
+        || _voices.find(v => v.lang && v.lang.toLowerCase().startsWith(lc));
+  }
+  // auto 时启发式判断文本语种（默认英文；纯字母/数字绝不误判成中文）
+  function guessLang(text) {
+    const t = (text || '').toLowerCase();
+    if (/[぀-ヿ]/.test(t)) return 'ja';
+    if (/[가-힯]/.test(t)) return 'ko';
+    if (/[àâäéèêëïîôöùûüçæœ]/.test(t)) return 'fr';
+    if (/[äöüß]/.test(t)) return 'de';
+    if (/[áéíóúñ¿]/.test(t)) return 'es';
+    if (/[一-龥]/.test(t)) return 'zh';
+    return 'en';
+  }
+  // 在语言学习框里实时显示本机可用的朗读语音，并标记下拉里「未安装」的语种
+  function updateVoiceHint() {
+    if (!_voices.length) loadVoices();
+    const have = voiceLangSet();
+    if (langSrcSel && langSrcSel.options) {
+      for (const opt of langSrcSel.options) {
+        if (opt.value === 'auto') { opt.textContent = '自动检测'; continue; }
+        const ok = have.has(opt.value);
+        const base = LANG_NAMES[opt.value] || opt.value;
+        opt.textContent = ok ? base : base + '（未装语音包）';
+        opt.style.color = ok ? '' : '#e6a23c';
+      }
     }
-    const t = (langSrcText.value || '').toLowerCase();
-    let guess = 'en';
-    if (/[぀-ヿ]/.test(t)) guess = 'ja';
-    else if (/[가-힯]/.test(t)) guess = 'ko';
-    else if (/[一-龥]/.test(t)) guess = 'zh';
-    else if (/[àâäéèêëïîôöùûüçæœ]/.test(t)) guess = 'fr';
-    else if (/[äöüß]/.test(t)) guess = 'de';
-    else if (/[áéíóúñ¿]/.test(t)) guess = 'es';
-    const v2 = _voices.find(v => v.lang && v.lang.toLowerCase().startsWith(guess));
-    return v2 || _voices[0];
+    if (!langVoiceHint) return;
+    const all = ['en','ja','ko','fr','de','es','zh'];
+    const okList = all.filter(c => have.has(c)).map(c => LANG_NAMES[c]);
+    const missList = all.filter(c => !have.has(c)).map(c => LANG_NAMES[c]);
+    let msg = '本机可朗读：' + (okList.length ? okList.join('、') : '无');
+    if (missList.length) msg += '；缺：' + missList.join('、') + '（Windows 设置→时间和语言→语音/语言包 安装后可用）';
+    langVoiceHint.textContent = msg;
   }
   function speak(text, langCode) {
     if (!text || typeof window.speechSynthesis === 'undefined') return;
+    const lang = (langCode && langCode !== 'auto') ? langCode : guessLang(text);
     try {
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
-      const v = pickVoice(langCode);
+      const v = findVoice(lang);
       if (v) { u.voice = v; u.lang = v.lang; }
-      else if (langCode && langCode !== 'auto') u.lang = langCode;
+      else {
+        // 本机没装该语种语音包：仍按语种朗读（引擎尽力），并提示安装
+        u.lang = lang;
+        const want = LANG_NAMES[lang] || lang;
+        const have = [...voiceLangSet()].map(c => LANG_NAMES[c] || c).join('、') || '无';
+        toast(`本机没装「${want}」朗读语音包，可能读不准（当前可用：${have}）。可在 Windows 设置 → 时间和语言 → 语音 安装「${want}」语音后重试。`);
+      }
       window.speechSynthesis.speak(u);
     } catch (e) {}
   }
@@ -5616,7 +5655,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   }
 
   // ---- 翻译（纯文本走 ask_glm，省视觉额度） ----
-  const LANG_NAMES = { en:'英语', ja:'日语', ko:'韩语', fr:'法语', de:'德语', es:'西班牙语', zh:'中文', auto:'外语' };
+  // LANG_NAMES 已在上方 TTS 区统一定义
   document.getElementById('langTransBtn').addEventListener('click', async () => {
     const t = langSrcText.value.trim();
     if (!t) { toast('先粘贴或取一段外文'); return; }
