@@ -75,6 +75,12 @@ pub fn run() {
             drag_start: Arc::new(Mutex::new(None)),
             pack_exhausted: Arc::new(Mutex::new(false)),
         })
+        // 语言学习「跟读」需要麦克风：WebView2 的 getUserMedia 会先发权限请求，
+        // 不处理就会被浏览器默认拒绝(NotAllowedError)。这里只放行麦克风，其余走默认。
+        .on_permission_request(|_webview, kind| match kind {
+            tauri::webview::PermissionKind::Microphone => tauri::webview::PermissionResponse::Allow,
+            _ => tauri::webview::PermissionResponse::Default,
+        })
         .setup(|app| {
             // 加载 .env：优先 exe 所在目录（兼容便携版与 MSI 安装版），其次 src-tauri/.env 与 cwd/.env
             let exe_dir_env = std::env::current_exe()

@@ -285,9 +285,46 @@
   <div data-m="clearsketch" id="ctxClearSketch" class="hidden">🧹 清除草图</div>
   <div data-m="mem">📖 记录本</div>
   <div data-m="shotmem">📸 截图存记录</div>
+  <div data-m="lang">🗣️ 语言学习</div>
   <div data-m="about">ℹ️ 关于</div>
   <div data-m="fullscreen">🖥️ 全屏 / 窗口</div>
   <div data-m="quit">⏻ 退出</div>
+</div>
+
+<!-- 语言学习：粘贴/屏幕取外文 → 朗读 + 翻译 + 逐词跟读 -->
+<div id="langBox" class="box hidden" style="width:92%;max-width:420px;max-height:88%;overflow:auto;">
+  <button class="close">×</button>
+  <div style="font-size:13px;color:#cfd2d8;margin:2px 0 8px;">🗣️ 语言学习 · 朗读 / 翻译 / 跟读</div>
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+    <label style="font-size:12px;color:#9aa0a6;white-space:nowrap;">原文语种</label>
+    <select id="langSrc" style="flex:1;padding:5px 8px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:6px;font-size:13px;">
+      <option value="auto">自动检测</option>
+      <option value="en">英语</option>
+      <option value="ja">日语</option>
+      <option value="ko">韩语</option>
+      <option value="fr">法语</option>
+      <option value="de">德语</option>
+      <option value="es">西班牙语</option>
+      <option value="zh">中文（外译中）</option>
+    </select>
+  </div>
+  <textarea id="langSrcText" placeholder="把要学的外文粘贴到这里；或点「📸 从屏幕取词」直接框选屏幕上的外文…" style="width:100%;box-sizing:border-box;height:88px;padding:6px 8px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:6px;font-size:13px;resize:vertical;"></textarea>
+  <div class="actions" style="margin-top:8px;flex-wrap:wrap;">
+    <button id="langRead">📖 朗读原文</button>
+    <button id="langTransBtn">🌐 翻译</button>
+    <button id="langPick">📸 从屏幕取词</button>
+  </div>
+  <div id="langTrans" class="hidden" style="margin-top:8px;max-height:160px;overflow:auto;font-size:13px;line-height:1.6;color:#f3f3f5;background:#232329;border:1px solid #3a3a42;border-radius:8px;padding:8px 10px;white-space:pre-wrap;"></div>
+  <div id="langWords" class="hidden" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;"></div>
+  <div id="langFollow" class="hidden" style="margin-top:10px;padding:10px;background:#232329;border:1px solid #3a3a42;border-radius:8px;">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <span id="langFollowWord" style="font-size:20px;font-weight:600;color:#fff;"></span>
+      <button id="langFollowListen" title="听正确发音">🔊 正确发音</button>
+      <button id="langFollowRec" title="录下你读的，和正确发音对比">🎤 跟读</button>
+    </div>
+    <div id="langFollowPlay" style="margin-top:8px;"></div>
+    <div id="langFollowHint" style="font-size:12px;color:#9aa0a6;margin-top:6px;">点 🔊 正确发音 听标准读音，再点 🎤 跟读 录下你读的，松手后点播放对比。</div>
+  </div>
 </div>
 
 <!-- 截图存记录：右键菜单「📸 截图存记录」唤出，可加一句备注（可留空），确认即截当前干净屏存入「我的记录」 -->
@@ -1162,6 +1199,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     else if (act === 'sketch') { openPaintInput(); const h = document.getElementById('paintHint'); if (h) h.textContent = '📐 画草图：直角坐标系 / 象限 / y=sin(x) / 向量(3,4) / 点(1,2) / 圆 … 直接说就行，离线就能画'; }
     else if (act === 'brush') openBrushBox();
     else if (act === 'strokelib') openStrokeLib();
+    else if (act === 'lang') openLangBox();
     else if (act === 'clearsketch') { clearSketches(); }
     else if (act === 'mem') openMemories();
     else if (act === 'shotmem') openShotMem();
@@ -1641,7 +1679,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   // 新增弹框只需改这一处；ctxMenu 虽不是 .box，但同样是「开着的浮层」，一并登记。
   const BOX_IDS = [
     'chatBox', 'answerBox', 'screenBox', 'memBox', 'tipsBox',
-    'paintBox', 'colorBox', 'writeColorBox', 'outfitBox', 'ctxMenu', 'brushBox', 'strokeLibBox',
+    'paintBox', 'colorBox', 'writeColorBox', 'outfitBox', 'ctxMenu', 'brushBox', 'strokeLibBox', 'langBox',
   ];
   // 启动自检：DOM 里带 × 的 .box 都应已登记。漏了就直接报警，
   // 别等某天出现「Esc 关不掉新弹框 / 穿透不恢复 / 截图带着弹框」再回头找。
@@ -5038,12 +5076,14 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   const pickHint = document.getElementById('pickHint');
   let picking = false, pickStart = null, lastRegionB64 = '', currentAct = 'search';
   let searchShots = [];   // 多次截图批次：每次框选都收进这里，最后一次性提交
+  let pickMode = '';      // 'lang' 时：框选结果回流到语言学习框（只识别原文），不走看屏/搜题流程
   let lastShots = [];      // 上一次提交用的整批图（"再问一次"时复用，避免丢前面的图）
   // 取当前要发给模型的图批次：优先未提交的批次，否则用上一次提交的整批
   function shotsArr() { return searchShots.length ? searchShots.slice() : lastShots.slice(); }
 
   function closeAllPick() {
     picking = false;
+    pickMode = '';        // 取消框选即清掉"屏幕取词"模式，避免之后误把"看看屏幕"也回流到语言学习框
     pickLayer.classList.add('hidden');
     pickRect.style.display = 'none';
     if (isTauri) invoke('toggle_pick', { full: false }).catch(() => {});
@@ -5116,6 +5156,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     c.getContext('2d').drawImage(pickImg, X, Y, RW, RH, 0, 0, c.width, c.height);
     const b64 = c.toDataURL('image/jpeg', 0.85);
     lastRegionB64 = b64;
+    if (pickMode === 'lang') { closeAllPick(); langOcrFromImage(b64); return; }  // 屏幕取词 → 回流到语言学习框
     closeAllPick();                                // 退出全屏，回小窗显示结果
     appendShot(currentAct, b64);                   // 进入"可多次截图"流程：先收进批次，再让用户决定再加还是提交
   });
@@ -5476,6 +5517,178 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   screenBox.querySelector('.close').addEventListener('click', () => screenBox.classList.add('hidden'));
   // 在提问框按回车 = 问问他（问题留空则为直接看）；中文输入法组词中的回车不触发
   screenAsk.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) runGlm('screen', shotsArr(), screenAsk.value); });
+
+  // ================= 语言学习：粘贴/屏幕取外文 → 朗读 + 翻译 + 逐词跟读 =================
+  const langBox = document.getElementById('langBox');
+  const langSrcText = document.getElementById('langSrcText');
+  const langSrcSel = document.getElementById('langSrc');
+  const langTrans = document.getElementById('langTrans');
+  const langWords = document.getElementById('langWords');
+  const langFollow = document.getElementById('langFollow');
+  const langFollowWord = document.getElementById('langFollowWord');
+  const langFollowPlay = document.getElementById('langFollowPlay');
+  const langFollowHint = document.getElementById('langFollowHint');
+  const langFollowRecBtn = document.getElementById('langFollowRec');
+
+  function openLangBox() {
+    langBox.classList.remove('hidden');
+    langBox.style.left = '50%'; langBox.style.top = '40%';
+    langBox.style.transform = 'translate(-50%,-50%)';
+    setTimeout(() => { try { langSrcText.focus(); } catch (e) {} }, 30);
+  }
+  makeDraggable(langBox);
+  langBox.querySelector('.close').addEventListener('click', () => langBox.classList.add('hidden'));
+
+  // ---- TTS 朗读（WebView2 自带 speechSynthesis，离线即可出声） ----
+  let _voices = [];
+  function loadVoices() { try { _voices = window.speechSynthesis.getVoices() || []; } catch (e) { _voices = []; } }
+  loadVoices();
+  if (typeof window.speechSynthesis !== 'undefined' && 'onvoiceschanged' in window.speechSynthesis) {
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+  }
+  // 按语种前缀挑 voice；auto 时启发式判断文本语种
+  function pickVoice(langCode) {
+    if (!_voices.length) loadVoices();
+    if (!_voices.length) return null;
+    if (langCode && langCode !== 'auto') {
+      const v = _voices.find(v => v.lang && v.lang.toLowerCase().startsWith(langCode.toLowerCase()));
+      if (v) return v;
+    }
+    const t = (langSrcText.value || '').toLowerCase();
+    let guess = 'en';
+    if (/[぀-ヿ]/.test(t)) guess = 'ja';
+    else if (/[가-힯]/.test(t)) guess = 'ko';
+    else if (/[一-龥]/.test(t)) guess = 'zh';
+    else if (/[àâäéèêëïîôöùûüçæœ]/.test(t)) guess = 'fr';
+    else if (/[äöüß]/.test(t)) guess = 'de';
+    else if (/[áéíóúñ¿]/.test(t)) guess = 'es';
+    const v2 = _voices.find(v => v.lang && v.lang.toLowerCase().startsWith(guess));
+    return v2 || _voices[0];
+  }
+  function speak(text, langCode) {
+    if (!text || typeof window.speechSynthesis === 'undefined') return;
+    try {
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      const v = pickVoice(langCode);
+      if (v) { u.voice = v; u.lang = v.lang; }
+      else if (langCode && langCode !== 'auto') u.lang = langCode;
+      window.speechSynthesis.speak(u);
+    } catch (e) {}
+  }
+
+  // 朗读原文
+  document.getElementById('langRead').addEventListener('click', () => {
+    const t = langSrcText.value.trim();
+    if (!t) { toast('先粘贴或取一段外文'); return; }
+    speak(t, langSrcSel.value);
+  });
+
+  // ---- 从屏幕取词：框选屏幕外文 → 视觉模型只识别原文回填 ----
+  document.getElementById('langPick').addEventListener('click', () => {
+    if (!isTauri) { toast('屏幕取词需要桌面版（能截屏）'); return; }
+    pickMode = 'lang';
+    startPick('screen');
+    toast('框选屏幕上的外文区域，识别后我取回原文');
+  });
+  async function langOcrFromImage(b64) {
+    pickMode = '';
+    openLangBox();
+    langSrcText.value = '🔍 正在识别屏幕上的文字…';
+    langSrcSel.value = 'auto';
+    try {
+      const res = await invoke('ask_glm', { imagesB64: [b64], prompt: '请只识别并提取图中出现的所有外文原文（英文/日文/韩文/法德西等），尽量按出现顺序、保留换行与排版，逐行输出。不要翻译、不要解释、不要加任何额外说明。若图中没有外文，请只回一个字：无。' });
+      const text = (typeof res === 'string' ? res : '').trim();
+      langSrcText.value = (text && text !== '无') ? text : '';
+      if (!langSrcText.value) toast('没识别出外文，换张图试试');
+    } catch (e) { langSrcText.value = ''; toast('识别失败：' + apiErrText(e)); }
+  }
+
+  // ---- 翻译（纯文本走 ask_glm，省视觉额度） ----
+  const LANG_NAMES = { en:'英语', ja:'日语', ko:'韩语', fr:'法语', de:'德语', es:'西班牙语', zh:'中文', auto:'外语' };
+  document.getElementById('langTransBtn').addEventListener('click', async () => {
+    const t = langSrcText.value.trim();
+    if (!t) { toast('先粘贴或取一段外文'); return; }
+    const lang = langSrcSel.value;
+    const langName = LANG_NAMES[lang] || '外语';
+    langTrans.classList.remove('hidden');
+    langTrans.textContent = '🌐 正在翻译…';
+    try {
+      const prompt = `请把下面这段${lang === 'auto' ? '外语' : langName}翻译成中文。逐句对应，尽量保留原意与语气；专有名词（人名/地名/术语）可保留原文并在括号里给中文释义。用中文回答，不要额外解释。\n\n"""\n${t}\n"""`;
+      const res = await invoke('ask_glm', { imagesB64: [], prompt });
+      const text = (typeof res === 'string' ? res : '').trim();
+      if (!text) { langTrans.textContent = '😵 翻译失败，模型没返回内容。'; return; }
+      langTrans.innerHTML = renderRich(text);
+      buildWordChips(t, lang);
+    } catch (e) { langTrans.textContent = '翻译失败：' + apiErrText(e); }
+  });
+
+  // ---- 逐词 chips：点单词即听 + 可跟读 ----
+  function buildWordChips(text, lang) {
+    const tokens = text.match(/[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*/gu) || [];
+    langWords.innerHTML = '';
+    const seen = new Set();
+    tokens.forEach(tok => {
+      const key = tok.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      const chip = document.createElement('button');
+      chip.textContent = tok;
+      chip.title = '点我听发音，并可以跟读';
+      chip.style.cssText = 'padding:4px 10px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:14px;font-size:13px;cursor:pointer;';
+      chip.addEventListener('click', () => openFollow(tok, lang));
+      langWords.appendChild(chip);
+    });
+    if (seen.size) langWords.classList.remove('hidden');
+    else langWords.classList.add('hidden');
+  }
+
+  // ---- 跟读：点单词→听标准音；🎤 录自己读的→回放对比（纯本地 MediaRecorder，不联网识别） ----
+  let mediaStream = null, mediaRec = null, recChunks = [], recording = false;
+  function openFollow(word, lang) {
+    langFollow.classList.remove('hidden');
+    langFollowWord.textContent = word;
+    langFollowWord.dataset.lang = lang;
+    langFollowPlay.innerHTML = '';
+    langFollowHint.textContent = '点 🔊 正确发音 听标准读音，再点 🎤 跟读 录下你读的，松手后点播放对比。';
+    speak(word, lang);   // 自动听一遍标准音
+  }
+  document.getElementById('langFollowListen').addEventListener('click', () => speak(langFollowWord.textContent, langFollowWord.dataset.lang));
+  langFollowRecBtn.addEventListener('click', async () => {
+    if (!recording) {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { toast('当前环境不支持麦克风'); return; }
+      try { mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+      catch (e) { toast('麦克风打不开：' + (e && e.message ? e.message : e)); return; }
+      recChunks = [];
+      try { mediaRec = new MediaRecorder(mediaStream); }
+      catch (e) { toast('录音不可用：' + (e && e.message ? e.message : e)); mediaStream.getTracks().forEach(t => t.stop()); return; }
+      mediaRec.ondataavailable = e => { if (e.data && e.data.size) recChunks.push(e.data); };
+      mediaRec.onstop = () => {
+        try {
+          const blob = new Blob(recChunks, { type: (mediaRec && mediaRec.mimeType) || 'audio/webm' });
+          const url = URL.createObjectURL(blob);
+          langFollowPlay.innerHTML = '';
+          const au = document.createElement('audio');
+          au.controls = true; au.src = url; au.style.maxWidth = '100%';
+          langFollowPlay.appendChild(au);
+          const tip = document.createElement('div');
+          tip.style.cssText = 'margin-top:6px;font-size:12px;color:#9aa0a6;';
+          tip.textContent = '▶ 这是你录的；点上面 🔊 正确发音 对比标准读音。';
+          langFollowPlay.appendChild(tip);
+        } catch (e) {}
+        if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
+      };
+      try { mediaRec.start(); } catch (e) { toast('录音启动失败：' + (e && e.message ? e.message : e)); mediaStream.getTracks().forEach(t => t.stop()); return; }
+      recording = true;
+      langFollowRecBtn.textContent = '⏹ 停止';
+      langFollowRecBtn.style.background = '#b34747';
+    } else {
+      try { if (mediaRec && mediaRec.state !== 'inactive') mediaRec.stop(); } catch (e) {}
+      recording = false;
+      langFollowRecBtn.textContent = '🎤 跟读';
+      langFollowRecBtn.style.background = '';
+    }
+  });
 
   // ---------- 记忆本：记录「问题 + 截图 + 回答」，随时翻阅 ----------
   const memBox = document.getElementById('memBox');
