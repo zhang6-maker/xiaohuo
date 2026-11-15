@@ -264,7 +264,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![capture_screen, capture_region, screen_size, ask_glm, ask_draw, critique_draw, ask_sketch, toggle_pick, set_box_open, ask_reply, drag_start, drag_move, drag_end, save_memory, list_memories, get_memory, delete_memory, open_memories_folder, web_lookup])
+        .invoke_handler(tauri::generate_handler![capture_screen, capture_region, capture_gray, screen_size, ask_glm, ask_draw, critique_draw, ask_sketch, toggle_pick, set_box_open, ask_reply, drag_start, drag_move, drag_end, save_memory, list_memories, get_memory, delete_memory, open_memories_folder, web_lookup])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -287,6 +287,99 @@ fn capture_screen() -> Result<String, String> {
 #[tauri::command]
 fn screen_size() -> (i32, i32) {
     unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) }
+}
+
+/// 只截局部 → 直接返回「降采样灰度」base64（每像素 1 字节）。
+/// 跟随笔记轮询专用：省掉 PNG 编码与前端图片解码，这是"跟手"的关键。
+#[tauri::command]
+fn capture_gray(x: i32, y: i32, w: i32, h: i32, ds: u32) -> Result<(u32, u32, String), String> {
+    match std::panic::catch_unwind(|| capture_gray_inner(x, y, w, h, ds)) {
+        Ok(r) => r,
+        Err(_) => Err("灰度截屏内部异常，已被拦截（程序没有退出）。".into()),
+    }
+}
+
+fn capture_gray_inner(x: i32, y: i32, w: i32, h: i32, ds: u32) -> Result<(u32, u32, String), String> {
+    unsafe {
+        let screen: HDC = GetDC(None);
+        let sw = GetSystemMetrics(SM_CXSCREEN);
+        let sh = GetSystemMetrics(SM_CYSCREEN);
+        if sw <= 0 || sh <= 0 {
+            let _ = ReleaseDC(None, screen);
+            return Err("灰度截屏失败：屏幕尺寸异常（锁屏/远程桌面？）".into());
+        }
+        let x0 = x.max(0).min(sw);
+        let y0 = y.max(0).min(sh);
+        let w0 = w.min(sw - x0).max(0);
+        let h0 = h.min(sh - y0).max(0);
+        if w0 < 8 || h0 < 8 {
+            let _ = ReleaseDC(None, screen);
+            return Err("灰度截屏失败：目标区域已在屏幕外".into());
+        }
+        let px = (w0 as usize)
+            .checked_mul(h0 as usize)
+            .and_then(|n| n.checked_mul(4))
+            .ok_or_else(|| "灰度截屏失败：尺寸溢出".to_string())?;
+
+        let mem: HDC = CreateCompatibleDC(Some(screen));
+        let bmp: HBITMAP = CreateCompatibleBitmap(screen, w0, h0);
+        let old: HGDIOBJ = SelectObject(mem, HGDIOBJ(bmp.0));
+        let _ = BitBlt(mem, 0, 0, w0, h0, Some(screen), x0, y0, SRCCOPY);
+
+        let mut bmi: BITMAPINFO = std::mem::zeroed();
+        bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+        bmi.bmiHeader.biWidth = w0;
+        bmi.bmiHeader.biHeight = -h0;
+        bmi.bmiHeader.biPlanes = 1u16;
+        bmi.bmiHeader.biBitCount = 32u16;
+        bmi.bmiHeader.biCompression = 0u32;
+
+        let mut buf = vec![0u8; px];
+        // 铁律：hbmp 必须先从 DC 换出再 GetDIBits，否则 0xc0000005
+        let _ = SelectObject(mem, old);
+        let lines = GetDIBits(
+            mem,
+            bmp,
+            0,
+            h0 as u32,
+            Some(buf.as_mut_ptr() as *mut c_void),
+            &mut bmi,
+            DIB_RGB_COLORS,
+        );
+        let _ = DeleteObject(HGDIOBJ(bmp.0));
+        let _ = DeleteDC(mem);
+        let _ = ReleaseDC(None, screen);
+        if lines != h0 {
+            return Err(format!("灰度截屏失败：像素读取不完整（{}/{} 行）", lines, h0));
+        }
+
+        let ds = ds.max(1) as usize;
+        let gw = w0 as usize / ds;
+        let gh = h0 as usize / ds;
+        if gw == 0 || gh == 0 {
+            return Err("灰度截屏失败：区域太小".into());
+        }
+        let mut gray = vec![0u8; gw * gh];
+        let total = (ds * ds) as u32;
+        for gy in 0..gh {
+            for gx in 0..gw {
+                let mut sum: u32 = 0;
+                for dy in 0..ds {
+                    let row = (gy * ds + dy) * (w0 as usize);
+                    for dx in 0..ds {
+                        let i = (row + gx * ds + dx) * 4;
+                        let b = buf[i] as u32;
+                        let g = buf[i + 1] as u32;
+                        let r = buf[i + 2] as u32;
+                        sum += (299 * r + 587 * g + 114 * b) / 1000;
+                    }
+                }
+                gray[gy * gw + gx] = (sum / total) as u8;
+            }
+        }
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&gray);
+        Ok((gw as u32, gh as u32, b64))
+    }
 }
 
 /// 只截屏幕局部矩形 → PNG data URL。给「跟随笔记」轮询用：

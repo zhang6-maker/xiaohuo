@@ -473,10 +473,13 @@
     <button id="notePin" style="background:#2b4a6b;border:1px solid #3f6a8c;color:#f3f3f5;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px;">📌 钉住并跟随</button>
     <button id="noteToggle" style="background:#2b2b30;border:1px solid #4a4a52;color:#f3f3f5;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px;">🚫 隐藏全部</button>
     <button id="noteDel" style="background:#3a3a42;border:1px solid #55555f;color:#f3f3f5;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px;">🗑 删除当前</button>
+    <button id="noteArch" style="background:#2b4a6b;border:1px solid #3f6a8c;color:#f3f3f5;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px;">📥 存档当前</button>
+    <button id="noteArchAll" style="background:#2b4a6b;border:1px solid #3f6a8c;color:#f3f3f5;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px;">📥 存档全部</button>
     <button id="noteClear" style="background:#5a3030;border:1px solid #7a4040;color:#f3f3f5;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px;">🧹 全部清除</button>
     <button id="noteDone" style="background:#2f6b3a;border:1px solid #3f8a4c;color:#f3f3f5;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px;">完成</button>
   </div>
   <div id="noteHint" style="position:fixed;left:50%;top:66px;transform:translateX(-50%);pointer-events:none;font-size:12px;color:#cfd2d8;background:rgba(28,28,32,.9);border:1px solid #3a3a40;border-radius:8px;padding:6px 10px;max-width:90vw;z-index:301;line-height:1.5;"></div>
+  <div id="noteList" style="position:fixed;right:12px;top:56px;width:236px;max-height:66vh;overflow:auto;pointer-events:auto;background:rgba(28,28,32,.95);border:1px solid #3a3a40;border-radius:10px;padding:8px;font-size:12px;z-index:301;line-height:1.5;"></div>
 </div>
 
 <!-- 笔画库：存放用户画作笔迹，可「照着画」让小火模仿，可删除，可导出干净 PNG（不含界面） -->
@@ -1465,26 +1468,31 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   });
 
   // ---------- 跟随笔记：屏幕锚定笔迹（本机模板匹配，完全离线、不上传） ----------
-  // 原理：钉住时把「笔迹包围盒」那一小块截图做成灰度模板；之后定时在锚点附近再截一小块，
-  // 用归一化互相关(ZNCC)找模板的新位置 → 位移量 → 把笔迹整体平移过去。
-  // 关键：模板里排除"自己画的线"（mask），所以跟随期间不用隐藏笔迹，不会闪烁；
-  //      匹配失败（字滚出屏幕 / 内容重排 / 换了页面）连续 2 次 → 自动隐藏（用户要求）。
+  // 原理：钉住时把「笔迹包围盒」那块取成灰度模板（由 Rust 直接返回降采样的灰度字节，
+  // 省掉 PNG 编码 + base64 图片解码 → 这是"跟手"的关键）；之后每 250ms 在锚点附近
+  // 再取一小块做 ZNCC 归一化互相关，算出位移把笔迹整体平移过去。
+  // 掩膜：自己画的线、以及小火本体压住的范围，都从模板里挖掉 →
+  //       跟随期间**什么都不隐藏**，所以不会出现"人物一闪一闪"或模板时序错位。
   const notePad = document.getElementById('notePad');
   const noteCtx = notePad.getContext('2d');
   const noteBox = document.getElementById('noteBox');
   const noteBar = document.getElementById('noteBar');
   const noteHint = document.getElementById('noteHint');
+  const noteListEl = document.getElementById('noteList');
   const noteSwatches = document.getElementById('noteSwatches');
   const notePicker = document.getElementById('notePicker');
   const noteSizeEl = document.getElementById('noteSize');
   const noteToggleBtn = document.getElementById('noteToggle');
   const NOTE_KEY = 'xiaohuo_notes_v1';
-  const NOTE_DS = 2;              // 模板降采样倍数：2 → 精度约 2px，速度与准度平衡
-  const NOTE_SCORE = 0.78;        // ZNCC 阈值：实测真匹配≈1.0、无关内容≤0.63，取 0.75 留余量
+  const NOTE_ARCH_KEY = 'xiaohuo_notes_archive_v1';
+  const NOTE_POLL = 250;          // 跟随轮询间隔（毫秒）：0.9s → 0.25s，明显跟手
+  const NOTE_DS_CSS = 2;          // 每个采样点代表约 2 个 CSS 像素（按 DPI 换算成物理 px）
+  const NOTE_SCORE = 0.78;        // 高置信阈值：达到才移动笔迹
   let noteDpr = 1, noteColor = '#ffd24d', noteErase = false;
   let noteGroups = [], noteActive = null;
   let noteDrawing = false, noteCur = null, noteLast = null;
   let noteEditMode = false, noteFollowTimer = null, noteFollowBusy = false;
+  let notePinTimer = null;
   let noteScale = 0;              // CSS 像素 → 屏幕物理像素 的比例（DPI 缩放）
   async function noteEnsureScale() {
     if (noteScale > 0) return noteScale;
@@ -1495,7 +1503,6 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         const sw = Array.isArray(sz) ? sz[0] : (sz && sz[0]);
         if (sw > 0 && window.innerWidth > 0) {
           const cand = sw / window.innerWidth;
-          // DPI 虚拟化时 devicePixelRatio 可能仍是 1，但物理像素更大 → 以实测为准
           if (cand >= 1 && (Math.abs(cand - noteScale) < 0.05 || noteScale === 1)) noteScale = cand;
         }
       } catch (e) {}
@@ -1530,7 +1537,6 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     noteCtx.restore();
   }
   function noteRedraw() {
-    const W = window.innerWidth, H = window.innerHeight;
     noteCtx.save(); noteCtx.setTransform(1, 0, 0, 1, 0, 0);
     noteCtx.clearRect(0, 0, notePad.width, notePad.height);
     noteCtx.restore();
@@ -1542,7 +1548,6 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   }
 
   function notePos(e) { const r = notePad.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
-  // 点到哪条已有笔记上（用于选中后改色/粗细）
   function noteHit(p) {
     for (let gi = noteGroups.length - 1; gi >= 0; gi--) {
       const g = noteGroups[gi];
@@ -1558,21 +1563,26 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     }
     return null;
   }
+  function noteNewGroup() {
+    const g = { id: 'n' + Date.now() + Math.random().toString(36).slice(2, 6), ts: Date.now(), strokes: [], tpl: null, mask: null, anchor: null, visible: true, collapsed: false, fails: 0 };
+    noteGroups.push(g);
+    return g;
+  }
   function noteStart(e) {
     if (!noteEditMode) return;
     const p = notePos(e);
     const hit = noteHit(p);
     if (hit) noteActive = hit;
-    else if (!noteActive || noteActive.tpl) {
-      noteActive = { id: 'n' + Date.now() + Math.random().toString(36).slice(2, 6), strokes: [], tpl: null, mask: null, anchor: null, visible: true, collapsed: false, fails: 0 };
-      noteGroups.push(noteActive);
-    }
+    else if (!noteActive || noteActive.tpl) noteActive = noteNewGroup();
+    noteActive.selected = true;
+    noteGroups.forEach(g => { if (g !== noteActive) g.selected = false; });
     noteDrawing = true;
     const rel = noteActive.anchor ? [p[0] - noteActive.anchor[0], p[1] - noteActive.anchor[1]] : [p[0], p[1]];
     noteCur = { color: noteErase ? '#000' : noteColor, size: +noteSizeEl.value, erase: noteErase, pts: [rel] };
     noteActive.strokes.push(noteCur);
     noteDrawStroke(noteCur, noteActive.anchor ? noteActive.anchor[0] : 0, noteActive.anchor ? noteActive.anchor[1] : 0);
     noteLast = rel;
+    noteRenderList();
   }
   function noteMove(e) {
     if (!noteDrawing || !noteCur || !noteActive) return;
@@ -1588,20 +1598,18 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     noteCtx.restore();
     noteLast = rel;
   }
-  let notePinTimer = null;
   function noteEnd() {
     noteDrawing = false; noteCur = null; noteLast = null;
     if (!noteEditMode || !noteActive) return;
     if (!noteActive.tpl) {
-      // 落笔后自动钉住：这个功能本身就是"跟随笔记"，不该还要用户多点一下才知道要钉
       clearTimeout(notePinTimer);
       notePinTimer = setTimeout(() => {
         if (noteEditMode && noteActive && !noteActive.tpl) notePin();
       }, 700);
-    } else if (noteActive.tpl) {
-      // 已在跟随的笔记又加了一笔：只更新掩膜（模板仍用当初那张干净底图，不重新截，避免把笔迹截进模板）
+    } else {
+      // 已在跟随的笔记又补了一笔：只重建掩膜（模板仍用当初那张干净底图，不重截）
       noteActive.mask = noteBuildMask(noteActive, noteActive.tpl.gw, noteActive.tpl.gh);
-      noteSave();
+      noteSave(); noteRenderList();
     }
   }
   notePad.addEventListener('mousedown', noteStart);
@@ -1616,7 +1624,6 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     noteSwatches.querySelectorAll('.swatch').forEach(s => s.classList.toggle('sel', s.dataset.c === c));
     notePicker.value = c;
     document.getElementById('noteEraser').style.background = '#2b2b30';
-    // 选中了已有笔记 → 改整条笔记的颜色
     if (noteActive && noteActive.strokes.length) {
       for (const s of noteActive.strokes) if (!s.erase) s.color = c;
       noteRedraw(); noteSave();
@@ -1628,8 +1635,11 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   });
   notePicker.addEventListener('input', e => setNoteColor(e.target.value));
   noteSizeEl.addEventListener('input', () => {
-    if (noteActive && noteActive.strokes.length) { for (const s of noteActive.strokes) if (!s.erase) s.size = +noteSizeEl.value; noteRedraw(); noteSave(); }
-    if (noteActive && noteActive.tpl) { noteActive.mask = noteBuildMask(noteActive, noteActive.tpl.gw, noteActive.tpl.gh); }
+    if (noteActive && noteActive.strokes.length) {
+      for (const s of noteActive.strokes) if (!s.erase) s.size = +noteSizeEl.value;
+      noteRedraw(); noteSave();
+    }
+    if (noteActive && noteActive.tpl) noteActive.mask = noteBuildMask(noteActive, noteActive.tpl.gw, noteActive.tpl.gh);
   });
   document.getElementById('noteEraser').addEventListener('click', function () {
     noteErase = !noteErase;
@@ -1637,26 +1647,38 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     if (noteErase) noteSwatches.querySelectorAll('.swatch').forEach(s => s.classList.remove('sel'));
   });
 
-  // 灰度模板：截一块 → 降采样 → 灰度
-  function noteGray(b64, w, h) {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        const gw = Math.max(4, Math.round(w / NOTE_DS)), gh = Math.max(4, Math.round(h / NOTE_DS));
-        const c = document.createElement('canvas'); c.width = gw; c.height = gh;
-        const cx = c.getContext('2d', { willReadFrequently: true });
-        cx.drawImage(img, 0, 0, gw, gh);
-        const d = cx.getImageData(0, 0, gw, gh).data;
-        const gray = new Float32Array(gw * gh);
-        for (let i = 0, j = 0; i < d.length; i += 4, j++) gray[j] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-        resolve({ gray, gw, gh });
-      };
-      img.onerror = () => reject(new Error('decode'));
-      img.src = b64;
-    });
+  // 取一块灰度图：返回 { gw, gh, gray(Float32Array), per(CSS 像素/采样点) }
+  async function noteGrab(x, y, w, h, hideUi) {
+    const k = await noteEnsureScale();
+    const ds = Math.max(1, Math.round(NOTE_DS_CSS * k));
+    const targets = [];
+    if (hideUi) {
+      targets.push(notePad, noteBar, noteHint, noteListEl);
+      const c = noteBox.querySelector('.close'); if (c) targets.push(c);
+    }
+    const prev = targets.map(el => el && el.style.visibility);
+    targets.forEach(el => { if (el) el.style.visibility = 'hidden'; });
+    if (hideUi) await new Promise(r => setTimeout(r, 45));
+    let res = null;
+    try {
+      res = await invoke('capture_gray', {
+        x: Math.round(x * k), y: Math.round(y * k),
+        w: Math.round(w * k), h: Math.round(h * k), ds
+      });
+    } catch (e) { res = null; }
+    targets.forEach((el, i) => { if (el) el.style.visibility = prev[i]; });
+    if (!res || !res[2]) return null;
+    const gw = res[0] | 0, gh = res[1] | 0, b64 = res[2];
+    if (!gw || !gh) return null;
+    const bin = atob(b64);
+    const gray = new Float32Array(bin.length);
+    for (let i = 0; i < bin.length; i++) gray[i] = bin.charCodeAt(i);
+    return { gw, gh, gray, per: ds / k };
   }
-  // 掩膜：把自己画的线（外扩）标成"不参与匹配"，避免笔迹干扰、也不需要隐藏笔迹
+
+  // 掩膜：自己画的线（外扩）+ 额外矩形（小火本体）都不参与匹配
   function noteBuildMask(g, gw, gh, blanks) {
+    const per = (g.tpl && g.tpl.per) || NOTE_DS_CSS;
     const c = document.createElement('canvas'); c.width = gw; c.height = gh;
     const cx = c.getContext('2d', { willReadFrequently: true });
     cx.fillStyle = '#000'; cx.fillRect(0, 0, gw, gh);
@@ -1664,74 +1686,28 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     for (const s of g.strokes) {
       if (s.erase) continue;
       const pts = s.pts; if (!pts.length) continue;
-      cx.lineWidth = Math.max(3, (s.size + 8) / NOTE_DS);
+      cx.lineWidth = Math.max(2, (s.size + 8) / per);
       if (pts.length === 1) {
-        cx.beginPath(); cx.arc(pts[0][0] / NOTE_DS, pts[0][1] / NOTE_DS, cx.lineWidth / 2, 0, Math.PI * 2); cx.fill();
+        cx.beginPath(); cx.arc(pts[0][0] / per, pts[0][1] / per, cx.lineWidth / 2, 0, Math.PI * 2); cx.fill();
       } else {
-        cx.beginPath(); cx.moveTo(pts[0][0] / NOTE_DS, pts[0][1] / NOTE_DS);
-        for (let i = 1; i < pts.length; i++) cx.lineTo(pts[i][0] / NOTE_DS, pts[i][1] / NOTE_DS);
+        cx.beginPath(); cx.moveTo(pts[0][0] / per, pts[0][1] / per);
+        for (let i = 1; i < pts.length; i++) cx.lineTo(pts[i][0] / per, pts[i][1] / per);
         cx.stroke();
       }
     }
     const d = cx.getImageData(0, 0, gw, gh).data;
     const mask = new Uint8Array(gw * gh);
     for (let i = 0, j = 0; i < d.length; i += 4, j++) mask[j] = d[i] > 127 ? 0 : 1;
-    // blanks：额外挖掉的矩形（模板降采样坐标）——小火本体等"会动的东西"不参与匹配
     if (blanks && blanks.length) {
       for (const b of blanks) {
-        const x0 = Math.max(0, Math.floor(b[0])), y0 = Math.max(0, Math.floor(b[1]));
-        const x1 = Math.min(gw, Math.ceil(b[0] + b[2])), y1 = Math.min(gh, Math.ceil(b[1] + b[3]));
-        for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) mask[y * gw + x] = 0;
+        const bx0 = Math.max(0, Math.floor(b[0])), by0 = Math.max(0, Math.floor(b[1]));
+        const bx1 = Math.min(gw, Math.ceil(b[0] + b[2])), by1 = Math.min(gh, Math.ceil(b[1] + b[3]));
+        for (let y = by0; y < by1; y++) for (let x = bx0; x < bx1; x++) mask[y * gw + x] = 0;
       }
     }
     return mask;
   }
-  // 自检校正：以锚点为中心再匹配一次，把锚点对齐到内容真实位置。
-  // 这一步消掉 DPI 换算/取整带来的系统性偏移（"笔记总是偏一点"就是它），返回匹配度。
-  async function noteCalibrate(g) {
-    if (!g || !g.tpl || !g.anchor) return 0;
-    const twPx = g.tpl.gw * NOTE_DS, thPx = g.tpl.gh * NOTE_DS;
-    const exp = Math.max(60, Math.round(twPx * 0.35), Math.round(thPx * 0.8));
-    const SW = window.innerWidth, SH = window.innerHeight;
-    const x0 = Math.max(0, Math.round(g.anchor[0] - exp));
-    const y0 = Math.max(0, Math.round(g.anchor[1] - exp));
-    const x1 = Math.min(SW, Math.round(g.anchor[0] + twPx + exp));
-    const y1 = Math.min(SH, Math.round(g.anchor[1] + thPx + exp));
-    const rw = x1 - x0, rh = y1 - y0;
-    if (rw < twPx + 6 || rh < thPx + 6) return 0;
-    const b64 = await noteCapture(x0, y0, rw, rh, false);
-    if (!b64) return 0;
-    let reg; try { reg = await noteGray(b64, rw, rh); } catch (e) { return 0; }
-    const m = noteMatch(reg.gray, reg.gw, reg.gh, g.tpl, g.mask);
-    if (m.score >= 0.85) g.anchor = [x0 + m.x * NOTE_DS, y0 + m.y * NOTE_DS];
-    return m.score;
-  }
-  async function noteCapture(x, y, w, h, hideUi) {
-    const k = await noteEnsureScale();
-    // 只在「钉住」时隐藏（要拿干净底图做模板）；跟随期间不隐藏任何东西 → 不闪。
-    // 【重要】绝不隐藏小火本体(#stage)：隐藏后那块露出的是下层桌面/窗口，模板与实时帧时序对不齐，
-    // 会让匹配漂移（表现为"跟随错误"），而且每轮隐藏 45ms 就是"人物一闪一闪"。
-    // 本体占的区域改为在模板 mask 里挖掉（notePin 传入 blanks），之后它怎么动都不参与比较。
-    const targets = [];
-    if (hideUi) {
-      targets.push(notePad, noteBar, noteHint);
-      const c = noteBox.querySelector('.close'); if (c) targets.push(c);
-    }
-    const prev = targets.map(el => el.style.visibility);
-    targets.forEach(el => { el.style.visibility = 'hidden'; });
-    if (hideUi) await new Promise(r => setTimeout(r, 45));
-    let b64 = '';
-    try {
-      // 传物理像素；返回图再按 CSS 尺寸降采样，坐标体系始终是 CSS 像素
-      b64 = await invoke('capture_region', {
-        x: Math.round(x * k), y: Math.round(y * k),
-        w: Math.round(w * k), h: Math.round(h * k)
-      });
-    } catch (e) { b64 = ''; }
-    targets.forEach((el, i) => { el.style.visibility = prev[i]; });
-    return b64;
-  }
-  // ZNCC 模板匹配（只看 mask=1 的像素）。粗搜步长 3 → 局部细搜，够快也够准。
+  // ZNCC（只看 mask=1）。粗搜步长 2 → 局部细搜。
   function noteMatch(rg, rw, rh, tpl, mask) {
     const T = tpl.gray, tw = tpl.gw, th = tpl.gh;
     if (rw < tw || rh < th) return { x: 0, y: 0, score: -2 };
@@ -1756,7 +1732,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       return (sumIT - sumI * sumT / n) / Math.sqrt(varI * varT);
     };
     let best = -2, bx = 0, by = 0;
-    const st = (maxX > 40 || maxY > 40) ? 2 : 1;
+    const st = (maxX > 24 || maxY > 24) ? 2 : 1;
     for (let y = 0; y <= maxY; y += st) for (let x = 0; x <= maxX; x += st) {
       const s = scoreAt(x, y); if (s > best) { best = s; bx = x; by = y; }
     }
@@ -1769,15 +1745,13 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     }
     return { x: bx, y: by, score: best };
   }
-  // 钉住：按当前笔迹包围盒截干净底图做模板，并把笔迹坐标改成"相对锚点"
-  async function notePin() {
+  // 钉住：按笔迹包围盒取干净底图做模板，并把笔迹坐标改成相对锚点
+  async function notePin(silent) {
     const g = noteActive;
-    if (!g || !g.strokes.some(s => !s.erase && s.pts.length)) { toast('先在屏幕上画一笔，再点「📌 钉住并跟随」'); return; }
+    if (!g || !g.strokes.some(s => !s.erase && s.pts.length)) { if (!silent) toast('先在屏幕上画一笔，再点「📌 钉住并跟随」'); return; }
     if (!isTauri) { toast('跟随需要桌面版（要截屏）'); return; }
-    // 1) 先把笔迹统一换算成绝对屏幕坐标
     const ox = g.anchor ? g.anchor[0] : 0, oy = g.anchor ? g.anchor[1] : 0;
     for (const s of g.strokes) for (const p of s.pts) { p[0] += ox; p[1] += oy; }
-    // 2) 包围盒 + 外扩（让模板带上周围文字，提高区分度）
     let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
     for (const s of g.strokes) {
       if (s.erase) continue;
@@ -1795,47 +1769,59 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     if (x + w > SW) w = SW - x;
     if (y + h > SH) h = SH - y;
     if (w < 40 || h < 24) { toast('这笔太靠屏幕边缘了，往里挪一点再钉'); return; }
-    // 3) 截图（此时隐藏笔记层与工具条，拿到干净底图）
-    const b64 = await noteCapture(x, y, w, h, true);
-    if (!b64) { toast('截不到屏幕，钉不住（锁屏/远程桌面？）'); return; }
-    let tpl;
-    try { tpl = await noteGray(b64, w, h); } catch (e) { toast('模板解析失败，再试一次'); return; }
-    // 4) 笔迹改成相对新锚点
+    const tpl = await noteGrab(x, y, w, h, true);
+    if (!tpl) { toast('截不到屏幕，钉不住（锁屏/远程桌面？）'); return; }
     for (const s of g.strokes) for (const p of s.pts) { p[0] -= x; p[1] -= y; }
     g.anchor = [x, y];
-    // 纯色/空白底图没有可跟踪的纹理 → 不硬跟，改成固定不动（如实告知，避免反复"跟丢"消失）
     let sum = 0, sum2 = 0, n = 0;
     for (let i = 0; i < tpl.gray.length; i++) { const v = tpl.gray[i]; sum += v; sum2 += v * v; n++; }
     const std = n ? Math.sqrt(Math.max(0, sum2 / n - (sum / n) * (sum / n))) : 0;
     if (std < 6) {
       g.tpl = null; g.mask = null;
-      noteRedraw(); noteSave();
+      noteRedraw(); noteSave(); noteRenderList();
       toast('这块基本是纯色/空白，没有可跟踪的内容 → 笔记会固定在当前位置（不跟随）');
       return;
     }
     g.tpl = tpl;
-    // 小火本体若压在模板范围内：把那一块从掩膜里挖掉（不隐藏本体 → 不闪；挖掉 → 它怎么动都不影响匹配）
     const blanks = [];
     try {
       const bx = posX - 150, by = posY - 190, bw = 300, bh = 230;
       const ix0 = Math.max(x, bx), iy0 = Math.max(y, by);
       const ix1 = Math.min(x + w, bx + bw), iy1 = Math.min(y + h, by + bh);
       if (ix1 > ix0 && iy1 > iy0) {
-        blanks.push([(ix0 - x) / NOTE_DS, (iy0 - y) / NOTE_DS, (ix1 - ix0) / NOTE_DS, (iy1 - iy0) / NOTE_DS]);
+        blanks.push([(ix0 - x) / tpl.per, (iy0 - y) / tpl.per, (ix1 - ix0) / tpl.per, (iy1 - iy0) / tpl.per]);
       }
     } catch (e) {}
-    blanks.forEach(b => { /* 位置在模板降采样坐标 */ });
     g.mask = noteBuildMask(g, tpl.gw, tpl.gh, blanks);
     g.visible = true; g.fails = 0; g.collapsed = false;
-    // 立刻自检校正：把锚点对齐到"内容真实位置"，消掉 DPI 换算误差（否则笔记整体偏一点）
     let sc = 0;
     try { sc = await noteCalibrate(g); } catch (e) {}
-    noteRedraw(); noteSave(); noteFollowStart();
-    if (sc && sc < 0.6) toast('⚠ 这块内容看着不太稳（匹配度 ' + sc.toFixed(2) + '，可能在播放视频/动画），跟随可能不准；换个静态文字区域会稳很多');
+    noteRedraw(); noteSave(); noteRenderList(); noteFollowStart();
+    if (silent) return;
+    if (sc && sc < 0.6) toast('⚠ 这块内容看着不太稳（匹配度 ' + sc.toFixed(2) + '，可能在放视频/动画），跟随可能不准；换个静态文字区域会稳很多');
     else toast('📌 已钉住（匹配度 ' + (sc ? sc.toFixed(2) : '—') + '）：滚动内容它会跟着走，滚出屏幕会自动隐藏');
   }
+  // 自检校正：以锚点为中心再匹配一次，把锚点对齐到内容真实位置（吃掉 DPI 换算误差）
+  async function noteCalibrate(g) {
+    if (!g || !g.tpl || !g.anchor) return 0;
+    const per = g.tpl.per;
+    const twPx = g.tpl.gw * per, thPx = g.tpl.gh * per;
+    const exp = Math.max(60, Math.round(twPx * 0.35), Math.round(thPx * 0.8));
+    const SW = window.innerWidth, SH = window.innerHeight;
+    const x0 = Math.max(0, Math.round(g.anchor[0] - exp));
+    const y0 = Math.max(0, Math.round(g.anchor[1] - exp));
+    const x1 = Math.min(SW, Math.round(g.anchor[0] + twPx + exp));
+    const y1 = Math.min(SH, Math.round(g.anchor[1] + thPx + exp));
+    const rw = x1 - x0, rh = y1 - y0;
+    if (rw < twPx + 6 || rh < thPx + 6) return 0;
+    const reg = await noteGrab(x0, y0, rw, rh, false);
+    if (!reg) return 0;
+    const m = noteMatch(reg.gray, reg.gw, reg.gh, g.tpl, g.mask);
+    if (m.score >= 0.85) g.anchor = [x0 + m.x * per, y0 + m.y * per];
+    return m.score;
+  }
   async function noteFollowOnce() {
-    if (noteFollowBusy || !noteGroups.length || !isTauri) return;
+    if (noteFollowBusy || !noteGroups.length || !isTauri || noteEditMode) return;
     noteFollowBusy = true;
     try {
       const SW = window.innerWidth, SH = window.innerHeight;
@@ -1843,27 +1829,24 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       for (const g of noteGroups) {
         if (!g.tpl || !g.anchor || g.collapsed) continue;
         if (!g.mask) g.mask = noteBuildMask(g, g.tpl.gw, g.tpl.gh);
-        const twPx = g.tpl.gw * NOTE_DS, thPx = g.tpl.gh * NOTE_DS;
-        const exp = Math.max(120, Math.round(twPx * 0.5), Math.round(thPx * 1.2));
+        const per = g.tpl.per;
+        const twPx = g.tpl.gw * per, thPx = g.tpl.gh * per;
+        const exp = Math.max(110, Math.round(twPx * 0.55), Math.round(thPx * 1.2));
         const x0 = Math.max(0, Math.round(g.anchor[0] - exp));
         const y0 = Math.max(0, Math.round(g.anchor[1] - exp));
         const x1 = Math.min(SW, Math.round(g.anchor[0] + twPx + exp));
         const y1 = Math.min(SH, Math.round(g.anchor[1] + thPx + exp));
         const rw = x1 - x0, rh = y1 - y0;
-        if (rw < twPx + 6 || rh < thPx + 6) { g.visible = false; changed = true; continue; }
-        const b64 = await noteCapture(x0, y0, rw, rh, false);
-        if (!b64) continue;
-        let reg;
-        try { reg = await noteGray(b64, rw, rh); } catch (e) { continue; }
+        if (rw < twPx + 6 || rh < thPx + 6) { if (g.visible) { g.visible = false; changed = true; } continue; }
+        const reg = await noteGrab(x0, y0, rw, rh, false);
+        if (!reg) continue;
         const m = noteMatch(reg.gray, reg.gw, reg.gh, g.tpl, g.mask);
         if (m.score >= NOTE_SCORE) {
-          // 只在高置信度时移动：避免阈值边缘反复横跳、越跟越歪
-          const nx = x0 + m.x * NOTE_DS, ny = y0 + m.y * NOTE_DS;
-          if (Math.abs(nx - g.anchor[0]) > 0.4 || Math.abs(ny - g.anchor[1]) > 0.4) changed = true;
+          const nx = x0 + m.x * per, ny = y0 + m.y * per;
+          if (Math.abs(nx - g.anchor[0]) > 0.3 || Math.abs(ny - g.anchor[1]) > 0.3) changed = true;
           g.anchor = [nx, ny]; g.visible = true; g.fails = 0;
         } else if (m.score >= 0.6) {
-          // 中间地带：内容大概还在视野里，只是有噪声（半透明/动画/模糊）→ 保持原位、不计失败
-          g.fails = 0;
+          g.fails = 0;   // 中间地带：保持不动、不计失败（有噪声但内容还在）
         } else {
           g.fails = (g.fails || 0) + 1;
           if (g.fails >= 3 && g.visible) { g.visible = false; changed = true; }
@@ -1876,10 +1859,15 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   }
   function noteFollowStart() {
     if (noteFollowTimer) return;
-    if (!noteGroups.some(g => g.tpl)) return;
-    noteFollowTimer = setInterval(() => { if (!noteEditMode) noteFollowOnce(); }, 900);
+    if (!noteGroups.some(g => g.tpl && !g.collapsed)) return;
+    const tick = async () => {
+      if (!noteFollowTimer) return;
+      try { await noteFollowOnce(); } catch (e) {}
+      if (noteFollowTimer) noteFollowTimer = setTimeout(tick, NOTE_POLL);
+    };
+    noteFollowTimer = setTimeout(tick, NOTE_POLL);
   }
-  function noteFollowStop() { if (noteFollowTimer) { clearInterval(noteFollowTimer); noteFollowTimer = null; } }
+  function noteFollowStop() { if (noteFollowTimer) { clearTimeout(noteFollowTimer); noteFollowTimer = null; } }
 
   function b64FromU8(u8) {
     let s = ''; const CH = 0x8000;
@@ -1891,12 +1879,34 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     for (let i = 0; i < s.length; i++) u8[i] = s.charCodeAt(i);
     return u8;
   }
+  function notePackGroup(g) {
+    return {
+      id: g.id, ts: g.ts || Date.now(), strokes: g.strokes, anchor: g.anchor,
+      visible: g.visible !== false, collapsed: !!g.collapsed,
+      tpl: g.tpl ? {
+        gw: g.tpl.gw, gh: g.tpl.gh, per: g.tpl.per,
+        gray: b64FromU8((() => {
+          const u = new Uint8Array(g.tpl.gray.length);
+          for (let i = 0; i < u.length; i++) { const v = g.tpl.gray[i]; u[i] = v < 0 ? 0 : v > 255 ? 255 : Math.round(v); }
+          return u;
+        })())
+      } : null
+    };
+  }
+  function noteUnpackGroup(o) {
+    const g = { id: o.id || ('n' + Math.random().toString(36).slice(2)), ts: o.ts || Date.now(), strokes: o.strokes || [], anchor: o.anchor || null, visible: o.visible !== false, collapsed: !!o.collapsed, fails: 0, tpl: null, mask: null, selected: false };
+    if (o.tpl && o.tpl.gray) {
+      const u8 = u8FromB64(o.tpl.gray);
+      const gray = new Float32Array(u8.length);
+      for (let i = 0; i < u8.length; i++) gray[i] = u8[i];
+      g.tpl = { gw: o.tpl.gw, gh: o.tpl.gh, per: o.tpl.per || NOTE_DS_CSS, gray };
+      g.mask = noteBuildMask(g, g.tpl.gw, g.tpl.gh);
+    }
+    return g;
+  }
   function noteSave() {
     try {
-      const out = noteGroups.filter(g => g.strokes && g.strokes.length).map(g => ({
-        id: g.id, strokes: g.strokes, anchor: g.anchor, visible: g.visible !== false, collapsed: !!g.collapsed,
-        tpl: g.tpl ? { gw: g.tpl.gw, gh: g.tpl.gh, gray: b64FromU8((() => { const u = new Uint8Array(g.tpl.gray.length); for (let i = 0; i < u.length; i++) { const v = g.tpl.gray[i]; u[i] = v < 0 ? 0 : v > 255 ? 255 : Math.round(v); } return u; })()) } : null
-      }));
+      const out = noteGroups.filter(g => g.strokes && g.strokes.length).map(notePackGroup);
       localStorage.setItem(NOTE_KEY, JSON.stringify(out));
     } catch (e) {}
   }
@@ -1904,18 +1914,101 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     try {
       const raw = JSON.parse(localStorage.getItem(NOTE_KEY) || '[]');
       if (!Array.isArray(raw)) return;
-      noteGroups = raw.filter(g => g && Array.isArray(g.strokes) && g.strokes.length).map(g => {
-        const ng = { id: g.id || ('n' + Math.random().toString(36).slice(2)), strokes: g.strokes, anchor: g.anchor || null, visible: g.visible !== false, collapsed: !!g.collapsed, fails: 0, tpl: null, mask: null };
-        if (g.tpl && g.tpl.gray) {
-          const u8 = u8FromB64(g.tpl.gray);
-          const gray = new Float32Array(u8.length); for (let i = 0; i < u8.length; i++) gray[i] = u8[i];
-          ng.tpl = { gw: g.tpl.gw, gh: g.tpl.gh, gray };
-          ng.mask = noteBuildMask(ng, g.tpl.gw, g.tpl.gh);
-        }
-        return ng;
-      });
+      noteGroups = raw.filter(g => g && Array.isArray(g.strokes) && g.strokes.length).map(noteUnpackGroup);
       noteRedraw();
     } catch (e) { noteGroups = []; }
+  }
+  // ---- 存档（记录本里可见） ----
+  function noteArchLoad() {
+    try { const a = JSON.parse(localStorage.getItem(NOTE_ARCH_KEY) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+  }
+  function noteArchSave(a) { try { localStorage.setItem(NOTE_ARCH_KEY, JSON.stringify(a)); } catch (e) {} }
+  function noteArchiveGroup(g) {
+    if (!g || !g.strokes.some(s => !s.erase && s.pts.length)) return false;
+    const arr = noteArchLoad();
+    arr.unshift({ id: 'a' + Date.now(), ts: Date.now(), groups: [notePackGroup(g)] });
+    noteArchSave(arr.slice(0, 100));
+    return true;
+  }
+  function noteArchiveSelected() {
+    const g = noteActive;
+    if (!g || !g.strokes.some(s => !s.erase && s.pts.length)) { toast('先点一下要存档的那条笔记；没有选中就点「📥 存档全部」'); return; }
+    if (!noteArchiveGroup(g)) return;
+    noteGroups = noteGroups.filter(x => x !== g);
+    noteActive = null;
+    noteRedraw(); noteSave(); noteRenderList();
+    noteFollowStop(); if (noteGroups.some(x => x.tpl && !x.collapsed)) noteFollowStart();
+    toast('📥 已存档：随时在「📖 记录本」里查看或恢复');
+  }
+  function noteArchiveAll() {
+    const ok = noteGroups.filter(g => g.strokes.some(s => !s.erase && s.pts.length));
+    if (!ok.length) { toast('还没有笔记可存档'); return; }
+    const arr = noteArchLoad();
+    arr.unshift({ id: 'a' + Date.now(), ts: Date.now(), groups: ok.map(notePackGroup) });
+    noteArchSave(arr.slice(0, 100));
+    noteGroups = []; noteActive = null;
+    noteRedraw(); noteSave(); noteFollowStop(); noteRenderList();
+    toast('📥 已存档 ' + ok.length + ' 条：在「📖 记录本」里可恢复或删除');
+  }
+  function noteRestoreArchive(id) {
+    const arr = noteArchLoad();
+    const idx = arr.findIndex(a => a.id === id);
+    if (idx < 0) { toast('存档不在了'); return; }
+    const item = arr[idx];
+    (item.groups || []).forEach(o => noteGroups.push(noteUnpackGroup(o)));
+    arr.splice(idx, 1);
+    noteArchSave(arr);
+    noteRedraw(); noteSave(); noteRenderList(); noteFollowStart();
+    toast('已恢复 ' + (item.groups || []).length + ' 条笔记');
+  }
+  function noteDeleteArchive(id) {
+    const arr = noteArchLoad().filter(a => a.id !== id);
+    noteArchSave(arr);
+    toast('已删除该存档');
+  }
+
+  // ---- 笔记列表（可选中 → 存档 / 删除）----
+  let noteListCache = [];
+  function noteRenderList() {
+    if (!noteListEl) return;
+    const rows = noteGroups.filter(g => g.strokes && g.strokes.length);
+    noteListCache = rows;
+    if (!rows.length) {
+      noteListEl.innerHTML = '<div style="color:#9aa0a6;line-height:1.5;">还没有笔记。<br>在屏幕上划一笔即可（约 0.7 秒自动钉住跟随）。</div>';
+      return;
+    }
+    noteListEl.innerHTML = '';
+    rows.forEach((g, i) => {
+      const sel = g === noteActive;
+      const row = document.createElement('div');
+      row.style.cssText = 'border:1px solid ' + (sel ? '#6ab0ff' : '#3a3a42') + ';border-radius:8px;padding:6px 7px;margin-bottom:6px;cursor:pointer;background:' + (sel ? 'rgba(60,110,170,.25)' : 'transparent') + ';';
+      const n = g.strokes.filter(s => !s.erase).length;
+      const t = new Date(g.ts || Date.now());
+      const hh = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
+      row.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;gap:4px;">' +
+        '<span style="color:#f3f3f5;">#' + (i + 1) + ' · ' + hh + ' · ' + n + ' 笔' + (g.tpl ? '' : ' · 未跟随') + '</span>' +
+        '<span style="white-space:nowrap;">' +
+        '<button data-act="sel" style="font-size:11px;padding:1px 5px;margin-right:3px;background:#3a3a42;color:#f3f3f5;border:1px solid #4a4a52;border-radius:5px;cursor:pointer;">选中</button>' +
+        '<button data-act="arch" style="font-size:11px;padding:1px 5px;margin-right:3px;background:#2b4a6b;color:#f3f3f5;border:1px solid #3f6a8c;border-radius:5px;cursor:pointer;">📥</button>' +
+        '<button data-act="del" style="font-size:11px;padding:1px 5px;background:#5a3030;color:#f3f3f5;border:1px solid #7a4040;border-radius:5px;cursor:pointer;">🗑</button>' +
+        '</span></div>';
+      row.addEventListener('click', ev => {
+        const act = ev.target && ev.target.dataset ? ev.target.dataset.act : '';
+        if (act === 'arch') { ev.stopPropagation(); noteActive = g; noteArchiveSelected(); return; }
+        if (act === 'del') { ev.stopPropagation(); noteDeleteGroup(g); return; }
+        noteActive = g;
+        noteGroups.forEach(x => { x.selected = (x === g); });
+        noteRenderList();
+      });
+      noteListEl.appendChild(row);
+    });
+  }
+  function noteDeleteGroup(g) {
+    noteGroups = noteGroups.filter(x => x !== g);
+    if (noteActive === g) noteActive = null;
+    noteRedraw(); noteSave(); noteRenderList();
+    noteFollowStop(); if (noteGroups.some(x => x.tpl && !x.collapsed)) noteFollowStart();
+    toast('已删除这条笔记');
   }
 
   function openNoteBox() {
@@ -1927,9 +2020,9 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     noteBox.classList.remove('hidden');
     const allHidden = noteGroups.length > 0 && noteGroups.every(g => g.collapsed);
     noteToggleBtn.textContent = allHidden ? '👁 显示全部' : '🚫 隐藏全部';
-    noteHint.textContent = '在要记的内容上划一笔就会自动钉住并跟随（也可点「📌 钉住并跟随」重新钉）；之后内容上下左右滚动它都会跟着走；点已有笔记可整体改色/粗细；内容滚出屏幕会自动隐藏。';
+    noteHint.textContent = '在要记的内容上划一笔就会自动钉住并跟随；右侧列表可选「选中 / 📥 存档 / 🗑 删除」；存档的笔记在「📖 记录本」里。';
     setNoteColor(noteColor);
-    noteRedraw();
+    noteRedraw(); noteRenderList();
     syncBoxOpen();
   }
   function closeNoteBox() {
@@ -1945,31 +2038,28 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     if (noteGroups.some(g => g.tpl && !g.collapsed)) noteFollowStart();
   }
   noteBox.querySelector('.close').addEventListener('click', closeNoteBox);
-  document.getElementById('notePin').addEventListener('click', notePin);
+  document.getElementById('notePin').addEventListener('click', () => notePin(false));
   document.getElementById('noteDone').addEventListener('click', closeNoteBox);
+  document.getElementById('noteArch').addEventListener('click', noteArchiveSelected);
+  document.getElementById('noteArchAll').addEventListener('click', noteArchiveAll);
   noteToggleBtn.addEventListener('click', () => {
     const anyVisible = noteGroups.some(g => !g.collapsed);
     noteGroups.forEach(g => g.collapsed = anyVisible);
     noteToggleBtn.textContent = anyVisible ? '👁 显示全部' : '🚫 隐藏全部';
     noteRedraw(); noteSave();
-    // 全部收起时停掉轮询（省电），展开时恢复
     if (anyVisible) noteFollowStop(); else if (noteGroups.some(g => g.tpl && !g.collapsed)) noteFollowStart();
   });
   document.getElementById('noteDel').addEventListener('click', () => {
-    if (!noteActive) { toast('先点一下要删的那条笔记'); return; }
-    noteGroups = noteGroups.filter(g => g !== noteActive);
-    noteActive = null; noteRedraw(); noteSave();
-    noteFollowStop(); if (noteGroups.some(g => g.tpl && !g.collapsed)) noteFollowStart();
-    toast('已删除这条笔记');
+    if (!noteActive) { toast('先在右侧列表点「选中」或直接点一下那条笔记'); return; }
+    noteDeleteGroup(noteActive);
   });
   document.getElementById('noteClear').addEventListener('click', () => {
-    noteGroups = []; noteActive = null; noteRedraw(); noteSave(); noteFollowStop();
-    toast('已清除全部笔记');
+    noteGroups = []; noteActive = null; noteRedraw(); noteSave(); noteFollowStop(); noteRenderList();
+    toast('已清除全部笔记（未存档）');
   });
   noteResize();
   noteLoad();
   if (noteGroups.some(g => g.tpl && !g.collapsed)) noteFollowStart();
-
   // 让小火评价：把这幅画发给视觉模型（「小火点评画作」提示词，不走解题），结果复用 screenBox
 
   function evaluateDrawing(b64) {
@@ -6817,13 +6907,47 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   async function listMemoriesSafe() {
     try { return await invoke('list_memories'); } catch (e) { toast('读取记录失败'); return []; }
   }
+  let memListCache = [];
   function renderMemList(items) {
+    memListCache = items || [];
     const list = document.getElementById('memList');
     list.innerHTML = '';
     list.classList.remove('hidden');
     document.getElementById('memDetail').classList.add('hidden');
+    // ① 先列「笔记存档」——跟随笔记点「📥 存档」后就能在这里看到/恢复/删除
+    const arch = noteArchLoad();
+    if (arch.length) {
+      const head = document.createElement('div');
+      head.style.cssText = 'font-size:11px;color:#9aa0a6;margin:2px 0 6px;';
+      head.textContent = '🖋️ 笔记存档（' + arch.length + '）';
+      list.appendChild(head);
+      arch.forEach(a => {
+        const t = new Date(a.ts || Date.now());
+        const n = (a.groups || []).length;
+        const row = document.createElement('div');
+        row.style.cssText = 'border:1px solid #3f6a8c;border-radius:8px;padding:8px 10px;margin-bottom:8px;background:rgba(43,74,107,.18);';
+        row.innerHTML =
+          '<div style="font-size:11px;color:#9aa0a6;margin-bottom:2px;">' + t.toLocaleString() + '</div>' +
+          '<div style="font-size:13px;color:#f3f3f5;">🖋️ 跟随笔记存档 · ' + n + ' 条</div>' +
+          '<div style="margin-top:6px;display:flex;gap:6px;">' +
+          '<button data-a="res" style="font-size:12px;padding:2px 8px;background:#2b4a6b;color:#f3f3f5;border:1px solid #3f6a8c;border-radius:6px;cursor:pointer;">📥 恢复</button>' +
+          '<button data-a="del" style="font-size:12px;padding:2px 8px;background:#5a3030;color:#f3f3f5;border:1px solid #7a4040;border-radius:6px;cursor:pointer;">🗑 删除</button>' +
+          '</div>';
+        row.querySelector('[data-a="res"]').addEventListener('click', ev => {
+          ev.stopPropagation(); noteRestoreArchive(a.id); renderMemList(memListCache);
+        });
+        row.querySelector('[data-a="del"]').addEventListener('click', ev => {
+          ev.stopPropagation(); noteDeleteArchive(a.id); renderMemList(memListCache);
+        });
+        list.appendChild(row);
+      });
+      const sep = document.createElement('div');
+      sep.style.cssText = 'font-size:11px;color:#9aa0a6;margin:12px 0 6px;';
+      sep.textContent = '📝 问答记录（' + memListCache.length + '）';
+      list.appendChild(sep);
+    }
     if (!items || !items.length) {
-      list.innerHTML = '<div style="color:#9aa0a6;font-size:13px;padding:12px;">还没有记录。在「💬聊天 / 搜一搜 / 看看屏幕」里点「📝 记忆」，即可把当前问题、截图和回答存下来。</div>';
+      list.innerHTML += '<div style="color:#9aa0a6;font-size:13px;padding:12px;">还没有问答记录。在「💬聊天 / 搜一搜 / 看看屏幕」里点「📝 记忆」，即可把当前问题、截图和回答存下来。<br><br>🖋️ 跟随笔记的「📥 存档」也会出现在本页顶部。</div>';
       return;
     }
     items.forEach(it => {
