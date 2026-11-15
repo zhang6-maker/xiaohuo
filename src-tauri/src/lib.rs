@@ -264,7 +264,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![capture_screen, ask_glm, ask_draw, critique_draw, ask_sketch, toggle_pick, set_box_open, ask_reply, drag_start, drag_move, drag_end, save_memory, list_memories, get_memory, delete_memory, open_memories_folder, web_lookup])
+        .invoke_handler(tauri::generate_handler![capture_screen, capture_region, screen_size, ask_glm, ask_draw, critique_draw, ask_sketch, toggle_pick, set_box_open, ask_reply, drag_start, drag_move, drag_end, save_memory, list_memories, get_memory, delete_memory, open_memories_folder, web_lookup])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -279,6 +279,100 @@ fn capture_screen() -> Result<String, String> {
         Err(_) => Err(
             "截屏内部异常，已被拦截（程序没有退出）。详情见 exe 同目录 xiaohuo-crash.log；稍后重试即可，反复出现多为远程桌面/锁屏/显卡驱动所致。".into(),
         ),
+    }
+}
+
+/// 返回屏幕物理像素尺寸（与 capture_screen / capture_region 同一坐标系），
+/// 供前端推算「CSS 像素 → 物理像素」比例（DPI 缩放时两者不同，不算会错位）。
+#[tauri::command]
+fn screen_size() -> (i32, i32) {
+    unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) }
+}
+
+/// 只截屏幕局部矩形 → PNG data URL。给「跟随笔记」轮询用：
+/// 只传锚点周围一小块，避免每次几 MB 的整屏 PNG 拖慢 IPC 与解码。
+#[tauri::command]
+fn capture_region(x: i32, y: i32, w: i32, h: i32) -> Result<String, String> {
+    match std::panic::catch_unwind(|| capture_region_inner(x, y, w, h)) {
+        Ok(r) => r,
+        Err(_) => Err("局部截屏内部异常，已被拦截（程序没有退出）。".into()),
+    }
+}
+
+fn capture_region_inner(x: i32, y: i32, w: i32, h: i32) -> Result<String, String> {
+    unsafe {
+        let screen: HDC = GetDC(None);
+        let sw = GetSystemMetrics(SM_CXSCREEN);
+        let sh = GetSystemMetrics(SM_CYSCREEN);
+        if sw <= 0 || sh <= 0 {
+            let _ = ReleaseDC(None, screen);
+            return Err("局部截屏失败：屏幕尺寸异常（锁屏/远程桌面？）".into());
+        }
+        // 裁进屏幕范围；全在屏幕外就直接报错，别做无意义分配
+        let x0 = x.max(0).min(sw);
+        let y0 = y.max(0).min(sh);
+        let w0 = w.min(sw - x0).max(0);
+        let h0 = h.min(sh - y0).max(0);
+        if w0 < 8 || h0 < 8 {
+            let _ = ReleaseDC(None, screen);
+            return Err("局部截屏失败：目标区域已在屏幕外".into());
+        }
+        let px = (w0 as usize)
+            .checked_mul(h0 as usize)
+            .and_then(|n| n.checked_mul(4))
+            .ok_or_else(|| "局部截屏失败：尺寸溢出".to_string())?;
+        if px > 256 * 1024 * 1024 {
+            let _ = ReleaseDC(None, screen);
+            return Err("局部截屏失败：区域过大".into());
+        }
+
+        let mem: HDC = CreateCompatibleDC(Some(screen));
+        let bmp: HBITMAP = CreateCompatibleBitmap(screen, w0, h0);
+        let old: HGDIOBJ = SelectObject(mem, HGDIOBJ(bmp.0));
+        // 目标从 (0,0) 起，源 DC 用 (x0,y0) 取偏移
+        let _ = BitBlt(mem, 0, 0, w0, h0, Some(screen), x0, y0, SRCCOPY);
+
+        let mut bmi: BITMAPINFO = std::mem::zeroed();
+        bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+        bmi.bmiHeader.biWidth = w0 as i32;
+        bmi.bmiHeader.biHeight = -(h0 as i32); // 负 = 从上到下
+        bmi.bmiHeader.biPlanes = 1u16;
+        bmi.bmiHeader.biBitCount = 32u16;
+        bmi.bmiHeader.biCompression = 0u32;
+
+        let mut buf = vec![0u8; px];
+        // 铁律（同 capture_screen）：hbmp 不能仍选在 DC 里就调 GetDIBits，否则 0xc0000005
+        let _ = SelectObject(mem, old);
+        let lines = GetDIBits(
+            mem,
+            bmp,
+            0,
+            h0 as u32,
+            Some(buf.as_mut_ptr() as *mut c_void),
+            &mut bmi,
+            DIB_RGB_COLORS,
+        );
+        let _ = DeleteObject(HGDIOBJ(bmp.0));
+        let _ = DeleteDC(mem);
+        let _ = ReleaseDC(None, screen);
+        if lines != h0 {
+            return Err(format!("局部截屏失败：像素读取不完整（{}/{} 行）", lines, h0));
+        }
+
+        let mut rgba = Vec::with_capacity(buf.len());
+        for c in buf.chunks_exact(4) {
+            rgba.extend_from_slice(&[c[2], c[1], c[0], 255]);
+        }
+        let mut png_data = Vec::new();
+        {
+            let mut enc = png::Encoder::new(&mut png_data, w0 as u32, h0 as u32);
+            enc.set_color(png::ColorType::Rgba);
+            enc.set_depth(png::BitDepth::Eight);
+            let mut wr = enc.write_header().map_err(|e| e.to_string())?;
+            wr.write_image_data(&rgba).map_err(|e| e.to_string())?;
+        }
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&png_data);
+        Ok(format!("data:image/png;base64,{}", b64))
     }
 }
 
