@@ -1665,13 +1665,17 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   });
 
   // 取一块灰度图：返回 { gw, gh, gray(Float32Array), per(CSS 像素/采样点) }
-  async function noteGrab(x, y, w, h, hideUi) {
+  async function noteGrab(x, y, w, h, hideUi, hideInk) {
     const k = await noteEnsureScale();
     const ds = Math.max(1, Math.round(NOTE_DS_CSS * k));
     const targets = [];
     if (hideUi) {
       targets.push(notePad, notePanel);
       const c = noteBox.querySelector('.close'); if (c) targets.push(c);
+    } else if (hideInk) {
+      // 全屏重定位专用：只藏笔迹层那几十毫秒，避免自己的笔迹混进截图干扰匹配。
+      // 常规跟随不走这条，所以不会出现"人物一闪一闪"。
+      targets.push(notePad);
     }
     const prev = targets.map(el => el && el.style.visibility);
     targets.forEach(el => { if (el) el.style.visibility = 'hidden'; });
@@ -1780,27 +1784,20 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   // 重启/换页后：旧锚点可能整块内容都不在那个位置了。
   // 跟丢几次后做一次**全屏搜索**，找到模板的新位置并接管锚点；找不到就保持隐藏，5 秒后再试。
   let noteRelocating = false;
+  // 只做"全屏找位置"，不改 g.visible / g.anchor —— 让调用方决定要不要切换，
+  // 这样滚动时可以先全屏找到新位置，直接把笔迹挪过去，中间不闪一下隐藏。
   async function noteRelocate(g) {
-    if (!g || !g.tpl || !g.mask || noteRelocating) return false;
-    noteRelocating = true;
+    if (!g || !g.tpl || !g.mask) return null;
     try {
       const SW = window.innerWidth, SH = window.innerHeight;
-      const reg = await noteGrab(0, 0, SW, SH, false);
-      if (!reg || reg.gw < g.tpl.gw || reg.gh < g.tpl.gh) return false;
-      // 全屏图很大，粗搜步长 12（细搜仍会补到整像素），只低频走
+      const reg = await noteGrab(0, 0, SW, SH, false, true);
+      if (!reg || reg.gw < g.tpl.gw || reg.gh < g.tpl.gh) return null;
+      // 全屏图很大，粗搜步长 12（细搜仍会补到整像素），离线实测约 17ms
       const m = noteMatch(reg.gray, reg.gw, reg.gh, g.tpl, g.mask, 12);
-      if (m.score >= NOTE_SCORE) {
-        g.anchor = [m.x * g.tpl.per, m.y * g.tpl.per];
-        g.visible = true;
-        g.fails = 0;
-        g.nextRelocate = 0;
-        return true;
-      }
-      return false;
+      if (m.score >= NOTE_SCORE) return { x: m.x * g.tpl.per, y: m.y * g.tpl.per };
+      return null;
     } catch (e) {
-      return false;
-    } finally {
-      noteRelocating = false;
+      return null;
     }
   }
 
@@ -1908,24 +1905,24 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         if (rw < twPx + 6 || rh < thPx + 6) { if (g.visible) { g.visible = false; changed = true; } continue; }
         const reg = await noteGrab(x0, y0, rw, rh, false);
         if (!reg) continue;
-        const m = noteMatch(reg.gray, reg.gw, reg.gh, g.tpl, g.mask);
+        let m = noteMatch(reg.gray, reg.gw, reg.gh, g.tpl, g.mask);
+        let nx = x0 + m.x * per, ny = y0 + m.y * per;
+        // 局部没匹配到：多半是页面滚动把内容挪出了旧锚点附近。
+        // 先做一次全屏搜索；找到就直接挪过去，不让笔迹经历"隐藏再出现"的闪烁。
+        if (m.score < NOTE_SCORE && Date.now() >= (g.nextRelocate || 0)) {
+          const far = await noteRelocate(g);
+          if (far) { m = { score: NOTE_SCORE }; nx = far.x; ny = far.y; }
+          g.nextRelocate = Date.now() + (far ? 0 : 2000);   // 找不到时限频 2 秒再试，别一直全屏搜索烧 CPU
+        }
         if (m.score >= NOTE_SCORE) {
-          const nx = x0 + m.x * per, ny = y0 + m.y * per;
           if (Math.abs(nx - g.anchor[0]) > 0.3 || Math.abs(ny - g.anchor[1]) > 0.3) changed = true;
           g.anchor = [nx, ny];
           if (!g.visible) { g.visible = true; changed = true; }
           g.fails = 0;
         } else {
-          // 只有完全匹配才显示：匹配不到 → 立刻隐藏
+          // 局部和全屏都没找到（内容确实不在屏幕上）→ 隐藏；2 秒后再试一次
           if (g.visible) { g.visible = false; changed = true; }
-          g.fails = (g.fails || 0) + 1;
-          // 重启后/内容被挪走：只在旧锚点附近找不到时，做一次低频全屏重定位
-          if (g.fails >= 3 && Date.now() >= (g.nextRelocate || 0)) {
-            g.nextRelocate = Date.now() + 10000;
-            await noteRelocate(g);
-            g.fails = 0;
-            changed = true;
-          }
+          g.fails = 0;
         }
       }
       if (changed) noteRedraw();
