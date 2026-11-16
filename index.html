@@ -461,33 +461,36 @@
 
 <!-- 跟随笔记：透明笔迹层常驻（不吃鼠标，不影响桌面点击）；编辑时才可画 -->
 <canvas id="notePad" style="position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:290;display:block;"></canvas>
-<div id="noteBox" class="box hidden" style="inset:0;max-width:none;width:100%;height:100%;background:transparent;border:none;box-shadow:none;padding:0;pointer-events:none;z-index:300;">
-  <!-- 左侧工具条：只放画笔属性，保证一行放得下，不再换行被提示条遮住 -->
-  <div id="noteBar" style="position:fixed;left:10px;top:10px;pointer-events:auto;display:flex;flex-wrap:nowrap;gap:6px;align-items:center;background:rgba(28,28,32,.95);border:1px solid #3a3a40;border-radius:10px;padding:6px 9px;box-shadow:0 6px 20px rgba(0,0,0,.45);max-width:calc(100vw - 272px);overflow:hidden;z-index:303;">
-    <span style="font-size:12px;color:#9aa0a6;white-space:nowrap;">🖋️ 跟随笔记</span>
-    <div class="swatches" id="noteSwatches" style="display:flex;flex-wrap:nowrap;gap:5px;"></div>
-    <input type="color" id="notePicker" value="#ffd24d" style="width:30px;height:24px;border:none;background:none;cursor:pointer;padding:0;flex:none;" />
-    <span style="font-size:11px;color:#9aa0a6;white-space:nowrap;">粗细</span>
-    <input type="range" id="noteSize" min="1" max="40" value="4" style="width:64px;accent-color:#6ab0ff;flex:none;" />
-    <button id="noteEraser" style="background:#2b2b30;border:1px solid #4a4a52;color:#f3f3f5;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:12px;white-space:nowrap;flex:none;">🧽</button>
-    <button id="notePin" style="background:#2b4a6b;border:1px solid #3f6a8c;color:#f3f3f5;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:12px;white-space:nowrap;flex:none;">📌 重钉</button>
-    <button id="noteDone" style="background:#2f6b3a;border:1px solid #3f8a4c;color:#f3f3f5;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;white-space:nowrap;flex:none;">完成</button>
-    <button class="close" style="position:static;font-size:16px;color:#fff;background:rgba(60,60,68,.9);border-radius:6px;padding:1px 8px;cursor:pointer;flex:none;">×</button>
-  </div>
-  <!-- 右侧面板：选择 / 批量 / 列表。放在最上层，绝不与提示条重叠 -->
-  <div id="noteListTop" style="position:fixed;right:10px;top:10px;width:246px;pointer-events:auto;background:rgba(28,28,32,.96);border:1px solid #3a3a40;border-radius:10px;padding:7px 8px;z-index:304;font-size:12px;">
-    <div style="color:#9aa0a6;margin-bottom:6px;">选择一条 → 再操作</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;">
-      <button id="noteToggle" style="background:#2b2b30;border:1px solid #4a4a52;color:#f3f3f5;border-radius:6px;padding:4px 6px;cursor:pointer;font-size:11px;">🚫 隐藏全部</button>
-      <button id="noteArch" style="background:#2b4a6b;border:1px solid #3f6a8c;color:#f3f3f5;border-radius:6px;padding:4px 6px;cursor:pointer;font-size:11px;">📥 存档选中</button>
-      <button id="noteDel" style="background:#5a3030;border:1px solid #7a4040;color:#f3f3f5;border-radius:6px;padding:4px 6px;cursor:pointer;font-size:11px;">🗑 删除选中</button>
-      <button id="noteArchAll" style="background:#2b4a6b;border:1px solid #3f6a8c;color:#f3f3f5;border-radius:6px;padding:4px 6px;cursor:pointer;font-size:11px;">📥 存档全部</button>
-      <button id="noteClear" style="background:#3a3a42;border:1px solid #55555f;color:#f3f3f5;border-radius:6px;padding:4px 6px;cursor:pointer;font-size:11px;grid-column:1 / span 2;">🧹 全部清除</button>
+<div id="noteBox" class="box hidden" style="inset:0;max-width:none;width:100vw;height:100vh;background:transparent;border:none;box-shadow:none;padding:0;pointer-events:none;z-index:300;">
+  <!-- 合并后的单一面板：拖标题栏移动、▾ 收起、位置记忆；只占右上角一小块 -->
+  <div id="notePanel" style="position:fixed;left:calc(100vw - 268px);top:10px;width:258px;max-height:calc(100vh - 20px);display:flex;flex-direction:column;pointer-events:auto;background:rgba(28,28,32,.96);border:1px solid #3a3a40;border-radius:10px;box-shadow:0 10px 28px rgba(0,0,0,.5);z-index:304;font-size:12px;color:#f3f3f5;">
+    <div id="notePanelHead" style="display:flex;align-items:center;gap:6px;padding:7px 9px;cursor:move;user-select:none;flex:none;">
+      <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#cfd2d8;">🖋️ 跟随笔记</span>
+      <button id="noteCollapse" title="收起 / 展开" style="background:#3a3a42;border:1px solid #55555f;color:#f3f3f5;border-radius:5px;padding:1px 7px;cursor:pointer;font-size:11px;line-height:1.2;">▾</button>
+      <button class="close" style="position:static;font-size:15px;line-height:1;color:#fff;background:rgba(60,60,68,.9);border:none;border-radius:5px;padding:2px 7px;cursor:pointer;">×</button>
+    </div>
+    <div id="notePanelBody" style="padding:0 9px 9px;overflow:auto;">
+      <div id="noteBar" style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;padding:2px 0 7px;border-bottom:1px solid #3a3a40;">
+        <div class="swatches" id="noteSwatches" style="display:flex;flex-wrap:wrap;gap:4px;"></div>
+        <input type="color" id="notePicker" value="#ffd24d" style="width:26px;height:22px;border:none;background:none;cursor:pointer;padding:0;" />
+        <input type="range" id="noteSize" min="1" max="40" value="4" style="width:58px;accent-color:#6ab0ff;" />
+        <button id="noteEraser" style="background:#2b2b30;border:1px solid #4a4a52;color:#f3f3f5;border-radius:5px;padding:3px 4px;cursor:pointer;font-size:11px;">🧽</button>
+        <button id="notePin" style="background:#2b4a6b;border:1px solid #3f6a8c;color:#f3f3f5;border-radius:5px;padding:3px 4px;cursor:pointer;font-size:11px;">📌 重钉</button>
+        <button id="noteDone" style="background:#2f6b3a;border:1px solid #3f8a4c;color:#f3f3f5;border-radius:5px;padding:3px 4px;cursor:pointer;font-size:11px;">完成</button>
+      </div>
+      <div id="noteListTop" style="padding:7px 0 0;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;">
+          <button id="noteToggle" style="background:#2b2b30;border:1px solid #4a4a52;color:#f3f3f5;border-radius:5px;padding:3px 4px;cursor:pointer;font-size:11px;">🚫 全部关闭</button>
+          <button id="noteArch" style="background:#2b4a6b;border:1px solid #3f6a8c;color:#f3f3f5;border-radius:5px;padding:3px 4px;cursor:pointer;font-size:11px;">📥 存档选中</button>
+          <button id="noteDel" style="background:#5a3030;border:1px solid #7a4040;color:#f3f3f5;border-radius:5px;padding:3px 4px;cursor:pointer;font-size:11px;">🗑 删除选中</button>
+          <button id="noteArchAll" style="background:#2b4a6b;border:1px solid #3f6a8c;color:#f3f3f5;border-radius:5px;padding:3px 4px;cursor:pointer;font-size:11px;">📥 存档全部</button>
+          <button id="noteClear" style="grid-column:1 / span 2;background:#3a3a42;border:1px solid #55555f;color:#f3f3f5;border-radius:5px;padding:3px 4px;cursor:pointer;font-size:11px;">🧹 全部清除</button>
+        </div>
+      </div>
+      <div id="noteList" style="margin-top:7px;max-height:36vh;overflow:auto;line-height:1.5;"></div>
+      <div id="noteHint" style="margin-top:7px;color:#9aa0a6;font-size:11px;line-height:1.45;"></div>
     </div>
   </div>
-  <div id="noteList" style="position:fixed;right:10px;top:118px;bottom:46px;width:246px;overflow:auto;pointer-events:auto;background:rgba(28,28,32,.96);border:1px solid #3a3a40;border-radius:10px;padding:8px;font-size:12px;z-index:304;line-height:1.5;"></div>
-  <!-- 提示条挪到屏幕底部，pointer-events:none 且不与任何按钮重叠 -->
-  <div id="noteHint" style="position:fixed;left:50%;bottom:12px;transform:translateX(-50%);pointer-events:none;font-size:12px;color:#cfd2d8;background:rgba(28,28,32,.94);border:1px solid #3a3a40;border-radius:8px;padding:6px 12px;max-width:76vw;z-index:302;line-height:1.5;text-align:center;"></div>
 </div>
 
 <!-- 笔画库：存放用户画作笔迹，可「照着画」让小火模仿，可删除，可导出干净 PNG（不含界面） -->
@@ -1488,6 +1491,9 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   const noteHint = document.getElementById('noteHint');
   const noteListEl = document.getElementById('noteList');
   const noteListTopEl = document.getElementById('noteListTop');
+  const notePanel = document.getElementById('notePanel');
+  const notePanelHead = document.getElementById('notePanelHead');
+  const notePanelBody = document.getElementById('notePanelBody');
   const noteSwatches = document.getElementById('noteSwatches');
   const notePicker = document.getElementById('notePicker');
   const noteSizeEl = document.getElementById('noteSize');
@@ -1663,7 +1669,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const ds = Math.max(1, Math.round(NOTE_DS_CSS * k));
     const targets = [];
     if (hideUi) {
-      targets.push(notePad, noteBar, noteHint, noteListEl, noteListTopEl);
+      targets.push(notePad, notePanel);
       const c = noteBox.querySelector('.close'); if (c) targets.push(c);
     }
     const prev = targets.map(el => el && el.style.visibility);
@@ -2033,6 +2039,53 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     toast('已删除这条笔记');
   }
 
+  // ---- 面板：拖动 / 收起 / 记住位置（只占右上角一小块，不挡屏幕）----
+  (function notePanelSetup() {
+    const POS_KEY = 'xiaohuo_note_panel_pos_v1';
+    const COL_KEY = 'xiaohuo_note_panel_collapsed_v1';
+    function clampPos(x, y) {
+      const w = notePanel.offsetWidth || 258;
+      const h = notePanel.offsetHeight || 40;
+      return [Math.max(0, Math.min(window.innerWidth - w, x)), Math.max(0, Math.min(window.innerHeight - h, y))];
+    }
+    function applyPos(x, y) {
+      const c = clampPos(x, y);
+      notePanel.style.left = c[0] + 'px'; notePanel.style.top = c[1] + 'px';
+      return c;
+    }
+    try {
+      const p = JSON.parse(localStorage.getItem(POS_KEY) || 'null');
+      if (p && typeof p[0] === 'number' && typeof p[1] === 'number') applyPos(p[0], p[1]);
+    } catch (e) {}
+    let drag = null;
+    notePanelHead.addEventListener('pointerdown', e => {
+      if (e.target.closest && e.target.closest('button')) return;
+      const r = notePanel.getBoundingClientRect();
+      drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+      try { notePanelHead.setPointerCapture(e.pointerId); } catch (err) {}
+      e.preventDefault();
+    });
+    window.addEventListener('pointermove', e => {
+      if (!drag) return;
+      applyPos(e.clientX - drag.dx, e.clientY - drag.dy);
+    });
+    window.addEventListener('pointerup', () => {
+      if (!drag) return;
+      drag = null;
+      try {
+        localStorage.setItem(POS_KEY, JSON.stringify([parseInt(notePanel.style.left) || 0, parseInt(notePanel.style.top) || 0]));
+      } catch (e) {}
+    });
+    const colBtn = document.getElementById('noteCollapse');
+    function setCollapsed(c) {
+      notePanelBody.style.display = c ? 'none' : '';
+      if (colBtn) colBtn.textContent = c ? '▸' : '▾';
+      try { localStorage.setItem(COL_KEY, c ? '1' : '0'); } catch (e) {}
+    }
+    if (colBtn) colBtn.addEventListener('click', () => setCollapsed(notePanelBody.style.display !== 'none'));
+    try { if (localStorage.getItem(COL_KEY) === '1') setCollapsed(true); } catch (e) {}
+  })();
+
   function openNoteBox() {
     noteResize();
     noteEditMode = true;
@@ -2043,8 +2096,12 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     notePad.style.pointerEvents = 'auto';
     notePad.style.cursor = 'crosshair';
     noteBox.classList.remove('hidden');
+    if (notePanelBody && notePanelBody.style.display === 'none') {
+      notePanelBody.style.display = '';
+      const cb = document.getElementById('noteCollapse'); if (cb) cb.textContent = '▾';
+    }
     noteToggleBtn.textContent = noteGroups.some(g => g.shown) ? '👁 全部打开' : '🚫 全部关闭';
-    noteHint.textContent = '笔迹默认隐藏：划一笔会新增一条并自动钉住，点右侧列表里的 👁 才会显示（只有这块内容被完全匹配到时才出现）。每条都可反复修改：选中后补画、改色/粗细、或点「📌 重钉」；改完自动保存，也可「📥 存档选中」收进记录本。';
+    noteHint.textContent = '笔迹默认隐藏：划一笔会新增一条并自动钉住，点列表里的 👁 才会显示（只有完全匹配到时才出现）。每条都能反复改：选中后补画、改色/粗细、或「📌 重钉」。拖标题栏可移动面板，点 ▾ 收起。';
     setNoteColor(noteColor);
     noteRedraw(); noteRenderList();
     syncBoxOpen();
