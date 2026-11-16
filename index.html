@@ -1505,7 +1505,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   const NOTE_SCORE = 0.85;        // "完全匹配"阈值：达到它、且该条已打开，才显示笔迹
   let noteDpr = 1, noteColor = '#ffd24d', noteErase = false;
   let noteGroups = [], noteActive = null;
-  let noteFreshPin = false;   // 刚钉住一条：下一次落笔应新建，而不是续画这条
+  let noteLastPinned = null;  // 刚钉住的一条：仅用于编辑态继续显示；不参与落笔归属判断
   let noteDrawing = false, noteCur = null, noteLast = null;
   let noteEditMode = false, noteFollowTimer = null, noteFollowBusy = false;
   let notePinTimer = null;
@@ -1561,7 +1561,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       // 编辑态：只画当前正在处理的一条（选中/刚画/刚钉住）+ 还没钉住的草稿，
       // 其他页面的笔记不画 → 不会出现两个不同页面的笔迹重合在屏幕上。
       // 非编辑态：只有"该条已打开且当帧完全匹配"才画。
-      if (noteEditMode) { if (!(g === noteActive || !g.tpl)) continue; }
+      if (noteEditMode) { if (!(g === noteActive || g === noteLastPinned || !g.tpl)) continue; }
       else if (!(g.shown && g.visible)) continue;
       const ox = g.anchor ? g.anchor[0] : 0, oy = g.anchor ? g.anchor[1] : 0;
       for (const s of g.strokes) noteDrawStroke(s, ox, oy);
@@ -1592,10 +1592,10 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   function noteStart(e) {
     if (!noteEditMode) return;
     const p = notePos(e);
-    // 落笔只认"列表选中态"/"刚钉住标志"，绝不按屏幕坐标吸附到附近旧笔记，
-    // 否则在页面B画新笔记时会被页面A停在此处的旧笔迹吸走 → 两个页面的笔记重合。
-    // 刚钉住一条后再落笔 = 新建；列表显式选中某条再落笔 = 在它上面补画/修改。
-    if (!noteActive || noteFreshPin) { noteActive = noteNewGroup(); noteFreshPin = false; }
+    // 落笔只认"列表里当前显式选中"的那条；没选中 = 永远新建一条。
+    // 绝不沿用旧笔记（哪怕它刚钉住/刚被跟随过）——否则在页面B落笔会用页面A笔记的锚点算相对坐标，
+    // 那条旧笔记一跟随，新笔画就整体偏到旧笔记的位置 → "两个页面笔记重合"。
+    if (!noteActive) noteActive = noteNewGroup();
     noteActive.selected = true;
     noteGroups.forEach(g => { if (g !== noteActive) g.selected = false; });
     noteDrawing = true;
@@ -1859,8 +1859,10 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     g.visible = true; g.fails = 0; g.nextRelocate = 0; g.lostSince = 0; g.collapsed = false;
     let sc = 0;
     try { sc = await noteCalibrate(g); } catch (e) {}
-    // 钉住后：noteActive 保留（这条仍显示在屏幕上），但标记"下次落笔新建"。
-    if (noteActive === g) noteFreshPin = true;
+    // 钉住后立刻清空编辑目标：下一次落笔必定新建，绝不续画这条。
+    // noteLastPinned 只让它在编辑态继续可见，不参与落笔归属。
+    if (noteActive === g) noteActive = null;
+    noteLastPinned = g;
     noteRedraw(); noteSave(); noteRenderList(); noteFollowStart();
     if (silent) return;
     if (sc && sc < 0.6) toast('⚠ 这块内容看着不太稳（匹配度 ' + sc.toFixed(2) + '，可能在放视频/动画）；已钉住，点列表里的 👁 打开才会显示');
@@ -1882,7 +1884,12 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const reg = await noteGrab(x0, y0, rw, rh, false);
     if (!reg) return 0;
     const m = noteMatch(reg.gray, reg.gw, reg.gh, g.tpl, g.mask);
-    if (m.score >= 0.85) g.anchor = [x0 + m.x * per, y0 + m.y * per];
+    // 校准只用来消掉 DPI/取整的几像素误差。落笔位置本来就是准的，
+    // 若匹配结果跑出 30px（说明那块有重复内容/匹配到了别处），坚决不采信，
+    // 否则新笔记会在钉住瞬间被挪到别的页面笔记的位置上。
+    const nx = x0 + m.x * per, ny = y0 + m.y * per;
+    const shift = Math.hypot(nx - g.anchor[0], ny - g.anchor[1]);
+    if (m.score >= 0.85 && shift <= 30) g.anchor = [nx, ny];
     return m.score;
   }
   async function noteFollowOnce() {
@@ -2079,9 +2086,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         if (act === 'arch') { ev.stopPropagation(); noteActive = g; noteArchiveSelected(); return; }
         if (act === 'del') { ev.stopPropagation(); noteDeleteGroup(g); return; }
         // 点已选中的行 = 取消选中，下一次落笔新建一条；点未选中行 = 选中它以便补画/修改
-        const wasSel = (noteActive === g);
-        noteActive = wasSel ? null : g;
-        noteFreshPin = false;   // 明确选中 → 落笔在这条上补画
+        noteActive = (noteActive === g) ? null : g;   // 点一下选中(补画)，再点取消
         noteGroups.forEach(x => { x.selected = (x === noteActive); });
         noteRedraw(); noteRenderList();
       });
@@ -2154,7 +2159,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   function openNoteBox() {
     noteResize();
     noteEditMode = true;
-    noteActive = null;
+    noteActive = null; noteLastPinned = null;
     // 笔迹默认打开：打开编辑框只清跟丢计数；哪条显示由列表里的 👁/🚫 逐条控制。
     noteGroups.forEach(g => { g.fails = 0; });
     notePad.style.pointerEvents = 'auto';
@@ -2175,7 +2180,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     noteDrawing = false; noteCur = null;
     clearTimeout(notePinTimer);
     noteGroups = noteGroups.filter(g => g.strokes && g.strokes.length);
-    noteActive = null;
+    noteActive = null; noteLastPinned = null;
     notePad.style.pointerEvents = 'none';
     notePad.style.cursor = 'default';
     noteBox.classList.add('hidden');
