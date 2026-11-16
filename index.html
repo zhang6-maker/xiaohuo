@@ -1892,64 +1892,137 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     if (m.score >= 0.85 && shift <= 30) g.anchor = [nx, ny];
     return m.score;
   }
+  // ===== 新方案：整屏位移估计（v2）=====
+  // 旧方案让每条笔记拿自己的小模板"满屏找内容在哪"——文字重复时满屏都是高分峰，
+  // 必跳必闪。新方案反过来：只估算"整屏这一帧相对上一帧平移了多少"。
+  // 在屏幕 9 个位置各取一块，分别算它的帧间位移，取中位数 → 个别块配错被丢弃。
+  // 所有笔记按这个一致位移整体平移；原始模板只用来判断"内容是否还在"（取分数不取位置），
+  // 所以重复文字再也不会把笔迹拽到错误位置。
+  let notePrevFull = null;        // 上一帧整屏灰度 {gw,gh,gray,per}
+  let noteLastShift = [0, 0];     // 最近一次整屏位移（CSS px）
+
+  async function noteGrabFull() {
+    const k = await noteEnsureScale();
+    const SW = window.innerWidth, SH = window.innerHeight;
+    // 整屏用更大的 ds 降采样，控制 IPC 体积：目标宽约 320 采样点
+    const ds = Math.max(1, Math.round((SW * k) / 400));   // 物理宽/400 → 整屏降采样到约400采样点
+    const prev = notePad.style.visibility;
+    notePad.style.visibility = 'hidden';   // 藏笔迹，避免自己的线干扰位移估计
+    let res = null;
+    try { res = await invoke('capture_gray', { x: 0, y: 0, w: SW, h: SH, ds }); } catch (e) {}
+    notePad.style.visibility = prev;
+    if (!res || !res[2]) return null;
+    const gw = res[0] | 0, gh = res[1] | 0, b64 = res[2];
+    if (!gw || !gh) return null;
+    const bin = atob(b64);
+    const gray = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) gray[i] = bin.charCodeAt(i);
+    return { gw, gh, gray, per: ds / k };
+  }
+
+  // 在 cur 里找 prev 的一块 BS×BS 小块跑到哪（限制在 cx,cy 附近 ±search）
+  function noteBlockShift(prev, cur, cx, cy, BS, search) {
+    if (cx - BS < 1 || cy - BS < 1 || cx + BS >= prev.gw - 1 || cy + BS >= prev.gh - 1) return null;
+    if (cx - search - BS < 0 || cy - search - BS < 0 || cx + search >= cur.gw || cy + search >= cur.gh) return null;
+    const tpl = new Float32Array(BS * BS);
+    let sT = 0, sT2 = 0, n = 0;
+    // 与下面图像统计保持一致：都只用 step 2 的采样点
+    for (let y = 0; y < BS; y += 2) for (let x = 0; x < BS; x += 2) {
+      const v = prev.gray[(cy + y) * prev.gw + (cx + x)];
+      tpl[y * BS + x] = v; sT += v; sT2 += v * v; n++;
+    }
+    const varT = sT2 - sT * sT / n;
+    if (n < 8 || varT <= 1e-3) return null;
+    let best = -2, bx = cx, by = cy;
+    // 粗搜 step 2，再细搜 ±2，够用且快
+    for (let y = cy - search; y <= cy + search; y += 2) {
+      for (let x = cx - search; x <= cx + search; x += 2) {
+        let sI = 0, sI2 = 0, sIT = 0;
+        for (let ty = 0; ty < BS; ty += 2) for (let tx = 0; tx < BS; tx += 2) {
+          const i = cur.gray[(y + ty) * cur.gw + (x + tx)], t = tpl[ty * BS + tx];
+          sI += i; sI2 += i * i; sIT += i * t;
+        }
+        const varI = sI2 - sI * sI / n;
+        if (varI <= 1e-3) continue;
+        const sc = (sIT - sI * sT / n) / Math.sqrt(varI * varT);
+        if (sc > best) { best = sc; bx = x; by = y; }
+      }
+    }
+    if (best < 0.6) return null;
+    return { dx: bx - cx, dy: by - cy, score: best };
+  }
+
+  // 估计整屏位移：9 个采样块投票取中位数
+  async function noteEstimateShift(cur) {
+    if (!notePrevFull || notePrevFull.gw !== cur.gw || notePrevFull.gh !== cur.gh) {
+      notePrevFull = cur; return [0, 0];   // 首帧/尺寸变化：只建基线
+    }
+    const BS = 24, search = 26;
+    const dxs = [], dys = [];
+    for (const fy of [0.2, 0.5, 0.8]) {
+      for (const fx of [0.2, 0.5, 0.8]) {
+        const cx = Math.round(cur.gw * fx), cy = Math.round(cur.gh * fy);
+        const r = noteBlockShift(notePrevFull, cur, cx, cy, BS, search);
+        if (r) { dxs.push(r.dx); dys.push(r.dy); }
+      }
+    }
+    notePrevFull = cur;
+    if (dxs.length < 3) return [0, 0];   // 投票不足：不动，避免误判
+    dxs.sort((a, b) => a - b); dys.sort((a, b) => a - b);
+    const md = dxs[dxs.length >> 1], my = dys[dys.length >> 1];
+    // 丢弃离中位数太远的离群块后取均值，更稳
+    const goodX = dxs.filter(v => Math.abs(v - md) <= 3);
+    const goodY = dys.filter(v => Math.abs(v - my) <= 3);
+    const ax = goodX.reduce((a, b) => a + b, 0) / goodX.length;
+    const ay = goodY.reduce((a, b) => a + b, 0) / goodY.length;
+    return [ax * cur.per, ay * cur.per];
+  }
+
   async function noteFollowOnce() {
     if (noteFollowBusy || !noteGroups.length || !isTauri || noteEditMode) return;
     noteFollowBusy = true;
     try {
+      const full = await noteGrabFull();
+      if (!full) return;
+      const shift = await noteEstimateShift(full);
+      // 单帧位移限幅：超过半屏视为异常（切窗口/锁屏），不应用
+      const mag = Math.hypot(shift[0], shift[1]);
+      if (mag > window.innerHeight * 0.5) { noteLastShift = [0, 0]; return; }
+      noteLastShift = shift;
       const SW = window.innerWidth, SH = window.innerHeight;
       let changed = false;
-      // 没打开的：确保不显示；只在打开的里轮转，且每轮最多算 2 条，
-      // 否则 N 条笔记 × 12ms 会把主线程吃满，人物动画就卡。
+
       for (const g of noteGroups) {
-        if (!g.shown && g.visible) { g.visible = false; changed = true; }
-      }
-      const shown = noteGroups.filter(g => g.tpl && g.anchor && g.shown);
-      if (!shown.length) return;
-      const batch = Math.min(2, shown.length);
-      for (let k = 0; k < batch; k++) {
-        const g = shown[(noteCursor + k) % shown.length];
-        noteCursor = (noteCursor + 1) % shown.length;
-        if (!g.mask) g.mask = noteBuildMask(g, g.tpl.gw, g.tpl.gh);
+        if (!g.shown) { if (g.visible) { g.visible = false; changed = true; } continue; }
+        if (!g.tpl || !g.anchor) continue;
+        // 整屏位移先整体平移锚点——这是跟随的主力，与内容重复无关
+        let nx = g.anchor[0] + shift[0], ny = g.anchor[1] + shift[1];
+        if (Math.abs(nx - g.anchor[0]) > 0.2 || Math.abs(ny - g.anchor[1]) > 0.2) changed = true;
+
+        // 原始模板只在小范围取分数，判断内容是否还在屏幕上（不采用它的位置，避免被重复峰带偏）
         const per = g.tpl.per;
         const twPx = g.tpl.gw * per, thPx = g.tpl.gh * per;
-        const exp = Math.max(110, Math.round(twPx * 0.55), Math.round(thPx * 1.2));
-        const x0 = Math.max(0, Math.round(g.anchor[0] - exp));
-        const y0 = Math.max(0, Math.round(g.anchor[1] - exp));
-        const x1 = Math.min(SW, Math.round(g.anchor[0] + twPx + exp));
-        const y1 = Math.min(SH, Math.round(g.anchor[1] + thPx + exp));
+        const exp = 20;
+        const x0 = Math.max(0, Math.round(nx - exp)), y0 = Math.max(0, Math.round(ny - exp));
+        const x1 = Math.min(SW, Math.round(nx + twPx + exp)), y1 = Math.min(SH, Math.round(ny + thPx + exp));
         const rw = x1 - x0, rh = y1 - y0;
-        if (rw < twPx + 6 || rh < thPx + 6) { if (g.visible) { g.visible = false; changed = true; } continue; }
-        const reg = await noteGrab(x0, y0, rw, rh, false);
-        if (!reg) continue;
-        let m = noteMatch(reg.gray, reg.gw, reg.gh, g.tpl, g.mask);
-        let nx = x0 + m.x * per, ny = y0 + m.y * per;
-        // 局部没匹配到：先容忍连续几帧（滚动是连续的，内容往往马上又进入局部区），
-        // 不要一次失败就全屏乱找——满屏相似文字时每帧全屏会命中不同位置，笔迹就"一闪一闪跳错地方"。
-        if (m.score < NOTE_SCORE) {
-          g.missStreak = (g.missStreak || 0) + 1;
-          // 连续 3 次（约 0.45 秒）局部都找不到，才做一次全屏重定位；且找到后冷却 1.5 秒，
-          // 避免滚动期间反复全屏、反复跳到不同的相似位置。
-          if (g.missStreak >= 3 && Date.now() >= (g.nextRelocate || 0)) {
-            const far = await noteRelocate(g);
-            if (far) { m = { score: NOTE_SCORE }; nx = far.x; ny = far.y; }
-            g.nextRelocate = Date.now() + 1500;
+        let score = -2;
+        if (rw >= twPx + 4 && rh >= thPx + 4) {
+          const reg = await noteGrab(x0, y0, rw, rh, false);
+          if (reg) {
+            if (!g.mask) g.mask = noteBuildMask(g, g.tpl.gw, g.tpl.gh);
+            score = noteMatch(reg.gray, reg.gw, reg.gh, g.tpl, g.mask).score;
           }
-        } else {
-          g.missStreak = 0;
         }
-        if (m.score >= NOTE_SCORE) {
-          if (Math.abs(nx - g.anchor[0]) > 0.3 || Math.abs(ny - g.anchor[1]) > 0.3) changed = true;
-          g.anchor = [nx, ny];
+        g.anchor = [nx, ny];
+        const on = score >= NOTE_SCORE;
+        if (on) {
           if (!g.visible) { g.visible = true; changed = true; }
-          g.fails = 0; g.lostSince = 0;
+          g.lostSince = 0;
         } else {
-          // 局部和全屏都没找到：容忍约 1.5 秒（笔迹先停在最后位置不动），
-          // 期间内容滚回来会立刻恢复；超过 1.5 秒仍找不到才真正隐藏。
+          // 内容确实不在屏幕：容忍 1 秒再隐藏（避免一帧没匹配到就闪没）
           if (!g.lostSince) g.lostSince = Date.now();
-          if (Date.now() - g.lostSince >= 1500) {
-            if (g.visible) { g.visible = false; changed = true; }
-          }
-          g.fails = 0;
+          if (Date.now() - g.lostSince >= 1000 && g.visible) { g.visible = false; changed = true; }
         }
       }
       if (changed) noteRedraw();
