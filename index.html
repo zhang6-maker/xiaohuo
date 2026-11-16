@@ -1856,7 +1856,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       }
     } catch (e) {}
     g.mask = noteBuildMask(g, tpl.gw, tpl.gh, blanks);
-    g.visible = true; g.fails = 0; g.nextRelocate = 0; g.lostSince = 0; g.collapsed = false;
+    g.visible = true; g.fails = 0; g.missStreak = 0; g.nextRelocate = 0; g.lostSince = 0; g.collapsed = false;
     let sc = 0;
     try { sc = await noteCalibrate(g); } catch (e) {}
     // 钉住后立刻清空编辑目标：下一次落笔必定新建，绝不续画这条。
@@ -1923,12 +1923,19 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         if (!reg) continue;
         let m = noteMatch(reg.gray, reg.gw, reg.gh, g.tpl, g.mask);
         let nx = x0 + m.x * per, ny = y0 + m.y * per;
-        // 局部没匹配到：多半是页面滚动把内容挪出了旧锚点附近。
-        // 先做一次全屏搜索；找到就直接挪过去，不让笔迹经历"隐藏再出现"的闪烁。
-        if (m.score < NOTE_SCORE && Date.now() >= (g.nextRelocate || 0)) {
-          const far = await noteRelocate(g);
-          if (far) { m = { score: NOTE_SCORE }; nx = far.x; ny = far.y; }
-          g.nextRelocate = Date.now() + (far ? 0 : 500);   // 找不到时限频 0.5 秒再试（按用户要求缩短重现等待）
+        // 局部没匹配到：先容忍连续几帧（滚动是连续的，内容往往马上又进入局部区），
+        // 不要一次失败就全屏乱找——满屏相似文字时每帧全屏会命中不同位置，笔迹就"一闪一闪跳错地方"。
+        if (m.score < NOTE_SCORE) {
+          g.missStreak = (g.missStreak || 0) + 1;
+          // 连续 3 次（约 0.45 秒）局部都找不到，才做一次全屏重定位；且找到后冷却 1.5 秒，
+          // 避免滚动期间反复全屏、反复跳到不同的相似位置。
+          if (g.missStreak >= 3 && Date.now() >= (g.nextRelocate || 0)) {
+            const far = await noteRelocate(g);
+            if (far) { m = { score: NOTE_SCORE }; nx = far.x; ny = far.y; }
+            g.nextRelocate = Date.now() + 1500;
+          }
+        } else {
+          g.missStreak = 0;
         }
         if (m.score >= NOTE_SCORE) {
           if (Math.abs(nx - g.anchor[0]) > 0.3 || Math.abs(ny - g.anchor[1]) > 0.3) changed = true;
