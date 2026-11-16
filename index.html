@@ -4834,7 +4834,12 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const isPlainNoun = /^[\u4e00-\u9fa5A-Za-z]{1,8}$/.test(plain)
       && !!(ZH_EN[plain] || knownTemplate(plain) || LOCAL_GLOSSARY[plain]);
     const knownTerm = !!(LOCAL_GLOSSARY[rawTerm] || ZH_EN[rawTerm] || knownTemplate(rawTerm));
-    const term = (knownTerm || isPlainNoun || (isAsk && rawTerm.length >= 2)) ? rawTerm : '';
+    // 【全文请求优先】只要明确要全文/原文/完整内容，就跳过「名词解释」分支——
+    // 那条路先抓维基/DDG摘要、再按"这是什么请解释"的框架作答，永远只给简介，给不出全文。
+    // 统一交给 ask_reply：它已支持"要全文→大额度+关思考+完整输出"。
+    // 例："出静夜思全文"本就正常；"琵琶行全文是什么"以前被"是什么"抢进词条分支只给简介。
+    const wantFullText = /全文|原文|完整版|完整内容|背诵|全部写出来|全写出来|写出来|详细|整篇|通篇/.test(v);
+    const term = !wantFullText && (knownTerm || isPlainNoun || (isAsk && rawTerm.length >= 2)) ? rawTerm : '';
     if (term) {
       // ① 本地词典命中 → 立刻直接答，完全不经过外网 / LLM / 聊天回复约束
       if (LOCAL_GLOSSARY[term]) {
