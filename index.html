@@ -3777,9 +3777,37 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     return spec;
   }
 
+  // 给新草图挑一个不与已有草图重叠的位置（否则多张会叠在一起、互相遮挡）。
+  // 从小火面前基准点出发，按环形逐步外扩找空位；矩形以 SKETCH_W×SKETCH_H 估，留 12px 间隔。
+  // 都占满时返回最后一个候选（至少不越界），由用户自行拖动。
+  function pickSketchPos() {
+    const W = window.innerWidth, H = window.innerHeight;
+    const halfW = SKETCH_W / 2 + 6, halfH = SKETCH_H / 2 + 22;
+    const baseX = posX + 96, baseY = posY + 36;
+    const clamp = (x, y) => [
+      Math.max(halfW, Math.min(W - halfW, x)),
+      Math.max(halfH + 6, Math.min(H - halfH - 6, y)),
+    ];
+    const rects = artworkPool.filter(a => a.sketch).map(a => sketchRect(a));
+    const overlaps = (x, y) => rects.some(r => {
+      const [rx, ry, rw, rh] = r;
+      return x - halfW < rx + rw + 12 && x + halfW > rx - 12 && y - halfH < ry + rh + 12 && y + halfH > ry - 12;
+    });
+    const stepX = SKETCH_W + 20, stepY = SKETCH_H + 20;
+    // 候选顺序：基准点 → 右 → 左 → 下 → 上 → 右下/左下/右上/左上 → 更外圈
+    const offsets = [[0,0],[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1],[2,0],[-2,0],[0,2],[0,-2],[2,1],[-2,1],[2,-1],[-2,-1],[1,2],[-1,2],[1,-2],[-1,-2],[2,2],[-2,2],[2,-2],[-2,-2]];
+    let last = clamp(baseX, baseY);
+    for (const [ox, oy] of offsets) {
+      const [x, y] = clamp(baseX + ox * stepX, baseY + oy * stepY);
+      last = [x, y];
+      if (!overlaps(x, y)) return [x, y];
+    }
+    return last;
+  }
+
   function startSketch(spec) {
     // 多草图共存：不再清掉旧草图，可同时画多张不同题目的草图；超过上限(8)则移除最早一张
-    const ax = posX + 96, ay = posY + 36;
+    const [ax, ay] = pickSketchPos();   // 自动错开，避免多张草图重合遮挡
     const art = new Drawing('sketch', ax, ay, []);
     art.sketch = spec;
     art.sketchId = ++sketchSeq;
