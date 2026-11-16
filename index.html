@@ -1732,9 +1732,9 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   // ZNCC 模板匹配。mask 预先展开成 offset/value 数组（内层循环无分支），
   // 实测局部匹配 65ms → 21ms（步长 3）；细搜 ±6 补到整像素。
   const noteMatchCache = new WeakMap();
-  // preferX/preferY：上一帧锚点的整屏 CSS 坐标。周期纹理里多个位置分数相同(都=1.0)，
-  // "严格大于"会在这些平局间乱跳；改为分数差 <TIE 视为平局、取离上一帧最近的 → 锁定真内容。
-  function noteMatch(rg, rw, rh, tpl, mask, stride, ox, oy, preferX, preferY) {
+  // 取搜索区内匹配分数最高的位置。搜索区以"上一帧锚点"为中心，所以跟随滚动时
+  // 锚点会持续前移；不要用"离旧位置最近"去选峰——那会让滚动时笔迹赖在原地跟不上。
+  function noteMatch(rg, rw, rh, tpl, mask, stride) {
     const T = tpl.gray, tw = tpl.gw, th = tpl.gh;
     if (rw < tw || rh < th) return { x: 0, y: 0, score: -2 };
     let c = noteMatchCache.get(mask);
@@ -1769,30 +1769,16 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     };
     let best = -2, bx = 0, by = 0;
     const st = stride || 3;
-    const TIE = 0.02;   // 分数差 <0.02 视为平局（周期纹理会产生多个满分峰）
-    // 上一帧锚点相对当前搜索区的位置（采样坐标）。没有则退化为"取最高分"。
-    const px = (typeof preferX === 'number' && typeof ox === 'number') ? (preferX - ox) / tpl.per : null;
-    const py = (typeof preferY === 'number' && typeof oy === 'number') ? (preferY - oy) / tpl.per : null;
-    const consider = (x, y) => {
-      const score = scoreAt(x, y);
-      let take = false;
-      if (score > best + TIE) take = true;                 // 明显更匹配 → 换
-      else if (score >= best - TIE && score > 0.5) {       // 平局 → 取离上一帧最近的，避免乱跳
-        if (px === null || py === null) { if (score > best) take = true; }
-        else {
-          const dn = (x - px) * (x - px) + (y - py) * (y - py);
-          const db = (bx - px) * (bx - px) + (by - py) * (by - py);
-          if (best <= -1 || dn < db) take = true;
-        }
-      }
-      if (take) { if (score > best) best = score; bx = x; by = y; }
-    };
-    for (let y = 0; y <= maxY; y += st) for (let x = 0; x <= maxX; x += st) consider(x, y);
+    for (let y = 0; y <= maxY; y += st) for (let x = 0; x <= maxX; x += st) {
+      const score = scoreAt(x, y); if (score > best) { best = score; bx = x; by = y; }
+    }
     if (st > 1) {
-      const fine = st * 2;   // 细搜范围放大到 ±6，防止周期性文字行把峰值带偏
+      const fine = st * 2;
       const x0 = Math.max(0, bx - fine), x1 = Math.min(maxX, bx + fine);
       const y0 = Math.max(0, by - fine), y1 = Math.min(maxY, by + fine);
-      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) consider(x, y);
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        const score = scoreAt(x, y); if (score > best) { best = score; bx = x; by = y; }
+      }
     }
     return { x: bx, y: by, score: best };
   }
@@ -1809,7 +1795,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       const reg = await noteGrab(0, 0, SW, SH, false, true);
       if (!reg || reg.gw < g.tpl.gw || reg.gh < g.tpl.gh) return null;
       // 全屏图很大，粗搜步长 12（细搜仍会补到整像素），离线实测约 17ms
-      const m = noteMatch(reg.gray, reg.gw, reg.gh, g.tpl, g.mask, 12, 0, 0, g.anchor && g.anchor[0], g.anchor && g.anchor[1]);
+      const m = noteMatch(reg.gray, reg.gw, reg.gh, g.tpl, g.mask, 12);
       if (m.score >= NOTE_SCORE) return { x: m.x * g.tpl.per, y: m.y * g.tpl.per };
       return null;
     } catch (e) {
@@ -1888,7 +1874,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     if (rw < twPx + 6 || rh < thPx + 6) return 0;
     const reg = await noteGrab(x0, y0, rw, rh, false);
     if (!reg) return 0;
-    const m = noteMatch(reg.gray, reg.gw, reg.gh, g.tpl, g.mask, undefined, x0, y0, g.anchor[0], g.anchor[1]);
+    const m = noteMatch(reg.gray, reg.gw, reg.gh, g.tpl, g.mask);
     if (m.score >= 0.85) g.anchor = [x0 + m.x * per, y0 + m.y * per];
     return m.score;
   }
@@ -1921,7 +1907,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         if (rw < twPx + 6 || rh < thPx + 6) { if (g.visible) { g.visible = false; changed = true; } continue; }
         const reg = await noteGrab(x0, y0, rw, rh, false);
         if (!reg) continue;
-        let m = noteMatch(reg.gray, reg.gw, reg.gh, g.tpl, g.mask, undefined, x0, y0, g.anchor[0], g.anchor[1]);
+        let m = noteMatch(reg.gray, reg.gw, reg.gh, g.tpl, g.mask);
         let nx = x0 + m.x * per, ny = y0 + m.y * per;
         // 局部没匹配到：多半是页面滚动把内容挪出了旧锚点附近。
         // 先做一次全屏搜索；找到就直接挪过去，不让笔迹经历"隐藏再出现"的闪烁。
