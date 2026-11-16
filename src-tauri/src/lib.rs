@@ -884,20 +884,33 @@ async fn ask_reply(app: tauri::AppHandle, text: String, history: Option<Vec<serd
         }
     }
     messages.push(serde_json::json!({"role": "user", "content": text}));
+    // 用户明确要全文/原文/完整内容时，256 token 装不下（如《出师表》约600字），
+    // 提到 2048；平时聊天仍用 256，保持小气泡轻量、省额度。
+    let long_form = ["全文", "原文", "完整版", "完整内容", "背诵", "全部写出来", "全写出来", "写出来", "详细", "整篇", "通篇"]
+        .iter().any(|k| text.contains(k));
+    let max_tokens = if long_form { 2048 } else { 256 };
     call_zhipu(
         &app,
         "chat",
         "ZHIPU_CHAT_MODEL",
         "glm-4-flash",
         &key,
-        60,
+        90,
         move |m| {
-            serde_json::json!({
+            let mut payload = serde_json::json!({
                 "model": m,
                 "messages": &messages,
-                "max_tokens": 256,
+                "max_tokens": max_tokens,
                 "temperature": 0.8
-            })
+            });
+            // 推理模型（glm-4.5/4.6/4.7）默认把 max_tokens 先花在 reasoning_content 上，
+            // 长文本请求里思考一长就 finish=length、正式 content 空 → 只吐半截思考过程。
+            // 聊天要的是答案不是思考，显式关掉（同拍题链路已验证的做法）。
+            // 免费兜底 glm-4-flash 不是推理模型，不带这个参数。
+            if m.contains("4.5") || m.contains("4.6") || m.contains("4.7") {
+                payload["thinking"] = serde_json::json!({ "type": "disabled" });
+            }
+            payload
         },
     )
     .await
