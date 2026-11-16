@@ -114,6 +114,13 @@
   #shotBar #shotCancel { background: #5a3030; border-color: #7a4040; }
   #shotBar #shotCancel:hover { background: #6e3a3a; }
   #sketchDelBtn:hover { background: #d24a4a; }
+  #sketchColorBtn { position: fixed; z-index: 61; width: 26px; height: 26px; line-height: 24px; text-align: center; background: #2b2b30; color: #ffd23d; border: 1px solid #e8e8e8; border-radius: 50%; font-size: 14px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.45); user-select: none; }
+  #sketchColorBtn:hover { background: #3a3a42; }
+  #sketchColorBox { position: fixed; z-index: 302; background: rgba(28,28,32,.97); border: 1px solid #3a3a40; border-radius: 10px; padding: 8px 10px; box-shadow: 0 6px 24px rgba(0,0,0,.5); }
+  #sketchColorBox .sw { display: inline-block; width: 22px; height: 22px; margin: 3px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; vertical-align: middle; }
+  #sketchColorBox .sw:hover { border-color: #fff; }
+  #sketchColorBox .sw.sel { border-color: #fff; box-shadow: 0 0 0 1px #ffd23d; }
+  #sketchColorBox input[type=color] { width: 30px; height: 24px; border: none; background: none; cursor: pointer; vertical-align: middle; }
   /* 换颜色面板：色板 */
   :is(#colorBox, #writeColorBox, #brushBox) .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
   :is(#colorBox, #writeColorBox, #brushBox) .swatch {
@@ -271,6 +278,13 @@
 
 <!-- 右键菜单 -->
 <div id="sketchClearBtn" class="hidden">🧹 清除草图</div>
+<div id="sketchColorBtn" class="hidden" title="给选中的草图换坐标轴颜色">🎨</div>
+<div id="sketchColorBox" class="box hidden" style="top:12px;max-width:240px;">
+  <button class="close">×</button>
+  <div style="font-size:12px;color:#cfd2d8;margin:2px 0 6px;">坐标轴换色（只改颜色，不重画）</div>
+  <div id="sketchColorSwatches"></div>
+  <div style="margin-top:6px;font-size:12px;color:#9aa0a6;">自定义 <input type="color" id="sketchColorPicker" value="#6ab0ff" /></div>
+</div>
 <div id="ctxMenu" class="hidden">
   <div data-m="search">📸 搜一搜</div>
   <div data-m="screen">👀 看看屏幕</div>
@@ -1701,7 +1715,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   // 新增弹框只需改这一处；ctxMenu 虽不是 .box，但同样是「开着的浮层」，一并登记。
   const BOX_IDS = [
     'chatBox', 'answerBox', 'screenBox', 'memBox', 'tipsBox',
-    'paintBox', 'colorBox', 'writeColorBox', 'outfitBox', 'ctxMenu', 'brushBox', 'strokeLibBox', 'langBox', 'langSavedBox', 'shotMemBox',
+    'paintBox', 'colorBox', 'writeColorBox', 'outfitBox', 'ctxMenu', 'brushBox', 'strokeLibBox', 'langBox', 'langSavedBox', 'shotMemBox', 'sketchColorBox',
   ];
   // 启动自检：DOM 里带 × 的 .box 都应已登记。漏了就直接报警，
   // 别等某天出现「Esc 关不掉新弹框 / 穿透不恢复 / 截图带着弹框」再回头找。
@@ -1729,7 +1743,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     const rects = [[Math.round(posX - 150), Math.round(posY - 190), 300, 230]];   // 宠物基础包围盒
     for (const art of artworkPool) { if (art.sketch) { const b = sketchRect(art); rects.push(b); } }
     const addRect = id => { const el = document.getElementById(id); if (el && !el.classList.contains('hidden')) { const b = el.getBoundingClientRect(); if (b.width) rects.push([Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height)]); } };
-    addRect('sketchClearBtn'); addRect('sketchDelBtn'); addRect('shotBar'); addRect('answerBox');  // 批次栏 + 搜一搜结果框都只区域可交互，不锁整窗
+    addRect('sketchClearBtn'); addRect('sketchDelBtn'); addRect('sketchColorBtn'); addRect('shotBar'); addRect('answerBox');  // 批次栏 + 搜一搜结果框都只区域可交互，不锁整窗
     const key = JSON.stringify(rects);
     if (key === lastRectKey) return;
     lastRectKey = key;
@@ -3831,6 +3845,10 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     if (activeArt && activeArt.sketch) activeArt = null;
     syncSketchUI();
   }
+  const sketchColorBtn = document.getElementById('sketchColorBtn');
+  const sketchColorBox = document.getElementById('sketchColorBox');
+  const sketchColorSwatches = document.getElementById('sketchColorSwatches');
+  const sketchColorPicker = document.getElementById('sketchColorPicker');
   function syncSketchUI() {
     const has = artworkPool.some(a => a.sketch);
     const btn = document.getElementById('sketchClearBtn');
@@ -3872,10 +3890,62 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       db.style.left = (b[0] + b[2] - 13) + 'px';   // 贴在草图右上角
       db.style.top = (b[1] - 13) + 'px';
       db.classList.remove('hidden');
+      // 换色按钮贴在删除按钮左边
+      if (sketchColorBtn) {
+        sketchColorBtn.style.left = (b[0] + b[2] - 43) + 'px';
+        sketchColorBtn.style.top = (b[1] - 13) + 'px';
+        sketchColorBtn.classList.remove('hidden');
+      }
     } else {
       db.classList.add('hidden');
+      if (sketchColorBtn) sketchColorBtn.classList.add('hidden');
+      if (sketchColorBox) sketchColorBox.classList.add('hidden');
     }
   }
+  // —— 选中草图后原地换坐标轴颜色（只改 spec.axisColor，不重画/不换位置/不动刻度）——
+  const SKETCH_COLOR_PRESETS = [
+    ['默认灰', null], ['红', '#ff5b5b'], ['橙', '#ff9f43'], ['黄', '#ffd23d'], ['绿', '#4bd07a'],
+    ['青', '#3dd6d6'], ['蓝', '#6ab0ff'], ['紫', '#b18cff'], ['粉', '#ff8fc7'], ['黑', '#2a2a2e'], ['白', '#ffffff'],
+  ];
+  (function initSketchColor() {
+    if (!sketchColorBtn || !sketchColorBox) return;
+    // 色板
+    SKETCH_COLOR_PRESETS.forEach(([name, val]) => {
+      const sw = document.createElement('div');
+      sw.className = 'sw'; sw.title = name; sw.dataset.c = val == null ? '' : val;
+      sw.style.background = val == null ? 'linear-gradient(135deg,#888 0 48%,#fff 48% 52%,#e8eaed 52%)' : val;
+      sw.addEventListener('click', () => { if (selectedSketch && selectedSketch.sketch) applySketchAxisColor(val); });
+      sketchColorSwatches.appendChild(sw);
+    });
+    sketchColorPicker.addEventListener('input', e => { if (selectedSketch && selectedSketch.sketch) applySketchAxisColor(e.target.value); });
+    sketchColorBtn.addEventListener('click', () => {
+      if (!selectedSketch || !selectedSketch.sketch) return;
+      const boxHidden = sketchColorBox.classList.contains('hidden');
+      if (boxHidden) {
+        // 贴在换色按钮下方，夹在屏幕内
+        const r = sketchColorBtn.getBoundingClientRect();
+        sketchColorBox.style.left = Math.max(8, Math.min(window.innerWidth - 250, r.left - 90)) + 'px';
+        sketchColorBox.style.top = Math.max(8, Math.min(window.innerHeight - 150, r.bottom + 6)) + 'px';
+      }
+      sketchColorBox.classList.toggle('hidden', !boxHidden);
+      if (!boxHidden) return;
+      // 高亮当前色
+      const cur = selectedSketch.sketch.axisColor || null;
+      [...sketchColorSwatches.children].forEach(sw => sw.classList.toggle('sel', (sw.dataset.c || null) === cur));
+      if (cur && /^#[0-9a-f]{6}$/i.test(cur)) sketchColorPicker.value = cur;
+    });
+    sketchColorBox.querySelector('.close').addEventListener('click', () => sketchColorBox.classList.add('hidden'));
+  })();
+  // 原地改色：只改 spec.axisColor，不碰 anchor/x/y/expr/frame，不动动画进度
+  function applySketchAxisColor(color) {
+    if (!selectedSketch || !selectedSketch.sketch) return;
+    selectedSketch.sketch.axisColor = color;   // null = 默认灰
+    // 立刻反馈：把动画进度置为完成态，保证整张图按新色重画一次（不重新解析）
+    selectedSketch.birth = performance.now() - 5000;   // > drawDur(1900)，render 时 p=1
+    [...sketchColorSwatches.children].forEach(sw => sw.classList.toggle('sel', (sw.dataset.c || null) === (color || null)));
+    if (color) sketchColorPicker.value = color;
+  }
+
   // 清理按钮默认贴着小火右侧跟随（避开右下角时钟、也不扩大穿透区）；用户拖过后保持原位
   function positionClearBtn() {
     const cb = document.getElementById('sketchClearBtn');
