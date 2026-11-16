@@ -1500,7 +1500,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   const noteToggleBtn = document.getElementById('noteToggle');
   const NOTE_KEY = 'xiaohuo_notes_v1';
   const NOTE_ARCH_KEY = 'xiaohuo_notes_archive_v1';
-  const NOTE_POLL = 240;          // 跟随轮询间隔（毫秒）：0.9s→0.18s 太吃 CPU，回调到 0.24s 以免人物卡顿
+  const NOTE_POLL = 150;          // 跟随轮询间隔（毫秒）：按用户要求缩短到 0.15s 更跟手（单次匹配已优化到 ~21ms）
   const NOTE_DS_CSS = 2;          // 每个采样点代表约 2 个 CSS 像素（按 DPI 换算成物理 px）
   const NOTE_SCORE = 0.85;        // "完全匹配"阈值：达到它、且该条已打开，才显示笔迹
   let noteDpr = 1, noteColor = '#ffd24d', noteErase = false;
@@ -1849,7 +1849,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       }
     } catch (e) {}
     g.mask = noteBuildMask(g, tpl.gw, tpl.gh, blanks);
-    g.visible = true; g.fails = 0; g.nextRelocate = 0; g.collapsed = false;
+    g.visible = true; g.fails = 0; g.nextRelocate = 0; g.lostSince = 0; g.collapsed = false;
     let sc = 0;
     try { sc = await noteCalibrate(g); } catch (e) {}
     noteRedraw(); noteSave(); noteRenderList(); noteFollowStart();
@@ -1912,16 +1912,20 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         if (m.score < NOTE_SCORE && Date.now() >= (g.nextRelocate || 0)) {
           const far = await noteRelocate(g);
           if (far) { m = { score: NOTE_SCORE }; nx = far.x; ny = far.y; }
-          g.nextRelocate = Date.now() + (far ? 0 : 2000);   // 找不到时限频 2 秒再试，别一直全屏搜索烧 CPU
+          g.nextRelocate = Date.now() + (far ? 0 : 500);   // 找不到时限频 0.5 秒再试（按用户要求缩短重现等待）
         }
         if (m.score >= NOTE_SCORE) {
           if (Math.abs(nx - g.anchor[0]) > 0.3 || Math.abs(ny - g.anchor[1]) > 0.3) changed = true;
           g.anchor = [nx, ny];
           if (!g.visible) { g.visible = true; changed = true; }
-          g.fails = 0;
+          g.fails = 0; g.lostSince = 0;
         } else {
-          // 局部和全屏都没找到（内容确实不在屏幕上）→ 隐藏；2 秒后再试一次
-          if (g.visible) { g.visible = false; changed = true; }
+          // 局部和全屏都没找到：容忍约 1.5 秒（笔迹先停在最后位置不动），
+          // 期间内容滚回来会立刻恢复；超过 1.5 秒仍找不到才真正隐藏。
+          if (!g.lostSince) g.lostSince = Date.now();
+          if (Date.now() - g.lostSince >= 1500) {
+            if (g.visible) { g.visible = false; changed = true; }
+          }
           g.fails = 0;
         }
       }
