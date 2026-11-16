@@ -4856,8 +4856,8 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         .then(snippet => {
           snippetCache = (typeof snippet === 'string') ? snippet : '';
           const prompt = snippetCache.trim()
-            ? '【联网查到的资料】' + snippetCache + '\n【主人问】"' + term + '" 是什么？请用平实、自然的话，用 1-2 句话简短给它解释一下，不超过 40 字。'
-            : '主人问「' + term + '」是什么。请用你自己知道的知识，平实自然地用 1-2 句话解释它是什么；不要说"不知道"，也不要瞎编，不超过 40 字。';
+            ? '【联网查到的资料】' + snippetCache + '\n【主人问】"' + term + '" 是什么？请用平实自然的话解释；若主人要的是全文/原文/完整内容，就把完整内容写出来，不要压缩成短句。'
+            : '主人问「' + term + '」是什么。请用你自己知道的知识平实自然地解释；如果主人要全文/原文/完整内容，就尽量完整写出，不要压缩成短句；不要说"不知道"，也不要瞎编。';
           return invoke('ask_reply', { text: prompt, history: hist });
         })
         .then(res => {
