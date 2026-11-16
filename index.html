@@ -1724,7 +1724,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     return mask;
   }
   // ZNCC（只看 mask=1）。粗搜步长 2 → 局部细搜。
-  function noteMatch(rg, rw, rh, tpl, mask) {
+  function noteMatch(rg, rw, rh, tpl, mask, stride) {
     const T = tpl.gray, tw = tpl.gw, th = tpl.gh;
     if (rw < tw || rh < th) return { x: 0, y: 0, score: -2 };
     let sumT = 0, sumT2 = 0, n = 0;
@@ -1748,7 +1748,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       return (sumIT - sumI * sumT / n) / Math.sqrt(varI * varT);
     };
     let best = -2, bx = 0, by = 0;
-    const st = (maxX > 24 || maxY > 24) ? 2 : 1;
+    const st = stride || ((maxX > 24 || maxY > 24) ? 2 : 1);
     for (let y = 0; y <= maxY; y += st) for (let x = 0; x <= maxX; x += st) {
       const s = scoreAt(x, y); if (s > best) { best = s; bx = x; by = y; }
     }
@@ -1761,6 +1761,33 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     }
     return { x: bx, y: by, score: best };
   }
+  // 重启/换页后：旧锚点可能整块内容都不在那个位置了。
+  // 跟丢几次后做一次**全屏搜索**，找到模板的新位置并接管锚点；找不到就保持隐藏，5 秒后再试。
+  let noteRelocating = false;
+  async function noteRelocate(g) {
+    if (!g || !g.tpl || !g.mask || noteRelocating) return false;
+    noteRelocating = true;
+    try {
+      const SW = window.innerWidth, SH = window.innerHeight;
+      const reg = await noteGrab(0, 0, SW, SH, false);
+      if (!reg || reg.gw < g.tpl.gw || reg.gh < g.tpl.gh) return false;
+      // 全屏图很大，粗搜步长 12（细搜仍会补到整像素），只低频走
+      const m = noteMatch(reg.gray, reg.gw, reg.gh, g.tpl, g.mask, 12);
+      if (m.score >= NOTE_SCORE) {
+        g.anchor = [m.x * g.tpl.per, m.y * g.tpl.per];
+        g.visible = true;
+        g.fails = 0;
+        g.nextRelocate = 0;
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
+    } finally {
+      noteRelocating = false;
+    }
+  }
+
   // 钉住：按笔迹包围盒取干净底图做模板，并把笔迹坐标改成相对锚点
   async function notePin(silent) {
     const g = noteActive;
@@ -1809,7 +1836,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       }
     } catch (e) {}
     g.mask = noteBuildMask(g, tpl.gw, tpl.gh, blanks);
-    g.visible = true; g.fails = 0; g.collapsed = false;
+    g.visible = true; g.fails = 0; g.nextRelocate = 0; g.collapsed = false;
     let sc = 0;
     try { sc = await noteCalibrate(g); } catch (e) {}
     noteRedraw(); noteSave(); noteRenderList(); noteFollowStart();
@@ -1865,9 +1892,16 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
           if (!g.visible) { g.visible = true; changed = true; }
           g.fails = 0;
         } else {
-          // 只有完全匹配才显示：匹配不到（滚出屏幕/内容变了/有动画）→ 立刻隐藏
+          // 只有完全匹配才显示：匹配不到 → 立刻隐藏
           if (g.visible) { g.visible = false; changed = true; }
-          g.fails = 0;
+          g.fails = (g.fails || 0) + 1;
+          // 重启后/内容被挪走：只在旧锚点附近找不到时，做一次低频全屏重定位
+          if (g.fails >= 3 && Date.now() >= (g.nextRelocate || 0)) {
+            g.nextRelocate = Date.now() + 10000;
+            await noteRelocate(g);
+            g.fails = 0;
+            changed = true;
+          }
         }
       }
       if (changed) noteRedraw();
