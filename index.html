@@ -3516,6 +3516,15 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       .replace(/π/g, 'pi').replace(/÷/g, '/').replace(/×/g, '*')
       .replace(/（/g, '(').replace(/）/g, ')').replace(/，/g, ',')
       .replace(/\[/g, '(').replace(/\]/g, ')');   // 方括号也当分组括号：用户常用 cos[sin(1-x)] 这类写法
+    // √ 根号符号 → sqrt(...)：√(x+1) 取括号整体；√x / √2 取紧跟的单个变量或数字。
+    // 用户最自然的写法就是打 √，不认这个等于白支持。
+    s = s.replace(/√\s*\(([^()]*)\)/g, 'sqrt($1)');
+    s = s.replace(/√\s*([a-z0-9.]+)/g, 'sqrt($1)');
+    // 单项分数字符 ½⅓⅔¼¾ → (1/2) 等
+    const FR = {'½':'(1/2)','⅓':'(1/3)','⅔':'(2/3)','¼':'(1/4)','¾':'(3/4)','⅕':'(1/5)','⅖':'(2/5)'};
+    for (const [ch, v] of Object.entries(FR)) s = s.split(ch).join(v);
+    // 上标数字 ²³⁴ → ^2 ^3 ^4（x² 这种写法）
+    s = s.replace(/[²]/g, '^2').replace(/[³]/g, '^3').replace(/[⁴]/g, '^4');
 
     // 关键修复：sin x / cos x / tan x / ln x / sqrt x 这类"函数名 + 空格 + 单个变量"
     // 在数学上等价于 sin(x) / cos(x) / ...，先去空格会把它们粘成 sinx 导致解析失败。
@@ -3598,7 +3607,14 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   const SK_CH2FN = { '正弦': 'sin', '余弦': 'cos', '正切': 'tan', '反正弦': 'asin', '反余弦': 'acos', '反正切': 'atan', '指数': 'exp', '对数': 'log', '自然对数': 'ln', '平方根': 'sqrt', '绝对值': 'abs' };
   function expandChineseMath(s) {
     for (const [zh, en] of Object.entries(SK_CH2FN)) s = s.replace(new RegExp(zh, 'g'), en);
-    s = s.replace(/平方/g, '^2').replace(/立方/g, '^3').replace(/的(\d+)次方/g, (m, d) => '^' + d).replace(/次方/g, '^2');
+    const CND = { 零:0, 一:1, 二:2, 两:2, 三:3, 四:4, 五:5, 六:6, 七:7, 八:8, 九:9, 十:10 };
+    // 中文分数：三分之二 → (2/3)、二分之一 → (1/2)、四分之三x → (3/4)x
+    s = s.replace(/([一二两三四五六七八九十])分之([一二两三四五六七八九十])/g,
+      (m, den, num) => '(' + (CND[num] != null ? CND[num] : num) + '/' + (CND[den] != null ? CND[den] : den) + ')');
+    // 关键顺序：先删「的」，再做 平方/立方/次方 → ^n。否则「x的平方」会先变成「x的^2」，「的」就删不掉了。
+    s = s.replace(/的(?=平方|立方|\d+次方|[一二两三四五六七八九十]次方)/g, '');
+    s = s.replace(/平方/g, '^2').replace(/立方/g, '^3').replace(/(\d+)次方/g, '^$1')
+         .replace(/([一二两三四五六七八九十])次方/g, (m, d) => '^' + (CND[d] != null ? CND[d] : d));
     s = s.replace(/根号/g, 'sqrt').replace(/开方/g, 'sqrt').replace(/绝对值/g, 'abs');
     s = s.replace(/乘/g, '*').replace(/除以/g, '/').replace(/加/g, '+').replace(/减/g, '-');
     return s;
@@ -3857,6 +3873,88 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     ctx.lineTo(x2 - s * Math.cos(ang + 0.4), y2 - s * Math.sin(ang + 0.4));
     ctx.closePath(); ctx.fill();
   }
+  // ---- canvas 数学式排版：分数(a/b) / 上标(x^n) / 根号(√x) 板书样式 ----
+  // 分两阶段：token → 合并单元(frac/sup/sqrt) → 绘制。每个原子只画一次，位置不重叠。
+  function _mathTokens(src) {
+    let e = String(src || '').toLowerCase()
+      .replace(/√\s*\(([^()]*)\)/g, 'sqrt($1)').replace(/√\s*([a-z0-9.]+)/g, 'sqrt($1)')
+      .replace(/[²]/g, '^2').replace(/[³]/g, '^3')
+      .replace(/[½⅓⅔¼¾⅕⅖]/g, m => ({'½':'(1/2)','⅓':'(1/3)','⅔':'(2/3)','¼':'(1/4)','¾':'(3/4)','⅕':'(1/5)','⅖':'(2/5)'}[m] || m))
+      .replace(/π/g, 'pi').replace(/三分之二/g, '(2/3)').replace(/二分之一/g, '(1/2)').replace(/平方/g, '^2')
+      .replace(/\s+/g, '');
+    const out = []; let i = 0;
+    while (i < e.length) {
+      const c = e[i];
+      if (e.slice(i, i+4) === 'sqrt') {
+        i += 4;
+        if (e[i] === '(') { // sqrt(整体)：把括号内内容作为根式的被开方数
+          let d = 1, j = i + 1;
+          while (j < e.length && d > 0) { if (e[j] === '(') d++; else if (e[j] === ')') d--; j++; }
+          out.push({k:'sqrt', body: e.slice(i+1, j-1)}); i = j;
+        } else { out.push({k:'sqrt'}); }   // sqrt x 单字符：留给 units 吞一个原子
+        continue;
+      }
+      if (/[a-z]/.test(c)) { out.push({k:'a', v:c}); i++; continue; }
+      if (/[0-9.]/.test(c)) { let j=i; while(j<e.length && /[0-9.]/.test(e[j])) j++; out.push({k:'a', v:e.slice(i,j)}); i=j; continue; }
+      if (c === '^') { out.push({k:'^'}); i++; continue; }
+      if (c === '/') { out.push({k:'/'}); i++; continue; }
+      out.push({k:'a', v:c}); i++;   // + - * ( ) 等当普通原子
+    }
+    return out;
+  }
+  function _mathUnits(toks) {
+    const u = []; const isAtom = t => t && t.k === 'a';
+    for (let i = 0; i < toks.length; i++) {
+      const t = toks[i];
+      if (t.k === 'sqrt') {
+        if (t.body != null) { u.push({k:'sqrt', body: t.body}); continue; }
+        let arg = null; if (isAtom(toks[i+1])) { arg = toks[i+1]; i++; } u.push({k:'sqrt', arg}); continue;
+      }
+      if (t.k === '^' && isAtom(u[u.length-1]) && isAtom(toks[i+1])) { const base = u.pop(); u.push({k:'sup', base, exp:toks[i+1]}); i++; continue; }
+      if (t.k === '/' && isAtom(u[u.length-1]) && isAtom(toks[i+1])) { const num = u.pop(); u.push({k:'frac', num, den:toks[i+1]}); i++; continue; }
+      u.push(t);
+    }
+    return u;
+  }
+  // 在 (x,y) 处左对齐画数学式，返回宽度。size=字号
+  function _drawMathAt(ctx, src, x, y, size, color) {
+    const units = _mathUnits(_mathTokens(src));
+    ctx.save(); ctx.fillStyle = color || ctx.fillStyle; ctx.strokeStyle = color || ctx.strokeStyle;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    const small = Math.max(7, Math.round(size * 0.72));
+    const tw = (v, sz) => { ctx.font = sz + 'px system-ui, sans-serif'; return ctx.measureText(v).width; };
+    let cx = x;
+    for (const un of units) {
+      if (un.k === 'frac') {
+        const nw = tw(un.num.v, small), dw = tw(un.den.v, small), w = Math.max(nw, dw) + 4;
+        ctx.font = small + 'px system-ui, sans-serif';
+        ctx.fillText(un.num.v, cx + (w-nw)/2, y - size*0.32);
+        ctx.fillText(un.den.v, cx + (w-dw)/2, y + size*0.34);
+        ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(cx, y+0.5); ctx.lineTo(cx+w, y+0.5); ctx.stroke();
+        cx += w + 1; continue;
+      }
+      if (un.k === 'sup') {
+        const bw = tw(un.base.v, size), ew = tw(un.exp.v, small);
+        ctx.font = size + 'px system-ui, sans-serif'; ctx.fillText(un.base.v, cx, y);
+        ctx.font = small + 'px system-ui, sans-serif'; ctx.fillText(un.exp.v, cx+bw, y - size*0.42);
+        cx += bw + ew + 1; continue;
+      }
+      if (un.k === 'sqrt') {
+        ctx.font = size + 'px system-ui, sans-serif'; ctx.fillText('√', cx, y);
+        const sw = size * 0.62;
+        const body = (un.body != null) ? un.body : (un.arg ? un.arg.v : '');
+        if (body) {
+          const bw = _drawMathAt(ctx, body, cx+sw, y, size*0.92, null);   // 根号内也用排版
+          ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(cx+sw-1, y-size*0.44); ctx.lineTo(cx+sw+bw+2, y-size*0.44); ctx.stroke();
+          cx += sw + bw;
+        } else cx += sw;
+        continue;
+      }
+      ctx.font = size + 'px system-ui, sans-serif'; ctx.fillText(un.v, cx, y); cx += tw(un.v, size) * 1.05;
+    }
+    ctx.restore(); return cx - x;
+  }
+
   function renderSketchArt(ctx, art, p) {
     const sp = art.sketch; if (!sp) return;
     const ax = art.x, ay = art.y;
@@ -3937,6 +4035,18 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
             if (!isFinite(y)) { started = false; continue; }
             const X = sx(x), Y = sy(y); if (!started) { ctx.moveTo(X, Y); started = true; } else ctx.lineTo(X, Y); }
           ctx.stroke(); ctx.setLineDash([]); ctx.lineWidth = art.lw || 2;
+          // —— 函数式标注：把 expr 用板书样式画出来（分数/上标/根号），放在曲线靠近右端的一点 ——
+          if (cP >= 1 && it.expr) {
+            const lx = xmin + (xmax - xmin) * 0.62;
+            let ly = it.fn(lx);
+            if (!isFinite(ly)) ly = (ymin + ymax) / 2;
+            // 标签贴着曲线，稍微上移；夹在画布内避免越界
+            let lyPx = sy(ly) - 12;
+            lyPx = Math.max(ay - SKETCH_H/2 + 14, Math.min(ay + SKETCH_H/2 - 6, lyPx));
+            ctx.globalAlpha = fade * 0.92;
+            _drawMathAt(ctx, it.expr, sx(lx) + 4, lyPx, 13, it.color || '#6ab0ff');
+            ctx.globalAlpha = fade;
+          }
           // —— 零点 / 峰值标注（sin/cos 类，画好后标关键特征，便于读图）——
           if (cP >= 1 && /(sin|cos)/.test(it.expr)) {
             const fmtNum = (v) => {
