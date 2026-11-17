@@ -4808,19 +4808,56 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   }
   // ---- 聊天附件：前端 FileReader 读纯文本，拼进 ask_reply 的 text；不动 Rust ----
   let pendingFile = null;   // { name, content }
-  const CHAT_FILE_MAX = 200 * 1024;   // 200KB 上限：防 IPC payload 与模型输入 token 爆炸
+  const CHAT_FILE_MAX = 5 * 1024 * 1024;   // 选择上限 5MB（实测智谱 1MB 文本就撞上下文上限，所以下面按 token 节选）
+  const CHAT_SEND_BUDGET = 60000;          // 单次发送的文件内容 token 预算（实测 512KB≈65547 token 还能过，留余量取 6 万）
+  const CHAT_HIST_BUDGET = 100000;         // history 累计 token 上限：防止多轮把大文件反复带上导致超限
+  // 粗略 token 估算：ASCII≈0.13/字（实测 glm 对英文约 8 字符 1 token），中日韩/全角≈1.0/字（保守）
+  function estChatTokens(str) {
+    let t = 0;
+    for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); t += c < 128 ? 0.13 : (c < 0x2000 ? 0.6 : 1.0); }
+    return t;
+  }
+  // 按 token 预算节选：保留开头 60% + 结尾 40%，中间省略。返回 {text, clipped, head, tail}
+  function clipChatText(txt, budget) {
+    if (estChatTokens(txt) <= budget) return { text: txt, clipped: false, head: txt.length, tail: 0 };
+    const headB = budget * 0.6, tailB = budget * 0.4;
+    let h = 0, t = 0;
+    while (h < txt.length && t < headB) { const c = txt.charCodeAt(h++); t += c < 128 ? 0.13 : (c < 0x2000 ? 0.6 : 1.0); }
+    let k = txt.length - 1, tt = 0;
+    while (k >= h && tt < tailB) { const c = txt.charCodeAt(k--); tt += c < 128 ? 0.13 : (c < 0x2000 ? 0.6 : 1.0); }
+    const tailStart = k + 1;
+    const omitted = tailStart - h;
+    return {
+      text: txt.slice(0, h) + '\n\n……（中间省略约 ' + omitted + ' 字符，原文件共 ' + txt.length + ' 字符）……\n\n' + txt.slice(tailStart),
+      clipped: true, head: h, tail: txt.length - tailStart,
+    };
+  }
+  // 构造多轮 history：从最新往前加，累计 token 超预算就停（防大文件消息被反复带上导致超限）。至少保留最近一轮。
+  function buildHist(currentCost) {
+    const out = [];
+    let cost = currentCost || 0;   // 把当前轮要发的文本算进预算，避免 history + 当前轮加起来超限
+    for (let i = chatHistory.length - 1; i >= 0; i--) {
+      const m = chatHistory[i];
+      const c = estChatTokens(String(m.content || ''));
+      if (out.length && cost + c > CHAT_HIST_BUDGET) break;
+      out.unshift(m);
+      cost += c;
+    }
+    return out;
+  }
   function setChatFile(file) {
     if (!file) return;
-    if (file.size > CHAT_FILE_MAX) { toast('文件太大啦，选 200KB 以内的文本文件'); return; }
+    if (file.size > CHAT_FILE_MAX) { toast('文件太大啦，选 5MB 以内的文本文件'); return; }
     const rd = new FileReader();
     rd.onload = () => {
       const txt = String(rd.result || '');
       if (!txt.trim()) { toast('这文件是空的，换个有内容的'); return; }
       pendingFile = { name: file.name, content: txt };
-      document.getElementById('chatFileName').textContent = '📎 ' + file.name + '（' + txt.length + ' 字）';
+      const willClip = estChatTokens(txt) > CHAT_SEND_BUDGET;
+      document.getElementById('chatFileName').textContent = '📎 ' + file.name + '（' + txt.length + ' 字' + (willClip ? '，将节选开头和结尾发给小火' : '') + '）';
       document.getElementById('chatFileChip').classList.add('show');
       chatInput.placeholder = '问点关于这个文件的问题，或直接发送…';
-      toast('已附文件，发消息时一起给小火读');
+      toast(willClip ? '文件较大，将节选开头+结尾（约 ' + Math.round(CHAT_SEND_BUDGET/1000) + 'k token）发给小火' : '已附文件，发消息时一起给小火读');
     };
     rd.onerror = () => toast('读取文件失败');
     rd.readAsText(file, 'utf-8');
@@ -4844,9 +4881,13 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   function takeChatFileAsText() {
     if (!pendingFile) return null;
     const f = pendingFile;
+    const clip = clipChatText(f.content, CHAT_SEND_BUDGET);
+    const note = clip.clipped
+      ? '（原文件 ' + f.name + ' 共 ' + f.content.length + ' 字符，因上下文限制此处只节选开头约 ' + clip.head + ' 字符与结尾约 ' + clip.tail + ' 字符，中间已省略。若答案在被省略部分，如实说没看到、请用户缩小范围或分段提供，不要瞎编。）'
+      : '（以上是 ' + f.name + ' 的完整内容，共 ' + f.content.length + ' 字符。）';
     const part = '【用户附加的文件：' + f.name + '】\n' +
-      '"""\n' + f.content + '\n"""\n' +
-      '（以上是文件内容。请基于它回答用户接下来的问题；用户没明确问时，先用一两句说说这是什么文件。）';
+      '"""\n' + clip.text + '\n"""\n' + note + '\n' +
+      '（请基于以上内容回答用户接下来的问题；用户没明确问时，先用一两句说说这是什么文件。）';
     clearChatFile();
     return part;
   }
@@ -5118,7 +5159,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
       let snippetCache = '';
       const lastPet = addChat('pet', '🔍 小火正在查「' + term + '」…');
       chatHistory.push({ role: 'user', content: v });
-      const hist = chatHistory.slice(-6);
+      const hist = buildHist(estChatTokens(prompt));
       invoke('web_lookup', { query: term })
         .then(snippet => {
           snippetCache = (typeof snippet === 'string') ? snippet : '';
@@ -5157,7 +5198,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     // 有附件：文件内容放前面、用户的话放后面，模型据此作答（多轮 history 照常带，可接着问）
     const fullText = fileText ? (fileText + '\n\n【用户的话】' + v) : v;
     chatHistory.push({ role: 'user', content: fullText });
-    const hist = chatHistory.slice(-6);
+    const hist = buildHist(estChatTokens(fullText));
     invoke('ask_reply', { text: fullText, history: hist })
       .then(res => {
         const text = (typeof res === 'string') ? res
