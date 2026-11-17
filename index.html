@@ -75,6 +75,11 @@
     padding: 6px 0; border-radius: 6px; cursor: pointer; font-size: 12px;
   }
   .box .actions button:hover { background: #3a3a42; }
+  #chatFileChip { display:none; align-items:center; gap:6px; margin:2px 0 6px; padding:4px 8px; background:#2f3a52; border:1px solid #4a6fa0; border-radius:6px; font-size:12px; color:#cfe0ff; }
+  #chatFileChip.show { display:flex; }
+  #chatFileChip .fn { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #chatFileChip .rm { cursor:pointer; color:#9ab8ff; padding:0 3px; }
+  #chatFileChip .rm:hover { color:#fff; }
   /* 可拖拽弹框：光标提示；输入框/按钮/滚动区恢复默认光标，且这些区域不触发拖动 */
   .box.drag { cursor: move; }
   .box.drag input, .box.drag textarea, .box.drag [contenteditable],
@@ -486,7 +491,9 @@
   <div style="font-size:13px;color:#cfd2d8;margin:2px 0 8px;">💬 和小火聊天</div>
   <div id="chatLog" style="max-height:200px;overflow-y:auto;margin-bottom:8px;"></div>
   <input id="chatInput" type="text" placeholder="画只猫 / 唱首歌 / 搜索 XXX / 或随便聊" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #4a4a52;background:#2b2b30;color:#f3f3f5;border-radius:6px;font-size:13px;" />
-  <div class="actions"><button id="chatSend">发送</button><button id="chatRecord" title="把当前对话和截图存进「我的记录」">📝 记忆</button></div>
+  <div id="chatFileChip"><span class="fn" id="chatFileName"></span><span class="rm" id="chatFileRm" title="移除附件">✕</span></div>
+  <input id="chatFileInput" type="file" accept=".txt,.md,.markdown,.csv,.json,.log,.xml,.yaml,.yml,.ini,.cfg,.py,.js,.ts,.tsx,.jsx,.html,.css,.java,.c,.cpp,.h,.go,.rs,.sql,.sh" style="display:none;" />
+  <div class="actions"><button id="chatFileBtn" title="附一个文本文件（txt/md/csv/代码等），小火读完可接着聊">📎 附文件</button><button id="chatSend">发送</button><button id="chatRecord" title="把当前对话和截图存进「我的记录」">📝 记忆</button></div>
 </div>
 
 <!-- 唱歌歌词气泡：sing 状态显示，跟随头顶，原创短词循环 -->
@@ -4799,6 +4806,50 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     positionChatBox();   // 消息增减后重定位，避免框被裁
     return b;
   }
+  // ---- 聊天附件：前端 FileReader 读纯文本，拼进 ask_reply 的 text；不动 Rust ----
+  let pendingFile = null;   // { name, content }
+  const CHAT_FILE_MAX = 200 * 1024;   // 200KB 上限：防 IPC payload 与模型输入 token 爆炸
+  function setChatFile(file) {
+    if (!file) return;
+    if (file.size > CHAT_FILE_MAX) { toast('文件太大啦，选 200KB 以内的文本文件'); return; }
+    const rd = new FileReader();
+    rd.onload = () => {
+      const txt = String(rd.result || '');
+      if (!txt.trim()) { toast('这文件是空的，换个有内容的'); return; }
+      pendingFile = { name: file.name, content: txt };
+      document.getElementById('chatFileName').textContent = '📎 ' + file.name + '（' + txt.length + ' 字）';
+      document.getElementById('chatFileChip').classList.add('show');
+      chatInput.placeholder = '问点关于这个文件的问题，或直接发送…';
+      toast('已附文件，发消息时一起给小火读');
+    };
+    rd.onerror = () => toast('读取文件失败');
+    rd.readAsText(file, 'utf-8');
+  }
+  function clearChatFile() {
+    pendingFile = null;
+    document.getElementById('chatFileChip').classList.remove('show');
+    document.getElementById('chatFileName').textContent = '';
+    document.getElementById('chatFileInput').value = '';
+    chatInput.placeholder = '画只猫 / 唱首歌 / 搜索 XXX / 或随便聊';
+  }
+  (function initChatFile() {
+    const btn = document.getElementById('chatFileBtn');
+    const inp = document.getElementById('chatFileInput');
+    if (!btn || !inp) return;
+    btn.addEventListener('click', () => inp.click());
+    inp.addEventListener('change', e => { setChatFile(e.target.files && e.target.files[0]); });
+    document.getElementById('chatFileRm').addEventListener('click', clearChatFile);
+  })();
+  // 把附件内容拼成给模型的文本；返回 null 表示没有附件
+  function takeChatFileAsText() {
+    if (!pendingFile) return null;
+    const f = pendingFile;
+    const part = '【用户附加的文件：' + f.name + '】\n' +
+      '"""\n' + f.content + '\n"""\n' +
+      '（以上是文件内容。请基于它回答用户接下来的问题；用户没明确问时，先用一两句说说这是什么文件。）';
+    clearChatFile();
+    return part;
+  }
   // ---------- 弹框可拖拽：聊天框 / 提示框 按住非交互区移动，位置持久化 ----------
   function applyBoxPos(el, p) {
     if (!p) return;
@@ -4884,13 +4935,16 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     }
   }
   function submitChat() {
-    const v = chatInput.value.trim();
-    if (!v) return;
+    let v = chatInput.value.trim();
+    const hadFile = !!pendingFile;
+    if (!v && !hadFile) return;
+    // 只附了文件没打字：给一句占位问话，沿用普通聊天链路（不触发画图/搜索等意图）
+    if (!v && hadFile) v = '读一下这个文件';
     const now = performance.now();
     if (currState === 'sleep' || now - justWokeAt < WAKE_GRACE) disturbSleep();  // 他睡着你还发消息 = 吵醒
     if (mood < -15) makeAngry(3000);                                            // 本就不爽你还找他聊 → 更火大
     chatInput.value = '';
-    addChat('me', v);
+    addChat('me', (hadFile ? '📎 ' : '') + v);
     const tl = v.toLowerCase();
     // 数学/物理草图：画坐标系 / 函数图像 / 向量 / 象限 / 分析题（离线优先，解析不出且像题目再走模型）
     if (/草图|象限|直角坐标|坐标系|坐标轴|画\s*y\s*=|函数图像|函数图|画函数|向量|画点|画圆|画抛物线|正弦曲线|余弦曲线|正切曲线|plot|graph|sketch|axes|coordinate/i.test(tl)
@@ -5098,9 +5152,13 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     }
     // 其余：让小火用智谱回复，口型跟着动
     const lastPet = addChat('pet', '…');
-    chatHistory.push({ role: 'user', content: v });
+    // 只有真正走聊天才消费附件；画图/搜索等分支不碰它，附件留在框里给下次用
+    const fileText = takeChatFileAsText();
+    // 有附件：文件内容放前面、用户的话放后面，模型据此作答（多轮 history 照常带，可接着问）
+    const fullText = fileText ? (fileText + '\n\n【用户的话】' + v) : v;
+    chatHistory.push({ role: 'user', content: fullText });
     const hist = chatHistory.slice(-6);
-    invoke('ask_reply', { text: v, history: hist })
+    invoke('ask_reply', { text: fullText, history: hist })
       .then(res => {
         const text = (typeof res === 'string') ? res
           : (res && typeof res.reply === 'string') ? res.reply
