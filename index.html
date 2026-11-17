@@ -4797,6 +4797,22 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
   makeDraggable(document.getElementById('memBox'));
   makeDraggable(document.getElementById('sketchClearBtn'));   // 清理按钮也可拖动（默认贴着火柴人，避开右下角时钟）
   let chatHistory = [];   // 多轮上下文：[{role, content}]
+  // ---- 聊天上下文落盘：桌面与微信桥共用同一份 memories/chat_context.json，实现换端续聊 ----
+  let _ctxSaveTimer = null;
+  function persistChatContext() {
+    if (!isTauri) return;
+    clearTimeout(_ctxSaveTimer);
+    _ctxSaveTimer = setTimeout(() => {
+      invoke('save_chat_context', { messages: chatHistory }).catch(() => {});
+    }, 300);   // debounce：连发几条也只写一次
+  }
+  (async function restoreChatContext() {
+    if (!isTauri) return;
+    try {
+      const saved = await invoke('load_chat_context');
+      if (Array.isArray(saved) && saved.length) chatHistory = saved.slice(-12);
+    } catch (e) { /* 首次运行没文件，忽略 */ }
+  })();
   function addChat(role, text) {
     const row = document.createElement('div');
     row.className = 'row ' + (role === 'me' ? 'me' : role === 'sys' ? 'sys' : 'pet');
@@ -5153,6 +5169,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         positionChatBox();
         chatHistory.push({ role: 'assistant', content: text });
         if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
+        persistChatContext();
         return;
       }
       // ② 词典没收录 → 才联网查 + 模型解释（本地词典仍作兜底）
@@ -5177,6 +5194,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
           positionChatBox();
           chatHistory.push({ role: 'assistant', content: text });
           if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
+          persistChatContext();
         })
         .catch(err => {
           // 429 / 没配 Key / 外网不通：优先展示检索片段，其次本地词典，最后才报错
@@ -5210,6 +5228,7 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
         positionChatBox();   // 回复换行增长后重定位，避免框被裁
         chatHistory.push({ role: 'assistant', content: text });
         if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
+        persistChatContext();
       })
       .catch(err => {
         lastPet.textContent = apiErrText(err);

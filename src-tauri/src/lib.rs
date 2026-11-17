@@ -264,7 +264,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![capture_screen, capture_region, capture_gray, screen_size, ask_glm, ask_draw, critique_draw, ask_sketch, toggle_pick, set_box_open, ask_reply, drag_start, drag_move, drag_end, save_memory, list_memories, get_memory, delete_memory, open_memories_folder, web_lookup])
+        .invoke_handler(tauri::generate_handler![capture_screen, capture_region, capture_gray, screen_size, ask_glm, ask_draw, critique_draw, ask_sketch, toggle_pick, set_box_open, ask_reply, drag_start, drag_move, drag_end, save_chat_context, load_chat_context, save_memory, list_memories, get_memory, delete_memory, open_memories_folder, web_lookup])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -1263,6 +1263,43 @@ fn memories_dir() -> Option<std::path::PathBuf> {
     std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.join("memories")))
+}
+
+// ---------- 聊天上下文落盘：桌面小火与微信桥共用，实现"扫码后在微信接着桌面那段聊" ----------
+// 存到 exe 旁 memories/chat_context.json；原子写(临时文件+rename)防写坏；只保留最近 12 条，防膨胀。
+#[tauri::command]
+fn save_chat_context(messages: Vec<serde_json::Value>) -> Result<String, String> {
+    let dir = memories_dir().ok_or_else(|| "无法确定 exe 所在目录".to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("chat_context.json");
+    let tmp = dir.join("chat_context.json.tmp");
+    // 只留最近 12 条（与前端 chatHistory 上限一致）
+    let keep: Vec<serde_json::Value> = messages.into_iter().rev().take(12).collect::<Vec<_>>().into_iter().rev().collect();
+    let body = serde_json::json!({
+        "ts": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                 .map(|d| d.as_millis()).unwrap_or(0),
+        "messages": keep,
+    });
+    std::fs::write(&tmp, serde_json::to_string_pretty(&body).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    // Windows 上 rename 到已存在文件会失败，先删旧再 rename（窗口极小；tmp 保证不会读到半截）
+    if path.exists() { let _ = std::fs::remove_file(&path); }
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn load_chat_context() -> Result<Vec<serde_json::Value>, String> {
+    let dir = memories_dir().ok_or_else(|| "无法确定 exe 所在目录".to_string())?;
+    let path = dir.join("chat_context.json");
+    if !path.exists() { return Ok(vec![]); }
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let obj: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    let arr = obj.get("messages").and_then(|m| m.as_array()).cloned().unwrap_or_default();
+    // 过滤掉格式不对的项，只留 {role, content} 都存在的
+    Ok(arr.into_iter().filter(|m| {
+        m.get("role").and_then(|v| v.as_str()).is_some() && m.get("content").and_then(|v| v.as_str()).is_some()
+    }).collect())
 }
 
 #[tauri::command]
