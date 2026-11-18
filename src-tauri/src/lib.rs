@@ -264,7 +264,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![capture_screen, capture_region, capture_gray, screen_size, ask_glm, ask_draw, critique_draw, ask_sketch, toggle_pick, set_box_open, ask_reply, drag_start, drag_move, drag_end, save_chat_context, load_chat_context, save_memory, list_memories, get_memory, delete_memory, open_memories_folder, web_lookup, launch_tool])
+        .invoke_handler(tauri::generate_handler![capture_screen, capture_region, capture_gray, screen_size, ask_glm, ask_draw, critique_draw, ask_sketch, toggle_pick, set_box_open, ask_reply, drag_start, drag_move, drag_end, save_chat_context, load_chat_context, save_memory, list_memories, get_memory, delete_memory, open_memories_folder, web_lookup])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -1464,42 +1464,6 @@ fn open_memories_folder() -> Result<(), String> {
     Ok(())
 }
 
-// 从右键菜单启动小火的辅助工具（桌面聊天窗 / 微信桥 / 搜记忆）。
-// 安全：白名单——前端只能传固定关键字，路径在 Rust 里拼死，绝不接收任意路径（防任意程序执行）。
-#[tauri::command]
-fn launch_tool(tool: String) -> Result<(), String> {
-    let dir = memories_dir().ok_or_else(|| "无法确定 exe 所在目录".to_string())?
-        .parent().ok_or_else(|| "无法确定 exe 所在目录".to_string())?
-        .join("wechat-bridge");
-    let bat = match tool.as_str() {
-        "chat"   => "start_chat_desktop.bat",
-        "bridge" => "start_wechat_bridge.bat",
-        "search" => "search_memory.bat",
-        _ => return Err("未知工具".to_string()),
-    };
-    let path = dir.join(bat);
-    if !path.exists() {
-        return Err(format!("找不到 {}（请在 exe 同目录放 wechat-bridge 文件夹）", bat));
-    }
-    // 所有工具都用 CREATE_NO_WINDOW 启动 bat：bat 内部已用 pythonw（聊天窗）
-    // 或本身是交互命令行（微信桥/搜记忆），由 bat 自己决定是否显示窗口。
-    // 这样不依赖任何本机绝对路径，Release 包在别人机器也能用。
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        let mut c = std::process::Command::new("cmd");
-        c.args(&["/c", "start", "", &path.to_string_lossy()])
-         .creation_flags(0x08000000); // CREATE_NO_WINDOW：连 cmd 控制台都不创建
-        let _ = c.spawn().map_err(|e| e.to_string())?;
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = std::process::Command::new("cmd")
-            .args(&["/c", "start", "", &path.to_string_lossy()])
-            .spawn().map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
 
 // 拖拽整窗：前端抓住宠物身体后，由 Rust 搬窗口。
 // 这样不依赖 Tauri 的 startDragging（透明+点击穿透下易失效），也更可控。
