@@ -557,6 +557,15 @@ fn capture_screen_inner() -> Result<String, String> {
     }
 }
 
+/// 实际生效的 API key：DeepSeek 模式读 DEEPSEEK_API_KEY，否则读 ZHIPU_API_KEY。
+/// call_zhipu 内部也会自己按 provider 取 key，这里主要让外层调用点不误报"未配置智谱 key"。
+fn effective_api_key() -> Option<String> {
+    let provider = std::env::var("MODEL_PROVIDER")
+        .unwrap_or_else(|_| "zhipu".to_string()).to_lowercase();
+    let var = if provider == "deepseek" { "DEEPSEEK_API_KEY" } else { "ZHIPU_API_KEY" };
+    std::env::var(var).ok().filter(|k| !k.is_empty())
+}
+
 /// 统一智谱调用器：模型优先级 + 资源包耗尽自动降级 + 实际模型播报。
 ///
 /// 逻辑：
@@ -575,10 +584,29 @@ async fn call_zhipu(
 ) -> Result<String, String> {
     let st = app.state::<AppState>();
     let already_exhausted = *st.pack_exhausted.lock().unwrap_or_else(|e| e.into_inner());
-    let preferred = std::env::var(env_key).unwrap_or_else(|_| free_model.to_string());
+    // 通道切换：MODEL_PROVIDER=deepseek 时走 DeepSeek；缺省/其它值仍走智谱（不动稳定路径）
+    let provider = std::env::var("MODEL_PROVIDER").unwrap_or_else(|_| "zhipu".to_string()).to_lowercase();
+    let is_deepseek = provider == "deepseek";
+    let (api_url, effective_key, ds_model): (&str, String, String) = if is_deepseek {
+        let dk = std::env::var("DEEPSEEK_API_KEY").unwrap_or_default();
+        if dk.is_empty() {
+            return Err("MODEL_PROVIDER=deepseek 但未配置 DEEPSEEK_API_KEY：请在 .env 填自己的 DeepSeek key".into());
+        }
+        let dm = std::env::var("DEEPSEEK_MODEL").unwrap_or_else(|_| "deepseek-flash".to_string());
+        ("https://api.deepseek.com/chat/completions", dk, dm)
+    } else {
+        ("https://open.bigmodel.cn/api/paas/v4/chat/completions", key.to_string(), String::new())
+    };
+    let preferred = if is_deepseek {
+        ds_model.clone()
+    } else {
+        std::env::var(env_key).unwrap_or_else(|_| free_model.to_string())
+    };
 
     // 决定首轮模型与来源标签
-    let (first_model, source): (String, &str) = if preferred == free_model {
+    let (first_model, source): (String, &str) = if is_deepseek {
+        (preferred.clone(), "deepseek")
+    } else if preferred == free_model {
         (free_model.to_string(), "free")
     } else if already_exhausted {
         (free_model.to_string(), "free-fallback")
@@ -586,8 +614,8 @@ async fn call_zhipu(
         (preferred.clone(), "pack")
     };
 
-    // 仅当首轮走资源包时，才准备「降级到免费模型」的第二次尝试
-    let attempts: Vec<&str> = if source == "pack" {
+    // 仅当首轮走智谱资源包时，才准备「降级到免费模型」的第二次尝试；DeepSeek 不降级
+    let attempts: Vec<&str> = if !is_deepseek && source == "pack" {
         vec![first_model.as_str(), free_model]
     } else {
         vec![first_model.as_str()]
@@ -602,14 +630,21 @@ async fn call_zhipu(
     for (i, m) in attempts.iter().enumerate() {
         let m: &str = m;
         let is_fallback = i > 0;
-        let payload = build(m);
+        let mut payload = build(m);
+        // DeepSeek V4 默认可能开 thinking，会把 max_tokens 吃光导致 content 空——显式关掉
+        if is_deepseek {
+            if let Some(obj) = payload.as_object_mut() {
+                obj.insert("thinking".to_string(),
+                    serde_json::json!({"type": "disabled"}));
+            }
+        }
         let resp = client
-            .post("https://open.bigmodel.cn/api/paas/v4/chat/completions")
-            .bearer_auth(key)
+            .post(api_url)
+            .bearer_auth(&effective_key)
             .json(&payload)
             .send()
             .await
-            .map_err(|e| format!("请求智谱失败（本机网络/360 防火墙拦截？）：{}", e))?;
+            .map_err(|e| format!("请求{}失败（本机网络/360 防火墙拦截？）：{}", if is_deepseek {"DeepSeek"} else {"智谱"}, e))?;
         let status = resp.status();
         if status.is_success() {
             let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
@@ -648,7 +683,7 @@ async fn call_zhipu(
         }
         let body = resp.text().await.unwrap_or_default();
         // 资源包耗尽特征：429 + 资源/额度/余额类关键字 → 标记耗尽后降级重试
-        let pack_exhausted_hit = status.as_u16() == 429
+        let pack_exhausted_hit = !is_deepseek && status.as_u16() == 429
             && (body.contains("资源包")
                 || body.contains("暂无可用资源")
                 || body.contains("额度")
@@ -662,7 +697,7 @@ async fn call_zhipu(
             last_err = format!("智谱返回 {}：{}", status.as_u16(), body);
             continue;
         }
-        return Err(format!("智谱返回 {}：{}", status.as_u16(), body));
+        return Err(format!("{}返回 {}：{}", if is_deepseek {"DeepSeek"} else {"智谱"}, status.as_u16(), body));
     }
     Err(last_err)
 }
@@ -671,10 +706,10 @@ async fn call_zhipu(
 /// 模型走 call_zhipu：优先 ZHIPU_VISION_MODEL（资源包），耗尽自动降级 glm-4v-flash。
 #[tauri::command]
 async fn ask_glm(app: tauri::AppHandle, images_b64: Vec<String>, prompt: String) -> Result<String, String> {
-    let key = match std::env::var("ZHIPU_API_KEY") {
-        Ok(k) if !k.is_empty() => k,
+    let key = match effective_api_key() {
+        Some(k) => k,
         _ => return Err(
-            "未配置 ZHIPU_API_KEY：请把 key 写入 .env（ZHIPU_API_KEY=xxx，.env 放在 exe 同目录或 src-tauri/ 下）并重启程序".into(),
+            "未配置 API Key：请在 .env 填 ZHIPU_API_KEY（智谱通道）或 DEEPSEEK_API_KEY + MODEL_PROVIDER=deepseek（DeepSeek 通道），.env 放 exe 同目录后重启".into(),
         ),
     };
     call_zhipu(
@@ -718,10 +753,10 @@ async fn ask_glm(app: tauri::AppHandle, images_b64: Vec<String>, prompt: String)
 /// ref_desc：前端画之前联网（维基百科）查到的真实形状描述，作为空间参考注入，减少模型瞎编。
 #[tauri::command]
 async fn ask_draw(app: tauri::AppHandle, prompt: String, ref_desc: Option<String>) -> Result<String, String> {
-    let key = match std::env::var("ZHIPU_API_KEY") {
-        Ok(k) if !k.is_empty() => k,
+    let key = match effective_api_key() {
+        Some(k) => k,
         _ => return Err(
-            "未配置 ZHIPU_API_KEY：请把 key 写入 .env（ZHIPU_API_KEY=xxx，.env 放在 exe 同目录或 src-tauri/ 下）并重启程序".into(),
+            "未配置 API Key：请在 .env 填 ZHIPU_API_KEY（智谱通道）或 DEEPSEEK_API_KEY + MODEL_PROVIDER=deepseek（DeepSeek 通道），.env 放 exe 同目录后重启".into(),
         ),
     };
     let instruction = r##"你是一个用极简原语作画的火柴人画师。把用户要画的东西用我们支持的原语组合出来，并【只输出一段 JSON，不要任何解释、不要 markdown 代码块、不要 ``` 】。
@@ -788,9 +823,9 @@ async fn ask_draw(app: tauri::AppHandle, prompt: String, ref_desc: Option<String
 /// 让它判断"像不像 X、哪里歪/缺关键部位"，返回修正后的原语 JSON（前端再翻译+归一化）。
 #[tauri::command]
 async fn critique_draw(app: tauri::AppHandle, prompt: String, image_b64: String, prev_json: Option<String>) -> Result<String, String> {
-    let key = match std::env::var("ZHIPU_API_KEY") {
-        Ok(k) if !k.is_empty() => k,
-        _ => return Err("未配置 ZHIPU_API_KEY：请把 key 写入 .env（ZHIPU_API_KEY=xxx，.env 放在 exe 同目录或 src-tauri/ 下）并重启程序".into()),
+    let key = match effective_api_key() {
+        Some(k) => k,
+        _ => return Err("未配置 API Key：请在 .env 填 ZHIPU_API_KEY（智谱通道）或 DEEPSEEK_API_KEY + MODEL_PROVIDER=deepseek（DeepSeek 通道），.env 放 exe 同目录后重启".into()),
     };
     let instruction = r##"你是一个火柴人画师助手。下面是一张已画好的简笔画（白底、黑/彩线条），它想表现的东西叫"X"。
 请【只输出一段 JSON，不要解释、不要 markdown、不要 ``` 】，格式：{"caption":"名称","strokes":[...]}。
@@ -835,9 +870,9 @@ async fn critique_draw(app: tauri::AppHandle, prompt: String, image_b64: String,
 /// history：[{ "role": "user" | "assistant", "content": "..." }] 的最近若干条，用于多轮上下文。
 #[tauri::command]
 async fn ask_reply(app: tauri::AppHandle, text: String, history: Option<Vec<serde_json::Value>>) -> Result<String, String> {
-    let key = match std::env::var("ZHIPU_API_KEY") {
-        Ok(k) if !k.is_empty() => k,
-        _ => return Err("未配置 ZHIPU_API_KEY：请把 key 写入 .env（ZHIPU_API_KEY=xxx，.env 放在 exe 同目录或 src-tauri/ 下）并重启程序".into()),
+    let key = match effective_api_key() {
+        Some(k) => k,
+        _ => return Err("未配置 API Key：请在 .env 填 ZHIPU_API_KEY（智谱通道）或 DEEPSEEK_API_KEY + MODEL_PROVIDER=deepseek（DeepSeek 通道），.env 放 exe 同目录后重启".into()),
     };
     // 小火的表达基调：平实、简短、自然，不演性格。
     // 2026-11-09 按用户要求去掉早期试做时定下的「傲娇又粘人 / 嘴硬」人设，也不替换为另一种人设。
@@ -921,10 +956,10 @@ async fn ask_reply(app: tauri::AppHandle, text: String, history: Option<Vec<serd
 /// 由前端用统一比例尺画坐标轴/曲线/向量，绝不会画出一团糟。
 #[tauri::command]
 async fn ask_sketch(app: tauri::AppHandle, text: String) -> Result<String, String> {
-    let key = match std::env::var("ZHIPU_API_KEY") {
-        Ok(k) if !k.is_empty() => k,
+    let key = match effective_api_key() {
+        Some(k) => k,
         _ => return Err(
-            "未配置 ZHIPU_API_KEY：请把 key 写入 .env（ZHIPU_API_KEY=xxx，.env 放在 exe 同目录或 src-tauri/ 下）并重启程序".into(),
+            "未配置 API Key：请在 .env 填 ZHIPU_API_KEY（智谱通道）或 DEEPSEEK_API_KEY + MODEL_PROVIDER=deepseek（DeepSeek 通道），.env 放 exe 同目录后重启".into(),
         ),
     };
     let instruction = r##"你是一个数学/物理草图生成器。根据用户给的题目或描述，输出一张标准直角坐标系草图的结构化描述。
