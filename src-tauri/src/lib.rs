@@ -264,7 +264,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![capture_screen, capture_region, capture_gray, screen_size, ask_glm, ask_draw, critique_draw, ask_sketch, toggle_pick, set_box_open, ask_reply, drag_start, drag_move, drag_end, save_chat_context, load_chat_context, save_memory, list_memories, get_memory, delete_memory, open_memories_folder, web_lookup])
+        .invoke_handler(tauri::generate_handler![capture_screen, capture_region, capture_gray, screen_size, ask_glm, ask_draw, critique_draw, ask_sketch, toggle_pick, set_box_open, ask_reply, drag_start, drag_move, drag_end, save_chat_context, load_chat_context, save_memory, list_memories, get_memory, delete_memory, open_memories_folder, web_lookup, launch_tool])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -1426,6 +1426,31 @@ fn open_memories_folder() -> Result<(), String> {
     let dir = memories_dir().ok_or_else(|| "无法确定 exe 所在目录".to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let _ = std::process::Command::new("explorer").arg(dir).spawn();
+    Ok(())
+}
+
+// 从右键菜单启动小火的辅助工具（桌面聊天窗 / 微信桥 / 搜记忆）。
+// 安全：白名单——前端只能传固定关键字，路径在 Rust 里拼死，绝不接收任意路径（防任意程序执行）。
+#[tauri::command]
+fn launch_tool(tool: String) -> Result<(), String> {
+    let dir = memories_dir().ok_or_else(|| "无法确定 exe 所在目录".to_string())?
+        .parent().ok_or_else(|| "无法确定 exe 所在目录".to_string())?
+        .join("wechat-bridge");
+    let bat = match tool.as_str() {
+        "chat"   => "start_chat_desktop.bat",
+        "bridge" => "start_wechat_bridge.bat",
+        "search" => "search_memory.bat",
+        _ => return Err("未知工具".to_string()),
+    };
+    let path = dir.join(bat);
+    if !path.exists() {
+        return Err(format!("找不到 {}（请在 exe 同目录放 wechat-bridge 文件夹）", bat));
+    }
+    // cmd /c start 让 bat 在独立窗口跑，不阻塞主程序
+    let _ = std::process::Command::new("cmd")
+        .args(&["/c", "start", "", &path.to_string_lossy()])
+        .spawn()
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 

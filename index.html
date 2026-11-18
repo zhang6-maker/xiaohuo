@@ -306,6 +306,9 @@
   <div data-m="shotmem">📸 截图存记录</div>
   <div data-m="lang">🗣️ 语言学习</div>
   <div data-m="langsaved">📚 已存词句</div>
+  <div data-m="toolchat">🗨️ 聊天窗</div>
+  <div data-m="toolbridge">💬 微信桥</div>
+  <div data-m="toolsearch">🔍 搜记忆</div>
   <div data-m="about">ℹ️ 关于</div>
   <div data-m="fullscreen">🖥️ 全屏 / 窗口</div>
   <div data-m="quit">⏻ 退出</div>
@@ -1246,6 +1249,9 @@ import HanziWriter from './src/lib/hanzi-writer.esm.js';
     else if (act === 'mem') openMemories();
     else if (act === 'shotmem') openShotMem();
     else if (act === 'tips') showTips();
+    else if (act === 'toolchat') { invoke('launch_tool', { tool: 'chat' }).catch(e => toast('聊天窗启动失败：' + e)); }
+    else if (act === 'toolbridge') { invoke('launch_tool', { tool: 'bridge' }).catch(e => toast('微信桥启动失败：' + e)); }
+    else if (act === 'toolsearch') { invoke('launch_tool', { tool: 'search' }).catch(e => toast('搜记忆启动失败：' + e)); }
     else if (act === 'about') alert('小火 · 桌面火柴人\n透明 Tauri 窗口：骨骼 / 状态机 / 心情 / 表情 / 嘴型。\n长按我（或右键）唤出菜单：搜一搜 / 看看屏幕 / 🎨 换颜色 / 提示 / 💬聊天 / 关于。在「💬聊天」框里打字：画只猫 / 唱首歌 / 看会儿书 / 随便聊，小火都会回应（回复时嘴会动）。\n右键「📐 画草图」或聊天里说「画 y=sin(x) / 画象限 / 向量(3,4)」→ 小火画干净的数学/物理坐标系草图（离线就能画）。\n👆 单击 = 戳我（被戳会吓一跳，但不再缩角落消失）；🤚 在头顶按住鼠标来回搓 = 揉头哄我；✊ 抓住身体或腿按住拖动 = 把小火拖到屏幕任意位置（全屏拖宠物本体；小窗拖整窗）。\n右键「🎨 换颜色」可改身体色并记住（选纯黑在黑色界面就藏起来了）；「👕 换装」可让过节自动穿衣服（万圣/双十一/圣诞/元旦/春节），也能手动预览，衣服只是叠加层、不影响任何动作；搜一搜、看看屏幕会真截屏后拖框选，交给大模型（智谱 GLM-4V）分析。');
     else if (act === 'fullscreen') toggleFullscreen();
     else if (act === 'quit') { if (isTauri && appWindow) appWindow.close(); else window.close(); }
