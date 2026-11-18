@@ -1446,11 +1446,23 @@ fn launch_tool(tool: String) -> Result<(), String> {
     if !path.exists() {
         return Err(format!("找不到 {}（请在 exe 同目录放 wechat-bridge 文件夹）", bat));
     }
-    // cmd /c start 让 bat 在独立窗口跑，不阻塞主程序
-    let _ = std::process::Command::new("cmd")
-        .args(&["/c", "start", "", &path.to_string_lossy()])
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    // 所有工具都用 CREATE_NO_WINDOW 启动 bat：bat 内部已用 pythonw（聊天窗）
+    // 或本身是交互命令行（微信桥/搜记忆），由 bat 自己决定是否显示窗口。
+    // 这样不依赖任何本机绝对路径，Release 包在别人机器也能用。
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut c = std::process::Command::new("cmd");
+        c.args(&["/c", "start", "", &path.to_string_lossy()])
+         .creation_flags(0x08000000); // CREATE_NO_WINDOW：连 cmd 控制台都不创建
+        let _ = c.spawn().map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = std::process::Command::new("cmd")
+            .args(&["/c", "start", "", &path.to_string_lossy()])
+            .spawn().map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
